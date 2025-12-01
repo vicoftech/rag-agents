@@ -1,0 +1,7 @@
+boto3
+python-dotenv
+pdfplumber
+langchain
+psycopg2-binary
+langchain-text-splitters
+numpy
