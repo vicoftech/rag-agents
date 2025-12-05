@@ -46,7 +46,7 @@ event10 = {
 event5 = {
   "tenant_id": "educacion",
   "agent_id": "08cb9a19-7b8c-4b63-b4f2-7ccb3de1067c",
-  "query": "Haceme un listado separado por año de los Aspectos lingüísticos en lenguas adicionales"
+  "query": "Haceme un listado de los Aspectos lingüísticos en lenguas adicionales"
 }
 
 
@@ -60,6 +60,12 @@ event7 = {
   "tenant_id": "educacion",
   "agent_id": "08cb9a19-7b8c-4b63-b4f2-7ccb3de1067c",
   "query": "Segun el contexto y la experiencia decime cuales serian los objetivos de aprendizaje segun el nivel en lenguas adicionales?"
+}
+
+event7b = {
+  "tenant_id": "educacion",
+  "agent_id": "08cb9a19-7b8c-4b63-b4f2-7ccb3de1067c",
+  "query": "Generame una planificacion anual completa de lenguas adicionales"
 }
 
 
@@ -108,4 +114,4 @@ event16 = {
   "query": "Listame los api managers y sus posibles modelos de pricing"
 }
 
-handler(event16,None)
+handler(event7b,None)

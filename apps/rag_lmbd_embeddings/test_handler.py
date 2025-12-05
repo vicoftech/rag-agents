@@ -7,4 +7,4 @@ event2 = {'Records': [{'eventVersion': '2.1', 'eventSource': 'aws:s3', 'awsRegio
 event3 = {'Records': [{'eventVersion': '2.1', 'eventSource': 'aws:s3', 'awsRegion': 'us-east-1', 'eventTime': '2025-08-01T22:26:09.125Z', 'eventName': 'ObjectCreated:Put', 'userIdentity': {'principalId': 'AWS:AIDAQZFG4VRBOA3VHGQYM'}, 'requestParameters': {'sourceIPAddress': '181.14.183.114'}, 'responseElements': {'x-amz-request-id': '7ZPZGPZ5H5THT4E3', 'x-amz-id-2': 'nG0+DVkjJK+AuWwLJIKfdfRLlTb34q3TxceSQIYtV83sZNoaTf+PY1vb2QgURR2X0arB//d1Lm8MpadFSBSO+s4MntNTV4K0f+wwwK7twKM='}, 's3': {'s3SchemaVersion': '1.0', 'configurationId': 'tf-s3-lambda-20250801220359166100000003', 'bucket': {'name': 'rag-agents-dev', 'ownerIdentity': {'principalId': 'A2FTWCHRXGCF2K'}, 'arn': 'arn:aws:s3:::rag-agents-dev'}, 'object': {'key': '/tenant_gp/e825fa81-da9a-4b39-934e-a667148428aa/documents/Stack-Tecnologico-Empresarial.pdf', 'size': 31175, 'eTag': '5706b6a0c656348d6eb0faceca105393', 'versionId': 'hag9GTjdGwy37sRDh.fSCfTHb8j0gWfh', 'sequencer': '00688D3F00C35EC3CC'}}}]}
 
 
-handler(event3,None)
+handler(event2,None)

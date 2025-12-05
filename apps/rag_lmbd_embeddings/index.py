@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import boto3
 import pdfplumber
 import psycopg2
@@ -101,57 +102,6 @@ def embed(text: str):
     return normalize(vec).tolist()
 
 
-'''
-def embed(text: str):
-    """
-    Embed robusto compatible con modelos Titan/OpenAI en Bedrock.
-    Incluye:
-      - recorte si el texto es demasiado largo
-      - estructura correcta del JSON
-      - normalización del vector (OBLIGATORIO)
-    """
-
-    # 1) Seguridad contra textos enormes
-    if len(text) > MAX_EMBED_TEXT_LENGTH:
-        text = text[:MAX_EMBED_TEXT_LENGTH]
-    
-    payload = {
-        "inputText": text    # PARA TITAN
-        # "input": text      # PARA OPENAI/OSS
-    }
-
-
-    payload = {
-        "texts": [text],
-        "input_type": "search_document"
-    }
-
-    response = bedrock.invoke_model(
-        modelId=EMBEDDINGS_MODEL,
-        body=json.dumps(payload)
-    )
-
-    body = response["body"].read()
-    result = json.loads(body)
-
-    # Titan v1/v2 → embedding está en "embedding"
-    if "embeddings" in result:
-        vec = result["embeddings"]
-
-    # OpenAI compatible en Bedrock (gpt-oss-*) → embedding está en: result["data"][0]["embedding"]
-    elif "data" in result and "embedding" in result["data"][0]:
-        vec = result["data"][0]["embedding"]
-
-    else:
-        raise Exception(f"Formato inesperado en respuesta de embeddings: {result}")
-
-    # Normalizar SIEMPRE
-    vec_norm = normalize(np.array(vec))
-
-    return vec_norm.tolist()
-'''
-
-
 def semantic_search(tenant_id,query, k=3):
     # Generar embedding desde el LLM
     q_emb = embed(query)
@@ -249,65 +199,188 @@ def extract_pdf_pages(bucket, key):
     ordered_pages = [ "\n".join(pages[p]) for p in sorted(pages.keys()) ]
     return ordered_pages
 
+# Patrones para detectar títulos y subtítulos
+TITLE_PATTERNS = [
+    r'^#{1,6}\s+.+$',                           # Markdown headers
+    r'^\d+\.[\d\.]*\s+[A-ZÁÉÍÓÚÑ].*$',          # Numeración: 1. Título, 1.1 Subtítulo
+    r'^[IVXLCDM]+\.\s+.+$',                     # Numeración romana: I. Título
+    r'^[A-Z][A-Z\s]{3,}$',                      # TÍTULOS EN MAYÚSCULAS (mín 4 chars)
+    r'^(?:Capítulo|Sección|Artículo|Anexo)\s+\d*.*$',  # Palabras clave de sección
+    r'^(?:Chapter|Section|Article|Annex)\s+\d*.*$',    # Palabras clave en inglés
+]
+
+def _detect_title_separators(text: str) -> list:
+    """
+    Detecta patrones de títulos en el texto y genera separadores personalizados.
+    """
+    separators = []
+    lines = text.split('\n')
+    
+    for line in lines:
+        line_stripped = line.strip()
+        if not line_stripped:
+            continue
+        for pattern in TITLE_PATTERNS:
+            if re.match(pattern, line_stripped, re.MULTILINE):
+                # Crear separador único para este título
+                sep = f"\n{line_stripped}\n"
+                if sep not in separators and len(line_stripped) > 3:
+                    separators.append(sep)
+                break
+    
+    return separators
+
+def _get_chunk_config(num_pages: int) -> dict:
+    """
+    Retorna configuración óptima de chunking basada en el número de páginas.
+    Prioridad 1: Tamaño del archivo
+    """
+    if num_pages <= 10:
+        # Archivos muy pequeños: chunks finos para máxima precisión semántica
+        return {
+            "chunk_size": 800,
+            "chunk_overlap": 150,
+            "use_textract": False
+        }
+    elif num_pages <= 50:
+        # Archivos medianos: balance entre precisión y eficiencia
+        return {
+            "chunk_size": 1200,
+            "chunk_overlap": 150,
+            "use_textract": False
+        }
+    elif num_pages <= 150:
+        # Archivos grandes: chunks más amplios
+        return {
+            "chunk_size": 1800,
+            "chunk_overlap": 100,
+            "use_textract": True
+        }
+    else:
+        # Archivos muy grandes: maximizar eficiencia
+        return {
+            "chunk_size": 2500,
+            "chunk_overlap": 80,
+            "use_textract": True
+        }
+
+def _build_separators(custom_title_seps: list) -> list:
+    """
+    Construye lista de separadores priorizando títulos y subtítulos.
+    Prioridad 2: Títulos y subtítulos como puntos de corte preferidos
+    """
+    # Separadores base ordenados por prioridad semántica
+    base_separators = [
+        "\n\n\n",           # Triple salto = cambio de sección mayor
+        "\n\n",             # Doble salto = nuevo párrafo/sección
+        "\n",               # Salto de línea simple
+        ". ",               # Fin de oración
+        "? ",               # Pregunta
+        "! ",               # Exclamación
+        "; ",               # Punto y coma
+        ", ",               # Coma
+        " ",                # Espacio
+    ]
+    
+    # Insertar separadores de títulos detectados al inicio (máxima prioridad)
+    # Ordenar por longitud descendente para que títulos más específicos se procesen primero
+    sorted_titles = sorted(custom_title_seps, key=len, reverse=True)
+    
+    return sorted_titles + base_separators
+
+def _get_page_count(bucket: str, key: str) -> int:
+    """
+    Obtiene el número de páginas del PDF.
+    """
+    pdf_obj = s3.get_object(Bucket=bucket, Key=key)
+    pdf_bytes = pdf_obj["Body"].read()
+    
+    try:
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            return len(pdf.pages)
+    except Exception as e:
+        print(f"[ERROR] No se pudieron detectar páginas: {e}")
+        return 0
+
+def _extract_text_with_structure(local_path: str) -> str:
+    """
+    Extrae texto preservando estructura visual para mejor detección de títulos.
+    """
+    full_text_parts = []
+    
+    with pdfplumber.open(local_path) as pdf:
+        for page in pdf.pages:
+            page_text = page.extract_text() or ""
+            if page_text.strip():
+                full_text_parts.append(page_text)
+            full_text_parts.append("\n\n")  # Separador entre páginas
+    
+    return "".join(full_text_parts)
+
 def generate_semantic_chunks(bucket, key, local_path=None):
     """
-    Devuelve chunks semánticos optimizados según tamaño del PDF.
-    - Menos de 50 páginas → extrae todo el texto y hace chunk con semántica fina.
-    - Más de 50 páginas → usa Textract por página para evitar pérdida de info.
+    Devuelve chunks semánticos optimizados.
+    
+    Prioridad 1: Tamaño del archivo → determina configuración de chunks
+    Prioridad 2: Títulos y subtítulos → puntos de corte semánticos preferidos
     """
-
-    # 1️⃣ Detectar páginas
-    is_large = pdf_has_more_than_50_pages(bucket, key)
-
+    # 1️⃣ Obtener número de páginas y configuración óptima
+    num_pages = _get_page_count(bucket, key)
+    config = _get_chunk_config(num_pages)
+    
+    print(f"[INFO] PDF con {num_pages} páginas → chunk_size={config['chunk_size']}, use_textract={config['use_textract']}")
+    
     chunks = []
-
-    # 2️⃣ Configurar splitter adaptativo
-    # Archivos chicos → chunk semántico fino
-    # Archivos grandes → chunk más amplio para evitar explosión de chunks
-    if is_large:
-        splitter = RecursiveCharacterTextSplitter(
-            chunk_size=2000,       # más grande para reducir cantidad de chunks
-            chunk_overlap=100,
-            separators=["\n\n", "\n", ".", "!", "?", " "],
-            length_function=len
-        )
+    
+    # 2️⃣ Extraer texto según configuración
+    if config["use_textract"]:
+        # PDFs grandes: usar Textract por página
+        page_texts = extract_pdf_pages(bucket, key)
+        full_text = "\n\n".join([t for t in page_texts if t and t.strip()])
     else:
-        splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1200,      # más pequeño → mejor semántica
-            chunk_overlap=150,
-            separators=["\n\n", "\n", ".", "!", "?", ",", " "],
-            length_function=len
-        )
-
-    # 3️⃣ Proceso según tamaño
-    if is_large:
-        # --- PDFs grandes ---
-        blocks = extract_pdf_pages(bucket, key)   # Devuelve texto por página
-
-        for block in blocks:
-            if not block or not block.strip():
-                continue
-            subchunks = splitter.split_text(block)
-            chunks.extend(subchunks)
-
-    else:
-        # --- PDFs chicos ---
+        # PDFs pequeños/medianos: usar pdfplumber local
         if local_path is None:
-            raise Exception("local_path es obligatorio para PDFs pequeños.")
-
-        pdf = pdfplumber.open(local_path)
-        full_text = "\n".join([page.extract_text() or "" for page in pdf.pages])
-        pdf.close()
-
-        subchunks = splitter.split_text(full_text)
-        chunks.extend(subchunks)
-
+            raise Exception("local_path es obligatorio para PDFs pequeños/medianos.")
+        full_text = _extract_text_with_structure(local_path)
+    
+    if not full_text.strip():
+        return []
+    
+    # 3️⃣ Detectar títulos y construir separadores personalizados
+    title_separators = _detect_title_separators(full_text)
+    separators = _build_separators(title_separators)
+    
+    print(f"[INFO] Detectados {len(title_separators)} patrones de títulos/subtítulos")
+    
+    # 4️⃣ Crear splitter con configuración optimizada
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=config["chunk_size"],
+        chunk_overlap=config["chunk_overlap"],
+        separators=separators,
+        length_function=len,
+        is_separator_regex=False
+    )
+    
+    # 5️⃣ Generar chunks
+    raw_chunks = splitter.split_text(full_text)
+    
+    # 6️⃣ Limpiar y filtrar chunks vacíos o muy pequeños
+    min_chunk_size = 50  # Mínimo de caracteres útiles
+    for chunk in raw_chunks:
+        cleaned = chunk.strip()
+        if cleaned and len(cleaned) >= min_chunk_size:
+            chunks.append(cleaned)
+    
+    print(f"[INFO] Generados {len(chunks)} chunks semánticos")
+    
     return chunks
 
 def to_pgvector(vec):
     return "[" + ",".join(str(x) for x in vec) + "]"
 
 def handler(event, context):
+    start_time = time.time()
+    
     # 1️⃣ Obtener bucket y key del evento S3
     record = event["Records"][0]
     bucket = record["s3"]["bucket"]["name"]
@@ -351,6 +424,9 @@ def handler(event, context):
     conn.commit()
     cur.close()
     conn.close()
+
+    elapsed_time = time.time() - start_time
+    print(f"[INFO] Handler completado en {elapsed_time:.2f} segundos")
 
     return {
         "statusCode": 200,
