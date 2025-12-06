@@ -10,6 +10,7 @@ import uuid
 import io
 import time
 import numpy as np
+from urllib.parse import unquote_plus
 # AWS Session Setup (for local testing)
 AWS_REGION = os.getenv('AWS_REGION', 'us-east-1')
 AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID_DEV', "")
@@ -49,6 +50,175 @@ def get_connection():
         host=DB_HOST,
         port=DB_PORT,
     )
+
+
+def ensure_tenant_schema_exists(tenant_id: str, agent_id: str):
+    """
+    Verifica si el esquema del tenant existe, y si no, lo crea junto con
+    las tablas necesarias (agents, documents), los índices y un agente por defecto.
+    
+    Args:
+        tenant_id: Identificador del tenant (se usará como nombre del esquema)
+        agent_id: Identificador del agente para crear el registro por defecto
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    
+    try:
+        # Verificar si el esquema existe
+        cur.execute("""
+            SELECT EXISTS(
+                SELECT 1 FROM information_schema.schemata 
+                WHERE schema_name = %s
+            )
+        """, (tenant_id,))
+        
+        schema_exists = cur.fetchone()[0]
+        
+        if not schema_exists:
+            print(f"[INFO] Creando esquema para tenant: {tenant_id}")
+            
+            # Habilitar extensión pgvector (necesaria para tipo VECTOR)
+            print("[INFO] Habilitando extensión pgvector...")
+            cur.execute("CREATE EXTENSION IF NOT EXISTS vector")
+            
+            # Crear esquema
+            cur.execute(f"CREATE SCHEMA IF NOT EXISTS {tenant_id}")
+            
+            # Crear tabla de agentes
+            cur.execute(f"""
+                CREATE TABLE IF NOT EXISTS {tenant_id}.agents (
+                    agent_id       UUID PRIMARY KEY,
+                    agent_name     TEXT NOT NULL,
+                    description    TEXT,
+                    prompt_template TEXT NOT NULL,
+                    created_at     TIMESTAMP DEFAULT NOW()
+                )
+            """)
+            
+            # Crear tabla de documentos
+            cur.execute(f"""
+                CREATE TABLE IF NOT EXISTS {tenant_id}.documents (
+                    id              SERIAL PRIMARY KEY,
+                    agent_id        UUID NOT NULL,
+                    document_id     UUID NOT NULL,
+                    document_name   TEXT NOT NULL,
+                    chunk_text      TEXT NOT NULL,
+                    embedding       VECTOR(1536),
+                    created_at      TIMESTAMP DEFAULT NOW()
+                )
+            """)
+            
+            # Crear índice para búsqueda vectorial (IVFFlat)
+            cur.execute(f"""
+                CREATE INDEX IF NOT EXISTS idx_{tenant_id}_documents_embedding 
+                ON {tenant_id}.documents 
+                USING ivfflat (embedding vector_cosine_ops) 
+                WITH (lists = 100)
+            """)
+            
+            # Crear índice para agents
+            cur.execute(f"""
+                CREATE INDEX IF NOT EXISTS idx_{tenant_id}_agents 
+                ON {tenant_id}.agents(agent_id)
+            """)
+            
+            # Crear índice para búsqueda por agent_id en documents
+            cur.execute(f"""
+                CREATE INDEX IF NOT EXISTS idx_{tenant_id}_documents_agent 
+                ON {tenant_id}.documents(agent_id)
+            """)
+            
+            # Crear índice para búsqueda por document_id
+            cur.execute(f"""
+                CREATE INDEX IF NOT EXISTS idx_{tenant_id}_documents_doc_id 
+                ON {tenant_id}.documents(document_id)
+            """)
+            
+            # Insertar agente por defecto
+            default_prompt_template = f"""Eres un asistente especializado para el tenant {tenant_id}. 
+Responde basándote únicamente en el contexto proporcionado. Si no encuentras información relevante, indica que no tienes datos suficientes.
+
+--- CONTEXTO ---
+{{context}}
+
+--- PREGUNTA ---
+{{query}}
+
+Responde con precisión y sin inventar información que no esté en el contexto."""
+
+            cur.execute(f"""
+                INSERT INTO {tenant_id}.agents (
+                    agent_id,
+                    agent_name,
+                    description,
+                    prompt_template
+                )
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (agent_id) DO NOTHING
+            """, (
+                agent_id,
+                f'Agente Principal - {tenant_id}',
+                f'Agente por defecto para el tenant {tenant_id}',
+                default_prompt_template
+            ))
+            
+            conn.commit()
+            print(f"[INFO] Esquema {tenant_id} creado exitosamente con agente por defecto")
+        else:
+            print(f"[INFO] Esquema {tenant_id} ya existe")
+            
+            # Verificar si el agente existe, si no, crearlo
+            cur.execute(f"""
+                SELECT EXISTS(
+                    SELECT 1 FROM {tenant_id}.agents 
+                    WHERE agent_id = %s
+                )
+            """, (agent_id,))
+            
+            agent_exists = cur.fetchone()[0]
+            
+            if not agent_exists:
+                print(f"[INFO] Creando agente {agent_id} en esquema existente {tenant_id}")
+                
+                default_prompt_template = f"""Eres un asistente especializado para el tenant {tenant_id}. 
+Responde basándote únicamente en el contexto proporcionado. Si no encuentras información relevante, indica que no tienes datos suficientes.
+
+--- CONTEXTO ---
+{{context}}
+
+--- PREGUNTA ---
+{{query}}
+
+Responde con precisión y sin inventar información que no esté en el contexto."""
+
+                cur.execute(f"""
+                    INSERT INTO {tenant_id}.agents (
+                        agent_id,
+                        agent_name,
+                        description,
+                        prompt_template
+                    )
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (agent_id) DO NOTHING
+                """, (
+                    agent_id,
+                    f'Agente - {agent_id[:8]}',
+                    f'Agente para el tenant {tenant_id}',
+                    default_prompt_template
+                ))
+                
+                conn.commit()
+                print(f"[INFO] Agente {agent_id} creado exitosamente")
+            
+    except Exception as e:
+        conn.rollback()
+        print(f"[ERROR] Error al crear esquema/agente {tenant_id}: {str(e)}")
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
 
 def normalize(v):
     v = np.array(v, dtype=np.float32).squeeze()
@@ -379,16 +549,24 @@ def to_pgvector(vec):
     return "[" + ",".join(str(x) for x in vec) + "]"
 
 def handler(event, context):
+    print(f"Event received: {event}")
     start_time = time.time()
     
     # 1️⃣ Obtener bucket y key del evento S3
     record = event["Records"][0]
     bucket = record["s3"]["bucket"]["name"]
-    key = record["s3"]["object"]["key"].lstrip("/")
+    # Decodificar caracteres URL-encoded (espacios, ñ, acentos, etc.)
+    key_raw = record["s3"]["object"]["key"]
+    key = unquote_plus(key_raw).lstrip("/")
+    
+    print(f"[INFO] Bucket: {bucket}")
+    print(f"[INFO] Key raw: {key_raw}")
+    print(f"[INFO] Key decoded: {key}")
+    
     parts = key.split("/")
-    tenant_id = parts[0]       # "123"
-    agent_id = parts[1]        # "456"
-    file_name = parts[-1]
+    tenant_id = parts[0]       # "tenant_name"
+    agent_id = parts[1]        # "agent_uuid"
+    file_name = parts[-1]      # "documento.pdf"
     document_id = str(uuid.uuid4())  
 
     # 2️⃣ Descargar PDF a /tmp
@@ -400,7 +578,11 @@ def handler(event, context):
         print("HEAD ERROR:", e.response)
 
     chunks = generate_semantic_chunks(bucket, key, local_path)
-    # 5️⃣ Insertar embeddings en Aurora PostgreSQL
+    
+    # 3️⃣ Asegurar que el esquema del tenant y el agente existen
+    ensure_tenant_schema_exists(tenant_id, agent_id)
+    
+    # 4️⃣ Insertar embeddings en Aurora PostgreSQL
     conn = get_connection()
     cur = conn.cursor()
     

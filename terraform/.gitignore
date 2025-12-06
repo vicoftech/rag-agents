@@ -1,0 +1,32 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+.terraform.lock.hcl
+
+# Crash logs
+crash.log
+crash.*.log
+
+# Override files
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Sensitive variable files
+*.auto.tfvars
+secret.tfvars
+secrets.tfvars
+
+# Lambda builds
+.lambda-builds/
+modules/lambda/.builds/*.zip
+
+# Local .terraform directories
+**/.terraform/*
+
+# CLI configuration files
+.terraformrc
+terraform.rc

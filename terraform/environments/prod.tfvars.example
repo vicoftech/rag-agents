@@ -1,0 +1,29 @@
+# ==============================================================================
+# Production Environment Configuration (EXAMPLE)
+# ==============================================================================
+
+# General
+region      = "us-east-1"
+aws_profile = "your-prod-profile"
+environment = "prod"
+
+# Network - Use your production VPC and private subnets
+vpc_id  = "vpc-xxxxxxxx"
+subnets = ["subnet-xxxxxxxx", "subnet-yyyyyyyy"]
+
+# Aurora PostgreSQL - Use strong credentials and Secrets Manager in production
+master_username = "prod_admin"
+master_password = "USE_SECRETS_MANAGER_IN_PRODUCTION"
+engine_version  = "14.11"
+aurora_min_capacity = 2
+aurora_max_capacity = 16
+
+# S3
+enable_s3_cors       = false
+cors_allowed_origins = []
+
+# Bedrock Models
+embeddings_model   = "cohere.embed-v4:0"
+main_llm_model     = "anthropic.claude-3-5-sonnet-20241022-v2:0"
+fallback_llm_model = "anthropic.claude-3-haiku-20240307-v1:0"
+output_tokens      = "4096"
