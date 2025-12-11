@@ -116,3 +116,53 @@ variable "lambda_query_config" {
   })
   default = {}
 }
+
+# ==============================================================================
+# Bedrock Agent Configuration
+# ==============================================================================
+
+variable "agent_name" {
+  description = "Name of the Bedrock Agent"
+  type        = string
+  default     = "rag-agent"
+}
+
+variable "agent_model_id" {
+  description = "Bedrock model ID for the agent"
+  type        = string
+  default     = "anthropic.claude-3-5-sonnet-20241022-v2:0"
+}
+
+variable "agent_environment_variables" {
+  description = "Additional environment variables for the agent Lambda"
+  type        = map(string)
+  default     = {}
+}
+
+# ==============================================================================
+# API Gateway & Cognito Configuration
+# ==============================================================================
+
+variable "create_cognito_user_pool" {
+  description = "Whether to create a new Cognito User Pool for JWT authentication"
+  type        = bool
+  default     = true
+}
+
+variable "cognito_user_pool_id" {
+  description = "Existing Cognito User Pool ID (if not creating new one)"
+  type        = string
+  default     = ""
+}
+
+variable "cognito_user_pool_client_id" {
+  description = "Existing Cognito User Pool Client ID (if not creating new one)"
+  type        = string
+  default     = ""
+}
+
+variable "cognito_user_pool_arn" {
+  description = "Existing Cognito User Pool ARN (if not creating new one)"
+  type        = string
+  default     = ""
+}

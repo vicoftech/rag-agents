@@ -38,6 +38,7 @@ locals {
   # Lambda source paths (relative to terraform directory)
   lambda_embeddings_path = "${path.module}/../apps/rag_lmbd_embeddings"
   lambda_query_path      = "${path.module}/../apps/rag_lmbd_query"
+  lambda_agent_path      = "${path.module}/../apps/agent"
 
   # Base environment variables (computed from other resources)
   base_db_env_vars = {
@@ -288,6 +289,75 @@ module "lambda_query" {
       ]
     }
   ]
+
+  tags = local.common_tags
+}
+
+# ==============================================================================
+# Bedrock Agent Core
+# ==============================================================================
+
+module "bedrock_agent" {
+  source = "./modules/bedrock_agent"
+
+  function_name = "rag-agent-${var.environment}"
+  description   = "Bedrock Agent Core handler for RAG agent"
+  handler       = "api_gateway_handler.lambda_handler"
+  runtime       = "python3.12"
+  timeout       = 300
+  memory_size   = 1024
+  ephemeral_storage_size = 1024
+
+  source_path = local.lambda_agent_path
+  environment = var.environment
+
+  # VPC Configuration (optional, same as other lambdas)
+  vpc_id             = var.vpc_id
+  subnet_ids         = var.subnets
+  security_group_ids = length(var.subnets) > 0 ? [module.aurora.security_group_id] : []
+
+  environment_variables = merge(
+    {
+      AWS_REGION           = var.region
+      AGENT_MODEL_ID       = var.agent_model_id
+      AGENT_NAME           = var.agent_name
+      LAMBDA_QUERY         = module.lambda_query.function_name
+      LAMBDA_EMBEDDINGS    = module.lambda_embeddings.function_name
+    },
+    var.agent_environment_variables
+  )
+
+  agent_name        = "${var.agent_name}-${var.environment}"
+  agent_description = "RAG Agent deployed via Bedrock Agent Core"
+  agent_model_id    = var.agent_model_id
+  region            = var.region
+  lambda_query_function_name = module.lambda_query.function_name
+
+  tags = local.common_tags
+}
+
+# ==============================================================================
+# API Gateway with JWT Authentication
+# ==============================================================================
+
+module "api_gateway" {
+  source = "./modules/api_gateway_jwt"
+
+  api_name        = "rag-agent-api-${var.environment}"
+  api_description = "API Gateway for RAG Agent with JWT authentication"
+  environment     = var.environment
+  region          = var.region
+
+  lambda_function_arn = module.bedrock_agent.lambda_function_arn
+
+  create_cognito_user_pool = var.create_cognito_user_pool
+  cognito_user_pool_id     = var.cognito_user_pool_id
+  cognito_user_pool_client_id = var.cognito_user_pool_client_id
+  cognito_user_pool_arn    = var.cognito_user_pool_arn
+
+  cors_allowed_origins = var.cors_allowed_origins
+  cors_allowed_methods = ["GET", "POST", "OPTIONS"]
+  cors_allowed_headers = ["Content-Type", "Authorization"]
 
   tags = local.common_tags
 }

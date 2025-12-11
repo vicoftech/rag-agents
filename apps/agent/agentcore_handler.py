@@ -12,7 +12,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from bedrock_agentcore import BedrockAgentCoreApp
 from strands import Agent
 from strands.models import BedrockModel
-from tools.rag_search import rag_search_tool
+from tools.rag_search import knowledge_base_search
+from tools.web_search import web_search
 from config import AWS_REGION, AGENT_MODEL_ID, AGENT_NAME
 
 # Crear la aplicación AgentCore
@@ -23,12 +24,12 @@ SYSTEM_PROMPT = f"""Eres {AGENT_NAME}, un asistente inteligente especializado en
 
 ## Instrucciones:
 
-1. **Siempre usa la herramienta rag_search_tool** para buscar información antes de responder preguntas sobre documentos o conocimiento específico.
+1. **Siempre usa la herramienta knowledge_base_search** para buscar información antes de responder preguntas sobre documentos o conocimiento específico.
 
-2. **Parámetros requeridos para rag_search_tool**: 
+2. **Parámetros requeridos para knowledge_base_search**: 
    - `query`: La pregunta o términos de búsqueda
    - `tenant_id`: El identificador del tenant/organización
-   - `agent_id`: El identificador del agente (si se proporciona)
+   - `agent_id`: El identificador del agente (requerido)
 
 3. **Formato de respuesta**:
    - Sintetiza la información encontrada de manera clara y estructurada
@@ -50,7 +51,7 @@ def create_strands_agent() -> Agent:
     return Agent(
         model=model,
         system_prompt=SYSTEM_PROMPT,
-        tools=[rag_search_tool],
+        tools=[knowledge_base_search, web_search],
     )
 
 
