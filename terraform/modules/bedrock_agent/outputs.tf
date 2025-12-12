@@ -8,25 +8,11 @@ output "lambda_function_name" {
   value       = aws_lambda_function.this.function_name
 }
 
-output "agent_id" {
-  description = "ID of the Bedrock Agent"
-  value       = aws_bedrock_agent.this.agent_id
+output "lambda_invoke_arn" {
+  description = "Invoke ARN of the Lambda function (for API Gateway integration)"
+  value       = aws_lambda_function.this.invoke_arn
 }
 
-output "agent_arn" {
-  description = "ARN of the Bedrock Agent"
-  value       = aws_bedrock_agent.this.agent_arn
-}
-
-output "agent_alias_id" {
-  description = "ID of the Bedrock Agent alias"
-  value       = aws_bedrock_agent_alias.this.agent_alias_id
-}
-
-output "agent_alias_arn" {
-  description = "ARN of the Bedrock Agent alias"
-  value       = aws_bedrock_agent_alias.this.agent_alias_arn
-}
 
 
 

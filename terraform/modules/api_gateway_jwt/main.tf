@@ -99,7 +99,7 @@ resource "aws_apigatewayv2_authorizer" "jwt" {
 resource "aws_lambda_permission" "api_gateway" {
   statement_id  = "AllowAPIGatewayInvoke"
   action        = "lambda:InvokeFunction"
-  function_name = var.lambda_function_arn
+  function_name = var.lambda_function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.this.execution_arn}/*/*"
 }
@@ -111,7 +111,7 @@ resource "aws_lambda_permission" "api_gateway" {
 resource "aws_apigatewayv2_integration" "lambda" {
   api_id           = aws_apigatewayv2_api.this.id
   integration_type = "AWS_PROXY"
-  integration_uri  = var.lambda_function_arn
+  integration_uri  = var.lambda_invoke_arn
   payload_format_version = "2.0"
   timeout_milliseconds = 30000
 }

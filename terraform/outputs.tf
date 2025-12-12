@@ -75,18 +75,8 @@ output "invoke_query_example" {
 }
 
 # ==============================================================================
-# Bedrock Agent Outputs
+# Bedrock Agent Lambda Outputs
 # ==============================================================================
-
-output "bedrock_agent_id" {
-  description = "Bedrock Agent ID"
-  value       = module.bedrock_agent.agent_id
-}
-
-output "bedrock_agent_arn" {
-  description = "Bedrock Agent ARN"
-  value       = module.bedrock_agent.agent_arn
-}
 
 output "bedrock_agent_lambda_function_name" {
   description = "Bedrock Agent Lambda function name"
@@ -96,6 +86,11 @@ output "bedrock_agent_lambda_function_name" {
 output "bedrock_agent_lambda_arn" {
   description = "Bedrock Agent Lambda ARN"
   value       = module.bedrock_agent.lambda_function_arn
+}
+
+output "bedrock_agent_lambda_invoke_arn" {
+  description = "Bedrock Agent Lambda Invoke ARN (for API Gateway integration)"
+  value       = module.bedrock_agent.lambda_invoke_arn
 }
 
 # ==============================================================================

@@ -21,9 +21,17 @@ terraform {
   # }
 }
 
+# Provider configuration
+# If aws_profile is empty string, Terraform will use default AWS credentials
+# (from AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY env vars or ~/.aws/credentials)
 provider "aws" {
-  region  = var.region
-  profile = var.aws_profile
+  region = var.region
+  # Only set profile if it's not empty, otherwise use default credentials
+  # When profile is null, Terraform uses default credentials from:
+  # - AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY environment variables
+  # - ~/.aws/credentials (default profile)
+  # - IAM role (if running on EC2/ECS/Lambda)
+  profile = var.aws_profile != "" ? var.aws_profile : null
 }
 
 locals {
@@ -348,7 +356,9 @@ module "api_gateway" {
   environment     = var.environment
   region          = var.region
 
-  lambda_function_arn = module.bedrock_agent.lambda_function_arn
+  lambda_function_arn  = module.bedrock_agent.lambda_function_arn
+  lambda_function_name = module.bedrock_agent.lambda_function_name
+  lambda_invoke_arn    = module.bedrock_agent.lambda_invoke_arn
 
   create_cognito_user_pool = var.create_cognito_user_pool
   cognito_user_pool_id     = var.cognito_user_pool_id

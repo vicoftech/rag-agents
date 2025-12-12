@@ -23,6 +23,16 @@ variable "lambda_function_arn" {
   type        = string
 }
 
+variable "lambda_function_name" {
+  description = "Name of the Lambda function (for permissions)"
+  type        = string
+}
+
+variable "lambda_invoke_arn" {
+  description = "Invoke ARN of the Lambda function (for API Gateway integration)"
+  type        = string
+}
+
 variable "region" {
   description = "AWS region"
   type        = string

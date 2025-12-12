@@ -14,8 +14,9 @@ variable "region" {
 }
 
 variable "aws_profile" {
-  description = "AWS CLI named profile to use for credentials"
+  description = "AWS CLI named profile to use for credentials (optional, leave empty or set to \"\" to use default credentials from environment or ~/.aws/credentials)"
   type        = string
+  default     = ""
 }
 
 # ==============================================================================
