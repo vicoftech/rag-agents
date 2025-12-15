@@ -1,6 +1,5 @@
 /venv
 **.terraform*
-**terraform.tfstate*
 .env
 .vscode
 **dist

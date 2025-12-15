@@ -326,7 +326,6 @@ module "bedrock_agent" {
 
   environment_variables = merge(
     {
-      AWS_REGION           = var.region
       AGENT_MODEL_ID       = var.agent_model_id
       AGENT_NAME           = var.agent_name
       LAMBDA_QUERY         = module.lambda_query.function_name

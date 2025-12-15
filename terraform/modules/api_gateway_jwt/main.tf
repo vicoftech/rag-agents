@@ -34,9 +34,10 @@ resource "aws_cognito_user_pool_client" "this" {
 
   generate_secret                      = false
   allowed_oauth_flows_user_pool_client = true
-  allowed_oauth_flows                  = ["client_credentials"]
+  allowed_oauth_flows                  = ["implicit"]
   allowed_oauth_scopes                 = ["openid", "email", "profile"]
   supported_identity_providers         = ["COGNITO"]
+  callback_urls                        = ["https://localhost"]
 
   token_validity_units {
     access_token  = "hours"
