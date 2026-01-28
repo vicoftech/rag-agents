@@ -20,7 +20,7 @@ secrets.tfvars
 
 # Lambda builds
 .lambda-builds/
-modules/lambda/.builds/*.zip
+modules/lambda/.builds/
 
 # Local .terraform directories
 **/.terraform/*

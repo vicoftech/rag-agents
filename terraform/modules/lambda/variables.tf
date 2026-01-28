@@ -87,8 +87,14 @@ variable "s3_trigger_enabled" {
   default     = false
 }
 
+variable "use_s3_deployment" {
+  description = "Whether to use S3 for Lambda deployment package (required for packages > 50MB)"
+  type        = bool
+  default     = false
+}
+
 variable "s3_bucket_name" {
-  description = "S3 bucket name for trigger"
+  description = "S3 bucket name for storing Lambda deployment packages (for large packages > 50MB) and/or S3 trigger"
   type        = string
   default     = ""
 }

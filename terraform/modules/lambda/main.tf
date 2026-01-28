@@ -53,6 +53,28 @@ resource "aws_iam_role_policy" "custom" {
   policy = data.aws_iam_policy_document.custom[0].json
 }
 
+# S3 access for Lambda deployment package
+resource "aws_iam_role_policy" "s3_deployment" {
+  count = var.use_s3_deployment ? 1 : 0
+  name  = "${var.function_name}-s3-deployment-policy"
+  role  = aws_iam_role.lambda.id
+  
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject"
+        ]
+        Resource = [
+          "arn:aws:s3:::${var.s3_bucket_name}/lambda-packages/${var.function_name}/*"
+        ]
+      }
+    ]
+  })
+}
+
 # ==============================================================================
 # Security Group for Lambda (if VPC)
 # ==============================================================================
@@ -80,10 +102,61 @@ resource "aws_security_group" "lambda" {
 # Lambda Function
 # ==============================================================================
 
+# Build Lambda with dependencies if requirements.txt exists
+resource "null_resource" "build_lambda" {
+  triggers = {
+    requirements    = fileexists("${var.source_path}/requirements.txt") ? filemd5("${var.source_path}/requirements.txt") : "no-requirements"
+    source_hash     = sha256(join("", [for f in fileset(var.source_path, "**/*.py") : filesha256("${var.source_path}/${f}")]))
+    build_platform  = "manylinux2014_x86_64"  # Force rebuild when platform changes
+    build_version   = "2"  # Increment to force rebuild
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      set -e
+      BUILD_DIR="${path.module}/.builds/${var.function_name}"
+      rm -rf "$BUILD_DIR"
+      mkdir -p "$BUILD_DIR"
+      
+      # Install dependencies if requirements.txt exists
+      if [ -f "${var.source_path}/requirements.txt" ]; then
+        echo "Installing Python dependencies for Linux/Lambda..."
+        python3 -m pip install \
+          -r "${var.source_path}/requirements.txt" \
+          -t "$BUILD_DIR" \
+          --platform manylinux2014_x86_64 \
+          --only-binary=:all: \
+          --upgrade \
+          --quiet
+      fi
+      
+      # Copy Python source files
+      cp -r ${var.source_path}/*.py "$BUILD_DIR/" 2>/dev/null || true
+      
+      # Copy lib directory if exists
+      if [ -d "${var.source_path}/lib" ]; then
+        mkdir -p "$BUILD_DIR/lib"
+        cp -r ${var.source_path}/lib/*.py "$BUILD_DIR/lib/" 2>/dev/null || true
+      fi
+    EOT
+  }
+}
+
 data "archive_file" "lambda" {
   type        = "zip"
-  source_dir  = var.source_path
+  source_dir  = "${path.module}/.builds/${var.function_name}"
   output_path = "${path.module}/.builds/${var.function_name}.zip"
+  
+  depends_on = [null_resource.build_lambda]
+}
+
+# Upload to S3 if enabled
+resource "aws_s3_object" "lambda_package" {
+  count  = var.use_s3_deployment ? 1 : 0
+  bucket = var.s3_bucket_name
+  key    = "lambda-packages/${var.function_name}/${data.archive_file.lambda.output_base64sha256}.zip"
+  source = data.archive_file.lambda.output_path
+  etag   = data.archive_file.lambda.output_md5
 }
 
 resource "aws_lambda_function" "this" {
@@ -95,7 +168,10 @@ resource "aws_lambda_function" "this" {
   timeout       = var.timeout
   memory_size   = var.memory_size
 
-  filename         = data.archive_file.lambda.output_path
+  # Use S3 if enabled (for large packages), otherwise use direct upload
+  s3_bucket        = var.use_s3_deployment ? var.s3_bucket_name : null
+  s3_key           = var.use_s3_deployment ? aws_s3_object.lambda_package[0].key : null
+  filename         = var.use_s3_deployment ? null : data.archive_file.lambda.output_path
   source_code_hash = data.archive_file.lambda.output_base64sha256
 
   layers = var.layers

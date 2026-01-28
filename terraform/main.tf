@@ -4,9 +4,25 @@ terraform {
       source  = "hashicorp/aws"
       version = ">= 5.20.0"
     }
+    awscc = {
+      source  = "hashicorp/awscc"
+      version = ">= 0.24.0"
+    }
     archive = {
       source  = "hashicorp/archive"
       version = ">= 2.4.0"
+    }
+    null = {
+      source  = "hashicorp/null"
+      version = ">= 3.2.0"
+    }
+    random = {
+      source  = "hashicorp/random"
+      version = ">= 3.6.0"
+    }
+    time = {
+      source  = "hashicorp/time"
+      version = ">= 0.9.0"
     }
   }
   required_version = ">= 1.3.0"
@@ -33,6 +49,17 @@ provider "aws" {
   # - IAM role (if running on EC2/ECS/Lambda)
   profile = var.aws_profile != "" ? var.aws_profile : null
 }
+
+provider "awscc" {
+  region  = var.region
+  profile = var.aws_profile != "" ? var.aws_profile : null
+}
+
+provider "null" {}
+
+provider "random" {}
+
+provider "time" {}
 
 locals {
   env = terraform.workspace
@@ -218,6 +245,9 @@ module "lambda_embeddings" {
 
   environment_variables = local.lambda_embeddings_env
 
+  # Use S3 for large deployment packages
+  use_s3_deployment = true
+  
   # S3 Trigger
   s3_trigger_enabled = true
   s3_bucket_name     = module.s3_documents.bucket_name
@@ -282,6 +312,10 @@ module "lambda_query" {
   vpc_id             = var.vpc_id
   subnet_ids         = var.subnets
   security_group_ids = [module.aurora.security_group_id]
+
+  # Use S3 for large deployment packages
+  use_s3_deployment = true
+  s3_bucket_name    = module.s3_documents.bucket_name
 
   environment_variables = local.lambda_query_env
 
@@ -381,3 +415,90 @@ module "api_gateway" {
 #   compatible_runtimes = ["python3.12"]
 #   description         = "Shared Python dependencies for RAG lambdas"
 # }
+
+# ==============================================================================
+# Bedrock AgentCore Module
+# Based on: https://github.com/aws-ia/terraform-aws-agentcore
+# ==============================================================================
+
+module "agentcore" {
+  source = "./modules/agentcore"
+  
+  # Only create if enabled
+  count = var.create_agentcore ? 1 : 0
+
+  # General configuration
+  name_prefix = var.agentcore_name_prefix
+  environment = var.environment
+  tags        = local.common_tags
+
+  # Runtime configuration (ECR image)
+  create_runtime            = var.agentcore_create_runtime
+  runtime_container_uri     = var.agentcore_runtime_container_uri
+  runtime_description       = var.agentcore_runtime_description
+  runtime_network_mode      = var.agentcore_runtime_network_mode
+  runtime_subnet_ids        = var.agentcore_runtime_network_mode == "VPC" ? var.subnets : []
+  runtime_security_group_ids = var.agentcore_runtime_network_mode == "VPC" ? [module.aurora.security_group_id] : []
+  runtime_protocol          = var.agentcore_runtime_protocol
+  runtime_idle_timeout      = var.agentcore_runtime_idle_timeout
+  runtime_max_lifetime      = var.agentcore_runtime_max_lifetime
+  runtime_environment_variables = merge(
+    {
+      LAMBDA_QUERY      = module.lambda_query.function_name
+      LAMBDA_EMBEDDINGS = module.lambda_embeddings.function_name
+      AGENT_NAME        = var.agent_name
+      AGENT_MODEL_ID    = var.agent_model_id
+    },
+    var.agentcore_runtime_environment_variables
+  )
+  lambda_function_arns = [
+    module.lambda_query.function_arn,
+    module.lambda_embeddings.function_arn
+  ]
+
+  # Runtime Endpoint
+  create_runtime_endpoint = var.agentcore_create_runtime_endpoint
+
+  # Cognito (Security)
+  create_cognito                      = var.agentcore_create_cognito
+  cognito_user_pool_id               = var.agentcore_cognito_user_pool_id
+  cognito_client_id                  = var.agentcore_cognito_client_id
+  cognito_discovery_url              = var.agentcore_cognito_discovery_url
+  cognito_allowed_audience           = var.agentcore_cognito_allowed_audience
+  cognito_password_policy            = var.agentcore_cognito_password_policy
+  cognito_mfa_configuration          = var.agentcore_cognito_mfa_configuration
+  cognito_callback_urls              = var.agentcore_cognito_callback_urls
+  cognito_logout_urls                = var.agentcore_cognito_logout_urls
+  cognito_token_validity_hours       = var.agentcore_cognito_token_validity_hours
+  cognito_refresh_token_validity_days = var.agentcore_cognito_refresh_token_validity_days
+
+  # Memory (Short-term and Long-term)
+  create_memory                      = var.agentcore_create_memory
+  memory_description                 = var.agentcore_memory_description
+  memory_event_expiry_days          = var.agentcore_memory_event_expiry_days
+  memory_kms_key_arn                = var.agentcore_memory_kms_key_arn
+  memory_enable_semantic            = var.agentcore_memory_enable_semantic
+  memory_semantic_namespaces        = var.agentcore_memory_semantic_namespaces
+  memory_enable_summary             = var.agentcore_memory_enable_summary
+  memory_summary_namespaces         = var.agentcore_memory_summary_namespaces
+  memory_enable_user_preference     = var.agentcore_memory_enable_user_preference
+  memory_user_preference_namespaces = var.agentcore_memory_user_preference_namespaces
+  memory_custom_strategy            = var.agentcore_memory_custom_strategy
+
+  # Gateway (REST API)
+  create_gateway          = var.agentcore_create_gateway
+  gateway_description     = var.agentcore_gateway_description
+  gateway_instructions    = var.agentcore_gateway_instructions
+  gateway_search_type     = var.agentcore_gateway_search_type
+  gateway_mcp_versions    = var.agentcore_gateway_mcp_versions
+  gateway_kms_key_arn     = var.agentcore_gateway_kms_key_arn
+  gateway_exception_level = var.agentcore_gateway_exception_level
+
+  # Gateway Target
+  create_gateway_target                 = var.agentcore_create_gateway_target
+  gateway_target_lambda_arn            = module.lambda_query.function_arn
+  gateway_target_tool_name             = var.agentcore_gateway_target_tool_name
+  gateway_target_tool_description      = var.agentcore_gateway_target_tool_description
+  gateway_target_tool_input_description = var.agentcore_gateway_target_tool_input_description
+  gateway_target_tool_input_properties = var.agentcore_gateway_target_tool_input_properties
+}

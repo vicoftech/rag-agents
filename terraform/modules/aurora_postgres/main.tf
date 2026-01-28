@@ -8,10 +8,10 @@ resource "aws_security_group" "this" {
   vpc_id = var.vpc_id
 
   ingress {
-    from_port   = 5432
-    to_port     = 5432
+    from_port   = local.final_port
+    to_port     = local.final_port
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"] # Ajustar para prod
+    cidr_blocks = local.final_ingress_cidr_blocks
   }
 
   egress {
@@ -23,10 +23,11 @@ resource "aws_security_group" "this" {
 }
 
 resource "aws_rds_cluster" "this" {
-  cluster_identifier     = "aurora-pg-${var.environment}"
+  cluster_identifier     = local.final_cluster_identifier
   engine                 = "aurora-postgresql"
   engine_version         = var.engine_version
   database_name          = var.db_name
+  port                   = local.final_port
 
   master_username = var.master_username
   master_password = var.master_password
@@ -44,7 +45,7 @@ resource "aws_rds_cluster" "this" {
 }
 
 resource "aws_rds_cluster_instance" "this" {
-  identifier         = "aurora-pg-${var.environment}-instance"
+  identifier         = local.final_instance_identifier
   cluster_identifier = aws_rds_cluster.this.id
   instance_class     = "db.serverless"
   engine             = "aurora-postgresql"

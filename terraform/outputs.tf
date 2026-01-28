@@ -144,3 +144,62 @@ output "api_usage_example" {
       }'
   EOT
 }
+
+# ==============================================================================
+# Bedrock AgentCore Outputs
+# ==============================================================================
+
+output "agentcore_runtime_id" {
+  description = "AgentCore Runtime ID"
+  value       = var.create_agentcore ? module.agentcore[0].runtime_id : null
+}
+
+output "agentcore_runtime_arn" {
+  description = "AgentCore Runtime ARN"
+  value       = var.create_agentcore ? module.agentcore[0].runtime_arn : null
+}
+
+output "agentcore_runtime_invoke_url" {
+  description = "URL to invoke the AgentCore Runtime"
+  value       = var.create_agentcore ? module.agentcore[0].runtime_invoke_url : null
+}
+
+output "agentcore_runtime_endpoint_id" {
+  description = "AgentCore Runtime Endpoint ID"
+  value       = var.create_agentcore ? module.agentcore[0].runtime_endpoint_id : null
+}
+
+output "agentcore_cognito_user_pool_id" {
+  description = "Cognito User Pool ID for AgentCore"
+  value       = var.create_agentcore ? module.agentcore[0].cognito_user_pool_id : null
+}
+
+output "agentcore_cognito_client_id" {
+  description = "Cognito Client ID for AgentCore"
+  value       = var.create_agentcore ? module.agentcore[0].cognito_client_id : null
+}
+
+output "agentcore_cognito_token_url" {
+  description = "URL to obtain tokens from Cognito"
+  value       = var.create_agentcore ? module.agentcore[0].cognito_token_url : null
+}
+
+output "agentcore_memory_id" {
+  description = "AgentCore Memory ID"
+  value       = var.create_agentcore ? module.agentcore[0].memory_id : null
+}
+
+output "agentcore_gateway_id" {
+  description = "AgentCore Gateway ID"
+  value       = var.create_agentcore ? module.agentcore[0].gateway_id : null
+}
+
+output "agentcore_gateway_url" {
+  description = "AgentCore Gateway URL"
+  value       = var.create_agentcore ? module.agentcore[0].gateway_url : null
+}
+
+output "agentcore_usage_instructions" {
+  description = "Instructions for using AgentCore"
+  value       = var.create_agentcore ? module.agentcore[0].usage_instructions : null
+}
