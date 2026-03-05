@@ -125,11 +125,25 @@ resource "null_resource" "build_lambda" {
       $ReqFile = "${var.source_path}/requirements.txt"
       if (Test-Path $ReqFile) {
         Write-Host "Installing Python dependencies for Linux/Lambda..."
+        
+        # Create temp requirements without psycopg2-binary
+        $TempReqFile = "$BuildDir/temp_requirements.txt"
+        (Get-Content $ReqFile) | Where-Object { $_ -notmatch "psycopg2-binary" } | Set-Content $TempReqFile
+        
+        # Install all packages except psycopg2-binary with --only-binary
         python -m pip install `
-          -r $ReqFile `
+          -r $TempReqFile `
           -t $BuildDir `
           --platform manylinux2014_x86_64 `
           --only-binary=:all: `
+          --upgrade `
+          --quiet
+          
+        # Install psycopg2-binary separately without --only-binary restriction
+        python -m pip install `
+          psycopg2-binary `
+          -t $BuildDir `
+          --platform manylinux2014_x86_64 `
           --upgrade `
           --quiet
       }
