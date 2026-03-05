@@ -108,7 +108,7 @@ resource "null_resource" "build_lambda" {
     requirements   = fileexists("${var.source_path}/requirements.txt") ? filemd5("${var.source_path}/requirements.txt") : "no-requirements"
     source_hash    = sha256(join("", [for f in fileset(var.source_path, "**/*.py") : filesha256("${var.source_path}/${f}")]))
     build_platform = "manylinux2014_x86_64" # Force rebuild when platform changes
-    build_version  = "2"                    # Increment to force rebuild
+    build_version  = "6"                    # Increment to force rebuild
   }
 
   provisioner "local-exec" {
@@ -125,25 +125,14 @@ resource "null_resource" "build_lambda" {
       $ReqFile = "${var.source_path}/requirements.txt"
       if (Test-Path $ReqFile) {
         Write-Host "Installing Python dependencies for Linux/Lambda..."
-        
-        # Create temp requirements without psycopg2-binary
-        $TempReqFile = "$BuildDir/temp_requirements.txt"
-        (Get-Content $ReqFile) | Where-Object { $_ -notmatch "psycopg2-binary" } | Set-Content $TempReqFile
-        
-        # Install all packages except psycopg2-binary with --only-binary
         python -m pip install `
-          -r $TempReqFile `
+          -r $ReqFile `
           -t $BuildDir `
           --platform manylinux2014_x86_64 `
+          --implementation cp `
+          --python-version 3.12 `
+          --abi cp312 `
           --only-binary=:all: `
-          --upgrade `
-          --quiet
-          
-        # Install psycopg2-binary separately without --only-binary restriction
-        python -m pip install `
-          psycopg2-binary `
-          -t $BuildDir `
-          --platform manylinux2014_x86_64 `
           --upgrade `
           --quiet
       }
