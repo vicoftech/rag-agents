@@ -108,7 +108,7 @@ resource "null_resource" "build_lambda" {
     requirements   = fileexists("${var.source_path}/requirements.txt") ? filemd5("${var.source_path}/requirements.txt") : "no-requirements"
     source_hash    = sha256(join("", [for f in fileset(var.source_path, "**/*.py") : filesha256("${var.source_path}/${f}")]))
     build_platform = "manylinux2014_x86_64" # Force rebuild when platform changes
-    build_version  = "6"                    # Increment to force rebuild
+    build_version  = "7"                    # Increment to force rebuild
   }
 
   provisioner "local-exec" {

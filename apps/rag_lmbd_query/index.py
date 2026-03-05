@@ -116,7 +116,7 @@ def embed(text: str):
 
 
 # --- Semantic Search adaptado al nuevo esquema ---
-def semantic_search(query, tenant_id, document_id=None, agent_id=None, k=50):
+def semantic_search(query, tenant_id, document_name=None, agent_id=None, chunk_text=None, k=50):
     # 1) Obtener embedding del query
     q_emb = embed(query)  # <-- tu función embed()
     
@@ -144,13 +144,17 @@ def semantic_search(query, tenant_id, document_id=None, agent_id=None, k=50):
 
     # Filtros opcionales
     filters = []
-    if document_id:
-        filters.append("document_id = %s")
-        params.append(document_id)
+    if document_name:
+        filters.append("document_name = %s")
+        params.append(document_name)
 
     if agent_id:
         filters.append("agent_id = %s")
         params.append(agent_id)
+
+    if chunk_text:
+        filters.append("chunk_text = %s")
+        params.append(chunk_text)
 
     if filters:
         sql += " WHERE " + " AND ".join(filters)
@@ -279,12 +283,14 @@ def handler(event, context):
         tenant_id = body.get("tenant_id")
         agent_id = body.get("agent_id")
         query = body.get("query")
-        document_id = body.get("document_id")
+        document_name = body.get("document_name")
+        chunk_text = body.get("chunk_text")
     else:
         tenant_id = event.get("tenant_id")
         agent_id = event.get("agent_id")
         query = event.get("query")
-        document_id = event.get("document_id")  # opcional
+        document_name = event.get("document_name")  # opcional
+        chunk_text = event.get("chunk_text")  # opcional
 
     if not tenant_id or not agent_id or not query:
         resp = {
@@ -299,7 +305,7 @@ def handler(event, context):
         return resp
 
     # Obtener chunks relevantes
-    contexts = semantic_search(query, tenant_id, document_id , agent_id)
+    contexts = semantic_search(query, tenant_id, document_name , agent_id, chunk_text)
     context_text = "\n\n".join([c[0] for c in contexts])
 
     # Obtener prompt del agente
