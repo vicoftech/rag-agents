@@ -136,6 +136,7 @@ def semantic_search(query, tenant_id, document_name=None, agent_id=None, chunk_t
     sql = f"""
         SELECT 
             chunk_text,
+            document_name,
             embedding <=> %s::vector AS distance
         FROM {schema}.documents
     """
@@ -170,7 +171,11 @@ def semantic_search(query, tenant_id, document_name=None, agent_id=None, chunk_t
     cur.close()
     conn.close()
 
-    return rows
+    # Extraer chunks y documentos únicos
+    chunks = [row[0] for row in rows]
+    documents = sorted(set(row[1] for row in rows))
+
+    return chunks, documents
 
 
 
@@ -305,8 +310,8 @@ def handler(event, context):
         return resp
 
     # Obtener chunks relevantes
-    contexts = semantic_search(query, tenant_id, document_name , agent_id, chunk_text)
-    context_text = "\n\n".join([c[0] for c in contexts])
+    chunks, documents = semantic_search(query, tenant_id, document_name , agent_id, chunk_text)
+    context_text = "\n\n".join(chunks)
 
     # Obtener prompt del agente
     agent_prompt = get_prompt_template(tenant_id, agent_id)
@@ -324,7 +329,11 @@ def handler(event, context):
     print(response)
     resp = {
         "statusCode": 200,
-        "body": json.dumps({"response": response}),
+        "body": json.dumps({
+            "response": response,
+            "contexts": chunks,
+            "documents": documents
+        }),
     }
     if is_http_event:
         resp["headers"] = {
