@@ -1,0 +1,98 @@
+resource "aws_apigatewayv2_api" "this" {
+  name          = var.api_name
+  description   = var.api_description
+  protocol_type = "HTTP"
+  version       = "1.0"
+
+  cors_configuration {
+    allow_origins = var.cors_allowed_origins
+    allow_methods = var.cors_allowed_methods
+    allow_headers = var.cors_allowed_headers
+    max_age       = 300
+  }
+
+  tags = var.tags
+}
+
+resource "aws_apigatewayv2_authorizer" "jwt" {
+  api_id           = aws_apigatewayv2_api.this.id
+  authorizer_type  = "JWT"
+  identity_sources = ["$request.header.Authorization"]
+  name             = "${var.api_name}-jwt-authorizer"
+
+  jwt_configuration {
+    audience = [var.cognito_user_pool_client_id]
+    issuer   = var.cognito_endpoint
+  }
+}
+
+resource "aws_lambda_permission" "api_gateway" {
+  statement_id  = "AllowAPIGatewayInvokeQuery"
+  action        = "lambda:InvokeFunction"
+  function_name = var.lambda_function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.this.execution_arn}/*/*"
+}
+
+resource "aws_apigatewayv2_integration" "lambda" {
+  api_id                 = aws_apigatewayv2_api.this.id
+  integration_type       = "AWS_PROXY"
+  integration_uri        = var.lambda_invoke_arn
+  payload_format_version = "2.0"
+  timeout_milliseconds   = 30000
+}
+
+resource "aws_apigatewayv2_route" "query" {
+  api_id             = aws_apigatewayv2_api.this.id
+  route_key          = "POST /query"
+  target             = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+  authorization_type = "JWT"
+}
+
+resource "aws_apigatewayv2_route" "query_options" {
+  api_id    = aws_apigatewayv2_api.this.id
+  route_key = "OPTIONS /query"
+  target    = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+}
+
+resource "aws_cloudwatch_log_group" "api_gateway" {
+  name              = "/aws/apigateway/${var.api_name}"
+  retention_in_days = 14
+  tags              = var.tags
+}
+
+resource "aws_apigatewayv2_stage" "this" {
+  api_id      = aws_apigatewayv2_api.this.id
+  name        = var.environment
+  auto_deploy = true
+
+  access_log_settings {
+    destination_arn = aws_cloudwatch_log_group.api_gateway.arn
+    format = jsonencode({
+      requestId      = "$context.requestId"
+      ip             = "$context.identity.sourceIp"
+      requestTime    = "$context.requestTime"
+      httpMethod     = "$context.httpMethod"
+      routeKey       = "$context.routeKey"
+      status         = "$context.status"
+      protocol       = "$context.protocol"
+      responseLength = "$context.responseLength"
+    })
+  }
+
+  tags = var.tags
+}
+
+resource "aws_apigatewayv2_deployment" "this" {
+  api_id = aws_apigatewayv2_api.this.id
+
+  depends_on = [
+    aws_apigatewayv2_route.query,
+    aws_apigatewayv2_route.query_options,
+  ]
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}

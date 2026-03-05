@@ -127,7 +127,7 @@ resource "aws_lambda_function" "this" {
   dynamic "vpc_config" {
     for_each = length(var.subnet_ids) > 0 ? [1] : []
     content {
-      subnet_ids         = var.subnet_ids
+      subnet_ids = var.subnet_ids
       security_group_ids = length(var.security_group_ids) > 0 ? var.security_group_ids : [
         aws_security_group.lambda[0].id
       ]

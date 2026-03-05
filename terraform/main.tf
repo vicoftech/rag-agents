@@ -25,7 +25,7 @@ terraform {
       version = ">= 0.9.0"
     }
   }
-  required_version = ">= 1.3.0"
+  required_version = ">= 1.2.0"
 
   # Uncomment to use S3 backend for state
   # backend "s3" {
@@ -41,18 +41,13 @@ terraform {
 # If aws_profile is empty string, Terraform will use default AWS credentials
 # (from AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY env vars or ~/.aws/credentials)
 provider "aws" {
-  region = var.region
-  # Only set profile if it's not empty, otherwise use default credentials
-  # When profile is null, Terraform uses default credentials from:
-  # - AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY environment variables
-  # - ~/.aws/credentials (default profile)
-  # - IAM role (if running on EC2/ECS/Lambda)
-  profile = var.aws_profile != "" ? var.aws_profile : null
+  profile = "default"
+  region  = var.aws_region
 }
 
 provider "awscc" {
-  region  = var.region
-  profile = var.aws_profile != "" ? var.aws_profile : null
+  profile = "default"
+  region  = var.aws_region
 }
 
 provider "null" {}
@@ -63,7 +58,7 @@ provider "time" {}
 
 locals {
   env = terraform.workspace
-  
+
   common_tags = {
     Environment = var.environment
     Project     = "rag-agents"
@@ -77,10 +72,10 @@ locals {
 
   # Base environment variables (computed from other resources)
   base_db_env_vars = {
-    DB_HOST = module.aurora.cluster_endpoint
-    DB_PORT = "5432"
-    DB_NAME = "ragdb_${var.environment}"
-    DB_USER = var.master_username
+    DB_HOST     = module.aurora.cluster_endpoint
+    DB_PORT     = "5432"
+    DB_NAME     = "ragdb_${var.environment}"
+    DB_USER     = var.master_username
     DB_PASSWORD = var.master_password
   }
 
@@ -110,9 +105,9 @@ data "aws_region" "current" {}
 module "s3_documents" {
   source = "./modules/s3_documents"
 
-  bucket_name      = "rag-documents-${var.environment}-${data.aws_caller_identity.current.account_id}"
-  enable_lifecycle = true
-  enable_cors      = var.enable_s3_cors
+  bucket_name          = "rag-documents-${var.environment}-${data.aws_caller_identity.current.account_id}"
+  enable_lifecycle     = true
+  enable_cors          = var.enable_s3_cors
   cors_allowed_origins = var.cors_allowed_origins
 
   tags = local.common_tags
@@ -136,11 +131,11 @@ data "aws_route_table" "selected" {
 # VPC Endpoint para S3 (Gateway type - gratuito)
 resource "aws_vpc_endpoint" "s3" {
   vpc_id            = var.vpc_id
-  service_name      = "com.amazonaws.${var.region}.s3"
+  service_name      = "com.amazonaws.${var.aws_region}.s3"
   vpc_endpoint_type = "Gateway"
-  
+
   route_table_ids = distinct(data.aws_route_table.selected[*].id)
-  
+
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -162,7 +157,7 @@ resource "aws_vpc_endpoint" "s3" {
 # VPC Endpoint para Bedrock Runtime (Interface type)
 resource "aws_vpc_endpoint" "bedrock" {
   vpc_id              = var.vpc_id
-  service_name        = "com.amazonaws.${var.region}.bedrock-runtime"
+  service_name        = "com.amazonaws.${var.aws_region}.bedrock-runtime"
   vpc_endpoint_type   = "Interface"
   subnet_ids          = var.subnets
   security_group_ids  = [aws_security_group.vpc_endpoints.id]
@@ -227,12 +222,12 @@ module "aurora" {
 module "lambda_embeddings" {
   source = "./modules/lambda"
 
-  function_name = "rag_lmbd_embeddings-${var.environment}"
-  description   = "Processes PDF documents, generates embeddings and stores in PostgreSQL"
-  handler       = "index.handler"
-  runtime       = "python3.12"
-  timeout       = var.lambda_embeddings_config.timeout
-  memory_size   = var.lambda_embeddings_config.memory_size
+  function_name          = "rag_lmbd_embeddings-${var.environment}"
+  description            = "Processes PDF documents, generates embeddings and stores in PostgreSQL"
+  handler                = "index.handler"
+  runtime                = "python3.12"
+  timeout                = var.lambda_embeddings_config.timeout
+  memory_size            = var.lambda_embeddings_config.memory_size
   ephemeral_storage_size = var.lambda_embeddings_config.ephemeral_storage_size
 
   source_path = local.lambda_embeddings_path
@@ -247,7 +242,7 @@ module "lambda_embeddings" {
 
   # Use S3 for large deployment packages
   use_s3_deployment = true
-  
+
   # S3 Trigger
   s3_trigger_enabled = true
   s3_bucket_name     = module.s3_documents.bucket_name
@@ -274,7 +269,7 @@ module "lambda_embeddings" {
         "bedrock:InvokeModel"
       ]
       resources = [
-        "arn:aws:bedrock:${var.region}::foundation-model/*"
+        "arn:aws:bedrock:${var.aws_region}::foundation-model/*"
       ]
     },
     {
@@ -297,12 +292,12 @@ module "lambda_embeddings" {
 module "lambda_query" {
   source = "./modules/lambda"
 
-  function_name = "rag_lmbd_query-${var.environment}"
-  description   = "Performs semantic search and generates LLM responses"
-  handler       = "index.handler"
-  runtime       = "python3.12"
-  timeout       = var.lambda_query_config.timeout
-  memory_size   = var.lambda_query_config.memory_size
+  function_name          = "rag_lmbd_query-${var.environment}"
+  description            = "Performs semantic search and generates LLM responses"
+  handler                = "index.handler"
+  runtime                = "python3.12"
+  timeout                = var.lambda_query_config.timeout
+  memory_size            = var.lambda_query_config.memory_size
   ephemeral_storage_size = var.lambda_query_config.ephemeral_storage_size
 
   source_path = local.lambda_query_path
@@ -327,10 +322,45 @@ module "lambda_query" {
         "bedrock:InvokeModel"
       ]
       resources = [
-        "arn:aws:bedrock:${var.region}::foundation-model/*"
+        "arn:aws:bedrock:${var.aws_region}::foundation-model/*"
       ]
     }
   ]
+
+  tags = local.common_tags
+}
+
+# ==============================================================================
+# Cognito + API Gateway for RAG Query (/query)
+# ==============================================================================
+
+module "cognito_query" {
+  source = "./modules/cognito"
+
+  name        = "rag-agents-query"
+  environment = var.environment
+  aws_region  = var.aws_region
+
+  tags = local.common_tags
+}
+
+module "api_gateway_query" {
+  source = "./modules/api_gateway"
+
+  api_name        = "rag-query-api-${var.environment}"
+  api_description = "API Gateway for RAG Query with JWT authentication"
+  environment     = var.environment
+  aws_region      = var.aws_region
+
+  lambda_function_name = module.lambda_query.function_name
+  lambda_invoke_arn    = module.lambda_query.invoke_arn
+
+  cognito_user_pool_client_id = module.cognito_query.user_pool_client_id
+  cognito_endpoint            = module.cognito_query.cognito_endpoint
+
+  cors_allowed_origins = ["*"]
+  cors_allowed_methods = ["GET", "POST", "OPTIONS"]
+  cors_allowed_headers = ["*"]
 
   tags = local.common_tags
 }
@@ -342,12 +372,15 @@ module "lambda_query" {
 module "bedrock_agent" {
   source = "./modules/bedrock_agent"
 
-  function_name = "rag-agent-${var.environment}"
-  description   = "Bedrock Agent Core handler for RAG agent"
-  handler       = "api_gateway_handler.lambda_handler"
-  runtime       = "python3.12"
-  timeout       = 300
-  memory_size   = 1024
+  count = var.create_agentcore ? 1 : 0
+
+  # General configuration
+  function_name          = "rag-agent-${var.environment}"
+  description            = "Bedrock Agent Core handler for RAG agent"
+  handler                = "api_gateway_handler.lambda_handler"
+  runtime                = "python3.12"
+  timeout                = 300
+  memory_size            = 1024
   ephemeral_storage_size = 1024
 
   source_path = local.lambda_agent_path
@@ -360,18 +393,18 @@ module "bedrock_agent" {
 
   environment_variables = merge(
     {
-      AGENT_MODEL_ID       = var.agent_model_id
-      AGENT_NAME           = var.agent_name
-      LAMBDA_QUERY         = module.lambda_query.function_name
-      LAMBDA_EMBEDDINGS    = module.lambda_embeddings.function_name
+      AGENT_MODEL_ID    = var.agent_model_id
+      AGENT_NAME        = var.agent_name
+      LAMBDA_QUERY      = module.lambda_query.function_name
+      LAMBDA_EMBEDDINGS = module.lambda_embeddings.function_name
     },
     var.agent_environment_variables
   )
 
-  agent_name        = "${var.agent_name}-${var.environment}"
-  agent_description = "RAG Agent deployed via Bedrock Agent Core"
-  agent_model_id    = var.agent_model_id
-  region            = var.region
+  agent_name                 = "${var.agent_name}-${var.environment}"
+  agent_description          = "RAG Agent deployed via Bedrock Agent Core"
+  agent_model_id             = var.agent_model_id
+  region                     = var.aws_region
   lambda_query_function_name = module.lambda_query.function_name
 
   tags = local.common_tags
@@ -384,19 +417,21 @@ module "bedrock_agent" {
 module "api_gateway" {
   source = "./modules/api_gateway_jwt"
 
+  count = var.create_agentcore ? 1 : 0
+
   api_name        = "rag-agent-api-${var.environment}"
   api_description = "API Gateway for RAG Agent with JWT authentication"
   environment     = var.environment
-  region          = var.region
+  region          = var.aws_region
 
-  lambda_function_arn  = module.bedrock_agent.lambda_function_arn
-  lambda_function_name = module.bedrock_agent.lambda_function_name
-  lambda_invoke_arn    = module.bedrock_agent.lambda_invoke_arn
+  lambda_function_arn  = module.bedrock_agent[0].lambda_function_arn
+  lambda_function_name = module.bedrock_agent[0].lambda_function_name
+  lambda_invoke_arn    = module.bedrock_agent[0].lambda_invoke_arn
 
-  create_cognito_user_pool = var.create_cognito_user_pool
-  cognito_user_pool_id     = var.cognito_user_pool_id
+  create_cognito_user_pool    = var.create_cognito_user_pool
+  cognito_user_pool_id        = var.cognito_user_pool_id
   cognito_user_pool_client_id = var.cognito_user_pool_client_id
-  cognito_user_pool_arn    = var.cognito_user_pool_arn
+  cognito_user_pool_arn       = var.cognito_user_pool_arn
 
   cors_allowed_origins = var.cors_allowed_origins
   cors_allowed_methods = ["GET", "POST", "OPTIONS"]
@@ -423,7 +458,7 @@ module "api_gateway" {
 
 module "agentcore" {
   source = "./modules/agentcore"
-  
+
   # Only create if enabled
   count = var.create_agentcore ? 1 : 0
 
@@ -433,15 +468,15 @@ module "agentcore" {
   tags        = local.common_tags
 
   # Runtime configuration (ECR image)
-  create_runtime            = var.agentcore_create_runtime
-  runtime_container_uri     = var.agentcore_runtime_container_uri
-  runtime_description       = var.agentcore_runtime_description
-  runtime_network_mode      = var.agentcore_runtime_network_mode
-  runtime_subnet_ids        = var.agentcore_runtime_network_mode == "VPC" ? var.subnets : []
+  create_runtime             = var.agentcore_create_runtime
+  runtime_container_uri      = var.agentcore_runtime_container_uri
+  runtime_description        = var.agentcore_runtime_description
+  runtime_network_mode       = var.agentcore_runtime_network_mode
+  runtime_subnet_ids         = var.agentcore_runtime_network_mode == "VPC" ? var.subnets : []
   runtime_security_group_ids = var.agentcore_runtime_network_mode == "VPC" ? [module.aurora.security_group_id] : []
-  runtime_protocol          = var.agentcore_runtime_protocol
-  runtime_idle_timeout      = var.agentcore_runtime_idle_timeout
-  runtime_max_lifetime      = var.agentcore_runtime_max_lifetime
+  runtime_protocol           = var.agentcore_runtime_protocol
+  runtime_idle_timeout       = var.agentcore_runtime_idle_timeout
+  runtime_max_lifetime       = var.agentcore_runtime_max_lifetime
   runtime_environment_variables = merge(
     {
       LAMBDA_QUERY      = module.lambda_query.function_name
@@ -461,20 +496,20 @@ module "agentcore" {
 
   # Cognito (Security)
   create_cognito                      = var.agentcore_create_cognito
-  cognito_user_pool_id               = var.agentcore_cognito_user_pool_id
-  cognito_client_id                  = var.agentcore_cognito_client_id
-  cognito_discovery_url              = var.agentcore_cognito_discovery_url
-  cognito_allowed_audience           = var.agentcore_cognito_allowed_audience
-  cognito_password_policy            = var.agentcore_cognito_password_policy
-  cognito_mfa_configuration          = var.agentcore_cognito_mfa_configuration
-  cognito_callback_urls              = var.agentcore_cognito_callback_urls
-  cognito_logout_urls                = var.agentcore_cognito_logout_urls
-  cognito_token_validity_hours       = var.agentcore_cognito_token_validity_hours
+  cognito_user_pool_id                = var.agentcore_cognito_user_pool_id
+  cognito_client_id                   = var.agentcore_cognito_client_id
+  cognito_discovery_url               = var.agentcore_cognito_discovery_url
+  cognito_allowed_audience            = var.agentcore_cognito_allowed_audience
+  cognito_password_policy             = var.agentcore_cognito_password_policy
+  cognito_mfa_configuration           = var.agentcore_cognito_mfa_configuration
+  cognito_callback_urls               = var.agentcore_cognito_callback_urls
+  cognito_logout_urls                 = var.agentcore_cognito_logout_urls
+  cognito_token_validity_hours        = var.agentcore_cognito_token_validity_hours
   cognito_refresh_token_validity_days = var.agentcore_cognito_refresh_token_validity_days
 
   # Memory (Short-term and Long-term)
-  create_memory                      = var.agentcore_create_memory
-  memory_description                 = var.agentcore_memory_description
+  create_memory                     = var.agentcore_create_memory
+  memory_description                = var.agentcore_memory_description
   memory_event_expiry_days          = var.agentcore_memory_event_expiry_days
   memory_kms_key_arn                = var.agentcore_memory_kms_key_arn
   memory_enable_semantic            = var.agentcore_memory_enable_semantic
@@ -496,9 +531,9 @@ module "agentcore" {
 
   # Gateway Target
   create_gateway_target                 = var.agentcore_create_gateway_target
-  gateway_target_lambda_arn            = module.lambda_query.function_arn
-  gateway_target_tool_name             = var.agentcore_gateway_target_tool_name
-  gateway_target_tool_description      = var.agentcore_gateway_target_tool_description
+  gateway_target_lambda_arn             = module.lambda_query.function_arn
+  gateway_target_tool_name              = var.agentcore_gateway_target_tool_name
+  gateway_target_tool_description       = var.agentcore_gateway_target_tool_description
   gateway_target_tool_input_description = var.agentcore_gateway_target_tool_input_description
-  gateway_target_tool_input_properties = var.agentcore_gateway_target_tool_input_properties
+  gateway_target_tool_input_properties  = var.agentcore_gateway_target_tool_input_properties
 }

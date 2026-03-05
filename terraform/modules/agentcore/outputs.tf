@@ -144,7 +144,7 @@ output "gateway_role_arn" {
 
 output "gateway_target_id" {
   description = "ID of the Gateway Target (create via AWS CLI after deployment)"
-  value       = null  # Gateway target must be created via AWS CLI due to provider schema limitations
+  value       = null # Gateway target must be created via AWS CLI due to provider schema limitations
 }
 
 # ==============================================================================

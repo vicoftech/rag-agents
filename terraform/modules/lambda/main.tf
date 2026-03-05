@@ -58,7 +58,7 @@ resource "aws_iam_role_policy" "s3_deployment" {
   count = var.use_s3_deployment ? 1 : 0
   name  = "${var.function_name}-s3-deployment-policy"
   role  = aws_iam_role.lambda.id
-  
+
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -105,39 +105,46 @@ resource "aws_security_group" "lambda" {
 # Build Lambda with dependencies if requirements.txt exists
 resource "null_resource" "build_lambda" {
   triggers = {
-    requirements    = fileexists("${var.source_path}/requirements.txt") ? filemd5("${var.source_path}/requirements.txt") : "no-requirements"
-    source_hash     = sha256(join("", [for f in fileset(var.source_path, "**/*.py") : filesha256("${var.source_path}/${f}")]))
-    build_platform  = "manylinux2014_x86_64"  # Force rebuild when platform changes
-    build_version   = "2"  # Increment to force rebuild
+    requirements   = fileexists("${var.source_path}/requirements.txt") ? filemd5("${var.source_path}/requirements.txt") : "no-requirements"
+    source_hash    = sha256(join("", [for f in fileset(var.source_path, "**/*.py") : filesha256("${var.source_path}/${f}")]))
+    build_platform = "manylinux2014_x86_64" # Force rebuild when platform changes
+    build_version  = "2"                    # Increment to force rebuild
   }
 
   provisioner "local-exec" {
+    interpreter = ["PowerShell", "-Command"]
     command = <<-EOT
-      set -e
-      BUILD_DIR="${path.module}/.builds/${var.function_name}"
-      rm -rf "$BUILD_DIR"
-      mkdir -p "$BUILD_DIR"
-      
-      # Install dependencies if requirements.txt exists
-      if [ -f "${var.source_path}/requirements.txt" ]; then
-        echo "Installing Python dependencies for Linux/Lambda..."
-        python3 -m pip install \
-          -r "${var.source_path}/requirements.txt" \
-          -t "$BUILD_DIR" \
-          --platform manylinux2014_x86_64 \
-          --only-binary=:all: \
-          --upgrade \
+      $ErrorActionPreference = 'Stop'
+
+      $BuildDir = "${path.module}/.builds/${var.function_name}"
+      if (Test-Path $BuildDir) {
+        Remove-Item -Recurse -Force $BuildDir
+      }
+      New-Item -ItemType Directory -Force -Path $BuildDir | Out-Null
+
+      $ReqFile = "${var.source_path}/requirements.txt"
+      if (Test-Path $ReqFile) {
+        Write-Host "Installing Python dependencies for Linux/Lambda..."
+        python -m pip install `
+          -r $ReqFile `
+          -t $BuildDir `
+          --platform manylinux2014_x86_64 `
+          --only-binary=:all: `
+          --upgrade `
           --quiet
-      fi
-      
-      # Copy Python source files
-      cp -r ${var.source_path}/*.py "$BUILD_DIR/" 2>/dev/null || true
-      
-      # Copy lib directory if exists
-      if [ -d "${var.source_path}/lib" ]; then
-        mkdir -p "$BUILD_DIR/lib"
-        cp -r ${var.source_path}/lib/*.py "$BUILD_DIR/lib/" 2>/dev/null || true
-      fi
+      }
+
+      Get-ChildItem -Path "${var.source_path}" -Filter "*.py" -File -ErrorAction SilentlyContinue |
+        ForEach-Object { Copy-Item -Force $_.FullName -Destination $BuildDir }
+
+      $LibDir = "${var.source_path}/lib"
+      if (Test-Path $LibDir) {
+        $BuildLibDir = Join-Path $BuildDir "lib"
+        New-Item -ItemType Directory -Force -Path $BuildLibDir | Out-Null
+
+        Get-ChildItem -Path $LibDir -Filter "*.py" -File -ErrorAction SilentlyContinue |
+          ForEach-Object { Copy-Item -Force $_.FullName -Destination $BuildLibDir }
+      }
     EOT
   }
 }
@@ -146,7 +153,7 @@ data "archive_file" "lambda" {
   type        = "zip"
   source_dir  = "${path.module}/.builds/${var.function_name}"
   output_path = "${path.module}/.builds/${var.function_name}.zip"
-  
+
   depends_on = [null_resource.build_lambda]
 }
 
@@ -160,7 +167,7 @@ resource "aws_s3_object" "lambda_package" {
 }
 
 resource "aws_lambda_function" "this" {
-  function_name = "${var.function_name}"
+  function_name = var.function_name
   description   = var.description
   role          = aws_iam_role.lambda.arn
   handler       = var.handler

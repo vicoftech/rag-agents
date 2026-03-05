@@ -12,6 +12,12 @@ AWS_REGION = os.getenv('AWS_REGION', 'us-east-1')
 AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID_DEV', "")
 AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY_DEV', "")
 
+CORS_HEADERS = {
+     "Access-Control-Allow-Origin": "*",
+     "Access-Control-Allow-Headers": "*",
+     "Access-Control-Allow-Methods": "OPTIONS,POST,GET",
+ }
+
 session_args = {"region_name": AWS_REGION}
 
 if AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY:
@@ -230,16 +236,67 @@ def apply_prompt_template(prompt_template: str, context: str, query: str) -> str
 
 # --- Main Lambda Handler ---
 def handler(event, context):
-    tenant_id = event.get("tenant_id")
-    agent_id = event.get("agent_id")
-    query = event.get("query")
-    document_id = event.get("document_id")  # opcional
+    http_method = None
+    try:
+        http_method = (
+            event.get("requestContext", {})
+            .get("http", {})
+            .get("method")
+        )
+    except Exception:
+        http_method = None
+
+    if not http_method:
+        http_method = event.get("httpMethod")
+
+    if http_method and str(http_method).upper() == "OPTIONS":
+        return {
+            "statusCode": 200,
+            "headers": {
+                "Content-Type": "application/json",
+                **CORS_HEADERS,
+            },
+            "body": "",
+        }
+
+    is_http_event = bool(http_method)
+
+    if is_http_event:
+        body = event.get("body") or "{}"
+        if isinstance(body, str):
+            try:
+                body = json.loads(body)
+            except json.JSONDecodeError:
+                return {
+                    "statusCode": 400,
+                    "headers": {
+                        "Content-Type": "application/json",
+                        **CORS_HEADERS,
+                    },
+                    "body": json.dumps({"error": "Invalid JSON body"}),
+                }
+
+        tenant_id = body.get("tenant_id")
+        agent_id = body.get("agent_id")
+        query = body.get("query")
+        document_id = body.get("document_id")
+    else:
+        tenant_id = event.get("tenant_id")
+        agent_id = event.get("agent_id")
+        query = event.get("query")
+        document_id = event.get("document_id")  # opcional
 
     if not tenant_id or not agent_id or not query:
-        return {
+        resp = {
             "statusCode": 400,
-            "body": "Faltan tenant_id, agent_id o query"
+            "body": json.dumps({"error": "Faltan tenant_id, agent_id o query"}),
         }
+        if is_http_event:
+            resp["headers"] = {
+                "Content-Type": "application/json",
+                **CORS_HEADERS,
+            }
+        return resp
 
     # Obtener chunks relevantes
     contexts = semantic_search(query, tenant_id, document_id , agent_id)
@@ -259,7 +316,13 @@ def handler(event, context):
     llmClient = LLMClient(bedrock,MAIN_LLM_MODEL,FALLBACK_LLM_MODEL)
     response = llmClient.generate(prompt)
     print(response)
-    return {
+    resp = {
         "statusCode": 200,
-        "body": response
+        "body": json.dumps({"response": response}),
     }
+    if is_http_event:
+        resp["headers"] = {
+            "Content-Type": "application/json",
+            **CORS_HEADERS,
+        }
+    return resp

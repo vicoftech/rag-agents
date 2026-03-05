@@ -13,6 +13,12 @@ variable "region" {
   default     = "us-east-1"
 }
 
+variable "aws_region" {
+  description = "AWS region to deploy resources (used by providers)"
+  type        = string
+  default     = "us-east-1"
+}
+
 variable "aws_profile" {
   description = "AWS CLI named profile to use for credentials (optional, leave empty or set to \"\" to use default credentials from environment or ~/.aws/credentials)"
   type        = string
@@ -101,21 +107,29 @@ variable "lambda_query_env_vars" {
 variable "lambda_embeddings_config" {
   description = "Configuration for embeddings Lambda"
   type = object({
-    timeout                = optional(number, 900)
-    memory_size            = optional(number, 1024)
-    ephemeral_storage_size = optional(number, 1024)
+    timeout                = number
+    memory_size            = number
+    ephemeral_storage_size = number
   })
-  default = {}
+  default = {
+    timeout                = 900
+    memory_size            = 1024
+    ephemeral_storage_size = 1024
+  }
 }
 
 variable "lambda_query_config" {
   description = "Configuration for query Lambda"
   type = object({
-    timeout                = optional(number, 120)
-    memory_size            = optional(number, 512)
-    ephemeral_storage_size = optional(number, 512)
+    timeout                = number
+    memory_size            = number
+    ephemeral_storage_size = number
   })
-  default = {}
+  default = {
+    timeout                = 120
+    memory_size            = 512
+    ephemeral_storage_size = 512
+  }
 }
 
 # ==============================================================================
@@ -274,13 +288,19 @@ variable "agentcore_cognito_allowed_audience" {
 variable "agentcore_cognito_password_policy" {
   description = "Password policy for Cognito User Pool"
   type = object({
-    minimum_length    = optional(number, 8)
-    require_lowercase = optional(bool, true)
-    require_uppercase = optional(bool, true)
-    require_numbers   = optional(bool, true)
-    require_symbols   = optional(bool, true)
+    minimum_length    = number
+    require_lowercase = bool
+    require_uppercase = bool
+    require_numbers   = bool
+    require_symbols   = bool
   })
-  default = {}
+  default = {
+    minimum_length    = 8
+    require_lowercase = true
+    require_uppercase = true
+    require_numbers   = true
+    require_symbols   = true
+  }
 }
 
 variable "agentcore_cognito_mfa_configuration" {
@@ -377,10 +397,10 @@ variable "agentcore_memory_user_preference_namespaces" {
 variable "agentcore_memory_custom_strategy" {
   description = "Custom memory strategy configuration"
   type = object({
-    name        = string
-    description = optional(string)
-    namespaces  = list(string)
-    configuration = optional(any)
+    name          = string
+    description   = string
+    namespaces    = list(string)
+    configuration = any
   })
   default = null
 }
@@ -459,7 +479,7 @@ variable "agentcore_gateway_target_tool_input_properties" {
     name        = string
     type        = string
     description = string
-    required    = optional(bool, false)
+    required    = bool
   }))
   default = [
     {

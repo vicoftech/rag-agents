@@ -1,3 +1,11 @@
+locals {
+  final_port                = var.db_port
+  final_ingress_cidr_blocks = var.ingress_cidr_blocks
+
+  final_cluster_identifier  = var.cluster_identifier != null ? var.cluster_identifier : "aurora-pg-${var.environment}"
+  final_instance_identifier = var.instance_identifier != null ? var.instance_identifier : "aurora-pg-${var.environment}-instance-1"
+}
+
 resource "aws_db_subnet_group" "this" {
   name       = "aurora-pg-subnets-${var.environment}"
   subnet_ids = var.subnets
@@ -23,11 +31,11 @@ resource "aws_security_group" "this" {
 }
 
 resource "aws_rds_cluster" "this" {
-  cluster_identifier     = local.final_cluster_identifier
-  engine                 = "aurora-postgresql"
-  engine_version         = var.engine_version
-  database_name          = var.db_name
-  port                   = local.final_port
+  cluster_identifier = local.final_cluster_identifier
+  engine             = "aurora-postgresql"
+  engine_version     = var.engine_version
+  database_name      = var.db_name
+  port               = local.final_port
 
   master_username = var.master_username
   master_password = var.master_password

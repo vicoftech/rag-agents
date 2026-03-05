@@ -80,17 +80,17 @@ output "invoke_query_example" {
 
 output "bedrock_agent_lambda_function_name" {
   description = "Bedrock Agent Lambda function name"
-  value       = module.bedrock_agent.lambda_function_name
+  value       = var.create_agentcore ? module.bedrock_agent[0].lambda_function_name : null
 }
 
 output "bedrock_agent_lambda_arn" {
   description = "Bedrock Agent Lambda ARN"
-  value       = module.bedrock_agent.lambda_function_arn
+  value       = var.create_agentcore ? module.bedrock_agent[0].lambda_function_arn : null
 }
 
 output "bedrock_agent_lambda_invoke_arn" {
   description = "Bedrock Agent Lambda Invoke ARN (for API Gateway integration)"
-  value       = module.bedrock_agent.lambda_invoke_arn
+  value       = var.create_agentcore ? module.bedrock_agent[0].lambda_invoke_arn : null
 }
 
 # ==============================================================================
@@ -99,23 +99,44 @@ output "bedrock_agent_lambda_invoke_arn" {
 
 output "api_gateway_endpoint" {
   description = "API Gateway endpoint URL"
-  value       = module.api_gateway.invoke_url
+  value       = var.create_agentcore ? module.api_gateway[0].invoke_url : null
+}
+
+output "query_api_gateway_endpoint" {
+  description = "API Gateway endpoint URL for /query"
+  value       = module.api_gateway_query.invoke_url
 }
 
 output "api_gateway_id" {
   description = "API Gateway ID"
-  value       = module.api_gateway.api_id
+  value       = var.create_agentcore ? module.api_gateway[0].api_id : null
 }
 
 output "cognito_user_pool_id" {
   description = "Cognito User Pool ID for JWT authentication"
-  value       = module.api_gateway.cognito_user_pool_id
+  value       = var.create_agentcore ? module.api_gateway[0].cognito_user_pool_id : null
 }
 
 output "cognito_user_pool_client_id" {
   description = "Cognito User Pool Client ID for JWT authentication"
-  value       = module.api_gateway.cognito_user_pool_client_id
+  value       = var.create_agentcore ? module.api_gateway[0].cognito_user_pool_client_id : null
   sensitive   = false
+}
+
+output "query_cognito_user_pool_id" {
+  description = "Cognito User Pool ID for /query JWT authentication"
+  value       = module.cognito_query.user_pool_id
+}
+
+output "query_cognito_user_pool_client_id" {
+  description = "Cognito User Pool Client ID for /query JWT authentication"
+  value       = module.cognito_query.user_pool_client_id
+  sensitive   = false
+}
+
+output "query_cognito_endpoint" {
+  description = "Cognito issuer endpoint for /query JWT authentication"
+  value       = module.cognito_query.cognito_endpoint
 }
 
 # ==============================================================================
@@ -124,17 +145,18 @@ output "cognito_user_pool_client_id" {
 
 output "api_usage_example" {
   description = "Example curl command to invoke the API"
-  value       = <<-EOT
+  value = var.create_agentcore ? (<<-EOT
+
     # 1. Get JWT token from Cognito:
     TOKEN=$(aws cognito-idp initiate-auth \
       --auth-flow USER_PASSWORD_AUTH \
-      --client-id ${module.api_gateway.cognito_user_pool_client_id} \
+      --client-id ${module.api_gateway[0].cognito_user_pool_client_id} \
       --auth-parameters USERNAME=your-email@example.com,PASSWORD=YourPassword123! \
       --query 'AuthenticationResult.IdToken' \
       --output text)
     
     # 2. Invoke the API:
-    curl -X POST ${module.api_gateway.invoke_url} \
+    curl -X POST ${module.api_gateway[0].invoke_url} \
       -H "Authorization: Bearer $TOKEN" \
       -H "Content-Type: application/json" \
       -d '{
@@ -143,6 +165,7 @@ output "api_usage_example" {
         "agent_id": "your_agent_id"
       }'
   EOT
+  ) : null
 }
 
 # ==============================================================================

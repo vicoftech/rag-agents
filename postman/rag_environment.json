@@ -1,0 +1,45 @@
+{
+  "id": "c2f9313e-5d7f-46c3-9f37-c8e95f98d6d9",
+  "name": "rag-agents-env",
+  "values": [
+    {
+      "key": "base_url",
+      "value": "",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "cognito_client_id",
+      "value": "",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "cognito_user_pool_url",
+      "value": "",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "username",
+      "value": "",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "password",
+      "value": "",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "access_token",
+      "value": "",
+      "type": "default",
+      "enabled": true
+    }
+  ],
+  "_postman_variable_scope": "environment",
+  "_postman_exported_at": "2026-03-05T14:16:00.000Z",
+  "_postman_exported_using": "Postman/11.0.0"
+}

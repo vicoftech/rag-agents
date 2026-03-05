@@ -49,7 +49,7 @@ variable "runtime_network_mode" {
   description = "Network mode for the runtime (PUBLIC or VPC)"
   type        = string
   default     = "PUBLIC"
-  
+
   validation {
     condition     = contains(["PUBLIC", "VPC"], var.runtime_network_mode)
     error_message = "runtime_network_mode must be PUBLIC or VPC"
@@ -72,7 +72,7 @@ variable "runtime_protocol" {
   description = "Server protocol for the runtime (HTTP, MCP, A2A)"
   type        = string
   default     = "HTTP"
-  
+
   validation {
     condition     = contains(["HTTP", "MCP", "A2A"], var.runtime_protocol)
     error_message = "runtime_protocol must be HTTP, MCP, or A2A"
@@ -95,7 +95,7 @@ variable "runtime_max_lifetime" {
   description = "Maximum lifetime in seconds (max 28800 = 8 hours)"
   type        = number
   default     = 28800
-  
+
   validation {
     condition     = var.runtime_max_lifetime <= 28800
     error_message = "runtime_max_lifetime cannot exceed 28800 seconds (8 hours)"
@@ -155,13 +155,19 @@ variable "cognito_allowed_audience" {
 variable "cognito_password_policy" {
   description = "Password policy for Cognito User Pool"
   type = object({
-    minimum_length    = optional(number, 8)
-    require_lowercase = optional(bool, true)
-    require_uppercase = optional(bool, true)
-    require_numbers   = optional(bool, true)
-    require_symbols   = optional(bool, true)
+    minimum_length    = number
+    require_lowercase = bool
+    require_uppercase = bool
+    require_numbers   = bool
+    require_symbols   = bool
   })
-  default = {}
+  default = {
+    minimum_length    = 8
+    require_lowercase = true
+    require_uppercase = true
+    require_numbers   = true
+    require_symbols   = true
+  }
 }
 
 variable "cognito_mfa_configuration" {
@@ -267,40 +273,8 @@ variable "memory_user_preference_namespaces" {
 
 variable "memory_custom_strategy" {
   description = "Custom memory strategy configuration"
-  type = object({
-    name        = string
-    description = optional(string)
-    namespaces  = list(string)
-    configuration = optional(object({
-      semantic_override = optional(object({
-        extraction = optional(object({
-          append_to_prompt = optional(string)
-          model_id         = optional(string)
-        }))
-        consolidation = optional(object({
-          append_to_prompt = optional(string)
-          model_id         = optional(string)
-        }))
-      }))
-      summary_override = optional(object({
-        consolidation = optional(object({
-          append_to_prompt = optional(string)
-          model_id         = optional(string)
-        }))
-      }))
-      user_preference_override = optional(object({
-        extraction = optional(object({
-          append_to_prompt = optional(string)
-          model_id         = optional(string)
-        }))
-        consolidation = optional(object({
-          append_to_prompt = optional(string)
-          model_id         = optional(string)
-        }))
-      }))
-    }))
-  })
-  default = null
+  type        = any
+  default     = null
 }
 
 # ==============================================================================
@@ -395,7 +369,7 @@ variable "gateway_target_tool_input_properties" {
     name        = string
     type        = string
     description = string
-    required    = optional(bool, false)
+    required    = bool
   }))
   default = [
     {

@@ -1,0 +1,98 @@
+{
+  "info": {
+    "_postman_id": "c6fe5b8e-2d67-4e21-bc0f-2a0a4b7a6a4f",
+    "name": "rag-agents",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Auth - Cognito InitiateAuth (USER_PASSWORD_AUTH)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/x-amz-json-1.1"
+          },
+          {
+            "key": "X-Amz-Target",
+            "value": "AWSCognitoIdentityProviderService.InitiateAuth"
+          }
+        ],
+        "url": {
+          "raw": "{{cognito_user_pool_url}}/",
+          "host": [
+            "{{cognito_user_pool_url}}"
+          ],
+          "path": [
+            ""
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"AuthFlow\": \"USER_PASSWORD_AUTH\",\n  \"ClientId\": \"{{cognito_client_id}}\",\n  \"AuthParameters\": {\n    \"USERNAME\": \"{{username}}\",\n    \"PASSWORD\": \"{{password}}\"\n  }\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const json = pm.response.json();",
+              "const token = json?.AuthenticationResult?.AccessToken || json?.AuthenticationResult?.IdToken;",
+              "if (token) {",
+              "  pm.environment.set('access_token', token);",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "OPTIONS /query (CORS preflight)",
+      "request": {
+        "method": "OPTIONS",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/query",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "query"
+          ]
+        }
+      }
+    },
+    {
+      "name": "POST /query (Semantic query)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/query",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "query"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"tenant_id\": \"asap\",\n  \"agent_id\": \"d8c38f93-f4cd-4a85-9c31-297d14ce7009\",\n  \"query\": \"Dame un resumen del documento\"\n}"
+        }
+      }
+    }
+  ]
+}

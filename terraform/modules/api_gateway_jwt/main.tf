@@ -52,8 +52,8 @@ resource "aws_cognito_user_pool_client" "this" {
 
 # Use provided or created resources
 locals {
-  user_pool_id     = var.create_cognito_user_pool ? aws_cognito_user_pool.this[0].id : var.cognito_user_pool_id
-  user_pool_arn    = var.create_cognito_user_pool ? aws_cognito_user_pool.this[0].arn : var.cognito_user_pool_arn
+  user_pool_id        = var.create_cognito_user_pool ? aws_cognito_user_pool.this[0].id : var.cognito_user_pool_id
+  user_pool_arn       = var.create_cognito_user_pool ? aws_cognito_user_pool.this[0].arn : var.cognito_user_pool_arn
   user_pool_client_id = var.create_cognito_user_pool ? aws_cognito_user_pool_client.this[0].id : var.cognito_user_pool_client_id
 }
 
@@ -110,11 +110,11 @@ resource "aws_lambda_permission" "api_gateway" {
 # ==============================================================================
 
 resource "aws_apigatewayv2_integration" "lambda" {
-  api_id           = aws_apigatewayv2_api.this.id
-  integration_type = "AWS_PROXY"
-  integration_uri  = var.lambda_invoke_arn
+  api_id                 = aws_apigatewayv2_api.this.id
+  integration_type       = "AWS_PROXY"
+  integration_uri        = var.lambda_invoke_arn
   payload_format_version = "2.0"
-  timeout_milliseconds = 30000
+  timeout_milliseconds   = 30000
 }
 
 # ==============================================================================
@@ -123,10 +123,10 @@ resource "aws_apigatewayv2_integration" "lambda" {
 
 # POST /invoke - Invoke the agent
 resource "aws_apigatewayv2_route" "invoke" {
-  api_id    = aws_apigatewayv2_api.this.id
-  route_key = "POST /invoke"
-  target    = "integrations/${aws_apigatewayv2_integration.lambda.id}"
-  authorizer_id = aws_apigatewayv2_authorizer.jwt.id
+  api_id             = aws_apigatewayv2_api.this.id
+  route_key          = "POST /invoke"
+  target             = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
   authorization_type = "JWT"
 }
 
