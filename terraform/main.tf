@@ -68,6 +68,7 @@ locals {
   # Lambda source paths (relative to terraform directory)
   lambda_embeddings_path = "${path.module}/../apps/rag_lmbd_embeddings"
   lambda_query_path      = "${path.module}/../apps/rag_lmbd_query"
+  lambda_fetcher_path    = "${path.module}/../apps/rag_lmbd_fetcher"
   lambda_agent_path      = "${path.module}/../apps/agent"
 
   # Base environment variables (computed from other resources)
@@ -361,6 +362,33 @@ module "api_gateway_query" {
   cors_allowed_origins = ["*"]
   cors_allowed_methods = ["GET", "POST", "OPTIONS"]
   cors_allowed_headers = ["*"]
+
+  tags = local.common_tags
+}
+
+# ==============================================================================
+# Lambda: RAG Fetcher (Boletín Oficial scraper)
+# ==============================================================================
+
+module "lambda_fetcher" {
+  source = "./modules/lambda"
+
+  function_name          = "rag_lmbd_fetcher-${var.environment}"
+  description            = "Fetches HTML content from Boletín Oficial by date"
+  handler                = "index.handler"
+  runtime                = "python3.12"
+  timeout                = 60
+  memory_size            = 512
+  ephemeral_storage_size = 512
+
+  source_path = local.lambda_fetcher_path
+  environment = var.environment
+
+  environment_variables = {
+    BOLETIN_BASE_URL = var.boletin_base_url
+    DEFAULT_SECTION   = var.boletin_default_section
+    REQUEST_TIMEOUT   = var.boletin_request_timeout
+  }
 
   tags = local.common_tags
 }

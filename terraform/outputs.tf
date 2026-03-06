@@ -169,6 +169,25 @@ output "api_usage_example" {
 }
 
 # ==============================================================================
+# Lambda Fetcher Outputs
+# ==============================================================================
+
+output "lambda_fetcher_function_name" {
+  description = "Name of the Lambda function"
+  value       = module.lambda_fetcher.function_name
+}
+
+output "lambda_fetcher_function_arn" {
+  description = "ARN of the Lambda function"
+  value       = module.lambda_fetcher.function_arn
+}
+
+output "lambda_fetcher_invoke_arn" {
+  description = "Invoke ARN of the Lambda function"
+  value       = module.lambda_fetcher.invoke_arn
+}
+
+# ==============================================================================
 # Bedrock AgentCore Outputs
 # ==============================================================================
 

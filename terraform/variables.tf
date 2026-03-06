@@ -448,6 +448,25 @@ variable "agentcore_gateway_exception_level" {
   default     = "DEBUG"
 }
 
+# Boletín Oficial Configuration
+variable "boletin_base_url" {
+  description = "Base URL for Boletín Oficial website"
+  type        = string
+  default     = "https://www.boletinoficial.gob.ar"
+}
+
+variable "boletin_default_section" {
+  description = "Default section to fetch (primera, segunda, tercera, cuarta)"
+  type        = string
+  default     = "primera"
+}
+
+variable "boletin_request_timeout" {
+  description = "Timeout for HTTP requests to Boletín Oficial (seconds)"
+  type        = number
+  default     = 30
+}
+
 # Gateway Target Configuration
 variable "agentcore_create_gateway_target" {
   description = "Whether to create a Gateway Target"
