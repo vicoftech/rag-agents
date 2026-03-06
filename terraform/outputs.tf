@@ -169,6 +169,25 @@ output "api_usage_example" {
 }
 
 # ==============================================================================
+# Lambda Parser Outputs
+# ==============================================================================
+
+output "lambda_parser_function_name" {
+  description = "Name of the Lambda function"
+  value       = module.lambda_parser.function_name
+}
+
+output "lambda_parser_function_arn" {
+  description = "ARN of the Lambda function"
+  value       = module.lambda_parser.function_arn
+}
+
+output "lambda_parser_invoke_arn" {
+  description = "Invoke ARN of the Lambda function"
+  value       = module.lambda_parser.invoke_arn
+}
+
+# ==============================================================================
 # Lambda Fetcher Outputs
 # ==============================================================================
 

@@ -69,6 +69,7 @@ locals {
   lambda_embeddings_path = "${path.module}/../apps/rag_lmbd_embeddings"
   lambda_query_path      = "${path.module}/../apps/rag_lmbd_query"
   lambda_fetcher_path    = "${path.module}/../apps/rag_lmbd_fetcher"
+  lambda_parser_path     = "${path.module}/../apps/rag_lmbd_parser"
   lambda_agent_path      = "${path.module}/../apps/agent"
 
   # Base environment variables (computed from other resources)
@@ -362,6 +363,27 @@ module "api_gateway_query" {
   cors_allowed_origins = ["*"]
   cors_allowed_methods = ["GET", "POST", "OPTIONS"]
   cors_allowed_headers = ["*"]
+
+  tags = local.common_tags
+}
+
+# ==============================================================================
+# Lambda: RAG Parser (HTML to PDF links extractor)
+# ==============================================================================
+
+module "lambda_parser" {
+  source = "./modules/lambda"
+
+  function_name          = "rag_lmbd_parser-${var.environment}"
+  description            = "Extracts PDF links from HTML content"
+  handler                = "index.handler"
+  runtime                = "python3.12"
+  timeout                = 60
+  memory_size            = 256
+  ephemeral_storage_size = 512
+
+  source_path = local.lambda_parser_path
+  environment = var.environment
 
   tags = local.common_tags
 }
