@@ -29,71 +29,71 @@ HEADERS = {
     'Upgrade-Insecure-Requests': '1',
 }
 
-def fetch_boletin_by_date(date_str, section=None):
+def fetch_boletin_by_url(url):
     """
-    Obtiene el HTML del Boletín Oficial para una fecha específica
+    Obtiene el HTML de una URL específica del Boletín Oficial
     
     Args:
-        date_str (str): Fecha en formato YYYY-MM-DD
-        section (str): Sección del boletín (primera, segunda, tercera, cuarta)
+        url (str): URL completa del sitio a obtener
     
     Returns:
         dict: Contenido HTML encontrado y metadatos
     """
     try:
-        # Validar formato de fecha
-        date_obj = datetime.strptime(date_str, '%Y-%m-%d')
+        # Validar URL
+        if not url:
+            return {
+                'success': False,
+                'error': 'Missing required parameter: url'
+            }
         
-        # Usar sección por defecto si no se especifica
-        target_section = section or DEFAULT_SECTION
+        # Validar que sea una URL válida
+        parsed_url = urlparse(url)
+        if not parsed_url.scheme or not parsed_url.netloc:
+            return {
+                'success': False,
+                'error': 'Invalid URL format'
+            }
         
-        # Construir URL de la sección
-        section_url = f"{BOLETIN_BASE_URL}/seccion/{target_section}"
+        print(f"Fetching URL: {url}")
         
-        print(f"Fetching section: {section_url}")
-        
-        # Obtener página de la sección
-        response = requests.get(section_url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+        # Obtener página
+        response = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
         
         # Parsear HTML
         soup = BeautifulSoup(response.content, 'html.parser')
         
-        # Buscar contenido por fecha
-        content_by_date = find_content_by_date(soup, date_obj)
+        # Extraer información de la página
+        page_title = ''
+        title_tag = soup.find('title')
+        if title_tag:
+            page_title = title_tag.get_text(strip=True)
         
-        if not content_by_date:
-            # Si no hay contenido para esa fecha, intentar con búsqueda avanzada
-            return try_advanced_search(date_str, target_section)
+        # Extraer fecha del contenido si existe
+        page_date = extract_date_from_text(response.text)
         
         return {
             'success': True,
-            'date': date_str,
-            'section': target_section,
-            'url': section_url,
-            'content': content_by_date,
-            'total_items': len(content_by_date),
-            'raw_html': str(soup)
+            'url': url,
+            'page_title': page_title,
+            'page_date': page_date,
+            'content': [{'title': 'Page content fetched', 'description': 'HTML content successfully retrieved', 'link': url}],
+            'total_items': 1,
+            'raw_html': response.text
         }
         
     except requests.RequestException as e:
         return {
             'success': False,
             'error': f'Error fetching content: {str(e)}',
-            'date': date_str,
-            'section': target_section
-        }
-    except ValueError as e:
-        return {
-            'success': False,
-            'error': f'Invalid date format: {str(e)}',
-            'date': date_str
+            'url': url
         }
     except Exception as e:
         return {
             'success': False,
             'error': f'Unexpected error: {str(e)}',
-            'date': date_str
+            'url': url
         }
 
 def find_content_by_date(soup, target_date):
@@ -260,23 +260,21 @@ def handler(event, context):
         if http_method:
             # Request HTTP
             body = json.loads(event.get("body") or "{}")
-            date_str = body.get("date")
-            section = body.get("section")
+            url = body.get("url")
         else:
             # Invocación directa
-            date_str = event.get("date")
-            section = event.get("section")
+            url = event.get("url")
         
-        # Validar parámetro de fecha
-        if not date_str:
+        # Validar parámetro URL
+        if not url:
             return {
                 "statusCode": 400,
                 "headers": {"Content-Type": "application/json", **CORS_HEADERS},
-                "body": json.dumps({"error": "Missing required parameter: date"})
+                "body": json.dumps({"error": "Missing required parameter: url"})
             }
         
         # Llamar a la función principal
-        result = fetch_boletin_by_date(date_str, section)
+        result = fetch_boletin_by_url(url)
         
         # Preparar respuesta
         if result['success']:
@@ -310,7 +308,6 @@ def handler(event, context):
 if __name__ == "__main__":
     # Para testing local
     test_event = {
-        "date": "2026-03-06",
-        "section": "primera"
+        "url": "https://www.boletinoficial.gob.ar/seccion/primera"
     }
     print(handler(test_event, None))

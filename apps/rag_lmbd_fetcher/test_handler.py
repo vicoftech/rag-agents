@@ -12,8 +12,7 @@ def test_fetcher():
             }
         },
         "body": json.dumps({
-            "date": "2026-03-06",
-            "section": "primera"
+            "url": "https://www.boletinoficial.gob.ar/seccion/primera"
         })
     }
     
@@ -23,8 +22,7 @@ def test_fetcher():
     
     # Test como invocación directa (Lambda)
     test_event_direct = {
-        "date": "2026-03-06",
-        "section": "primera"
+        "url": "https://www.boletinoficial.gob.ar/seccion/primera"
     }
     
     result_direct = handler(test_event_direct, context)
