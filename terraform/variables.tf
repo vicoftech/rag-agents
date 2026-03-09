@@ -449,6 +449,12 @@ variable "agentcore_gateway_exception_level" {
 }
 
 # Boletín Oficial Configuration
+variable "notification_email" {
+  description = "Email address for pipeline notifications"
+  type        = string
+  default     = ""
+}
+
 variable "boletin_base_url" {
   description = "Base URL for Boletín Oficial website"
   type        = string

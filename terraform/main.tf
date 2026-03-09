@@ -72,6 +72,7 @@ locals {
   lambda_parser_path     = "${path.module}/../apps/rag_lmbd_parser"
   lambda_s3writer_path   = "${path.module}/../apps/rag_lmbd_s3writer"
   lambda_dbwriter_path   = "${path.module}/../apps/rag_lmbd_dbwriter"
+  lambda_notifier_path  = "${path.module}/../apps/rag_lmbd_notifier"
   lambda_agent_path      = "${path.module}/../apps/agent"
 
   # Base environment variables (computed from other resources)
@@ -517,6 +518,47 @@ module "lambda_dbwriter" {
       ]
       resources = [
         aws_dynamodb_table.documents.arn
+      ]
+    }
+  ]
+
+  tags = local.common_tags
+}
+
+resource "aws_sns_topic" "rag_notifications" {
+  name = "rag-pipeline-notifications-${var.environment}"
+
+  tags = local.common_tags
+}
+
+module "lambda_notifier" {
+  source = "./modules/lambda"
+
+  function_name          = "rag_lmbd_notifier-${var.environment}"
+  description            = "Sends pipeline notifications via SNS"
+  handler                = "index.handler"
+  runtime                = "python3.12"
+  timeout                = 60
+  memory_size            = 256
+  ephemeral_storage_size = 512
+
+  source_path = local.lambda_notifier_path
+  environment = var.environment
+
+  environment_variables = {
+    SNS_TOPIC_ARN = aws_sns_topic.rag_notifications.arn
+    NOTIFICATION_EMAIL = var.notification_email
+  }
+
+  # IAM Permissions
+  attach_policy_statements = [
+    {
+      effect = "Allow"
+      actions = [
+        "sns:Publish"
+      ]
+      resources = [
+        aws_sns_topic.rag_notifications.arn
       ]
     }
   ]

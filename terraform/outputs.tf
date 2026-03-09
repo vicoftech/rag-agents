@@ -202,6 +202,39 @@ output "dynamodb_documents_table_arn" {
 }
 
 # ==============================================================================
+# SNS Topic Outputs
+# ==============================================================================
+
+output "sns_topic_arn" {
+  description = "SNS topic ARN for notifications"
+  value       = aws_sns_topic.rag_notifications.arn
+}
+
+output "sns_topic_name" {
+  description = "SNS topic name for notifications"
+  value       = aws_sns_topic.rag_notifications.name
+}
+
+# ==============================================================================
+# Lambda Notifier Outputs
+# ==============================================================================
+
+output "lambda_notifier_function_name" {
+  description = "Name of Lambda function"
+  value       = module.lambda_notifier.function_name
+}
+
+output "lambda_notifier_function_arn" {
+  description = "ARN of Lambda function"
+  value       = module.lambda_notifier.function_arn
+}
+
+output "lambda_notifier_invoke_arn" {
+  description = "Invoke ARN of Lambda function"
+  value       = module.lambda_notifier.invoke_arn
+}
+
+# ==============================================================================
 # Lambda DBWriter Outputs
 # ==============================================================================
 
