@@ -188,6 +188,58 @@ output "lambda_parser_invoke_arn" {
 }
 
 # ==============================================================================
+# DynamoDB Outputs
+# ==============================================================================
+
+output "dynamodb_documents_table_name" {
+  description = "DynamoDB documents table name"
+  value       = aws_dynamodb_table.documents.name
+}
+
+output "dynamodb_documents_table_arn" {
+  description = "DynamoDB documents table ARN"
+  value       = aws_dynamodb_table.documents.arn
+}
+
+# ==============================================================================
+# Lambda DBWriter Outputs
+# ==============================================================================
+
+output "lambda_dbwriter_function_name" {
+  description = "Name of Lambda function"
+  value       = module.lambda_dbwriter.function_name
+}
+
+output "lambda_dbwriter_function_arn" {
+  description = "ARN of Lambda function"
+  value       = module.lambda_dbwriter.function_arn
+}
+
+output "lambda_dbwriter_invoke_arn" {
+  description = "Invoke ARN of Lambda function"
+  value       = module.lambda_dbwriter.invoke_arn
+}
+
+# ==============================================================================
+# Lambda S3Writer Outputs
+# ==============================================================================
+
+output "lambda_s3writer_function_name" {
+  description = "Name of the Lambda function"
+  value       = module.lambda_s3writer.function_name
+}
+
+output "lambda_s3writer_function_arn" {
+  description = "ARN of the Lambda function"
+  value       = module.lambda_s3writer.function_arn
+}
+
+output "lambda_s3writer_invoke_arn" {
+  description = "Invoke ARN of the Lambda function"
+  value       = module.lambda_s3writer.invoke_arn
+}
+
+# ==============================================================================
 # Lambda Fetcher Outputs
 # ==============================================================================
 

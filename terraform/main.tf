@@ -70,6 +70,8 @@ locals {
   lambda_query_path      = "${path.module}/../apps/rag_lmbd_query"
   lambda_fetcher_path    = "${path.module}/../apps/rag_lmbd_fetcher"
   lambda_parser_path     = "${path.module}/../apps/rag_lmbd_parser"
+  lambda_s3writer_path   = "${path.module}/../apps/rag_lmbd_s3writer"
+  lambda_dbwriter_path   = "${path.module}/../apps/rag_lmbd_dbwriter"
   lambda_agent_path      = "${path.module}/../apps/agent"
 
   # Base environment variables (computed from other resources)
@@ -368,6 +370,67 @@ module "api_gateway_query" {
 }
 
 # ==============================================================================
+# DynamoDB Table for Documents
+# ==============================================================================
+
+resource "aws_dynamodb_table" "documents" {
+  name           = "rag-documents-${var.environment}"
+  billing_mode   = "PAY_PER_REQUEST"
+  hash_key       = "PK"
+  range_key      = "SK"
+
+  attribute {
+    name = "PK"
+    type = "S"
+  }
+
+  attribute {
+    name = "SK"
+    type = "S"
+  }
+
+  attribute {
+    name = "entity_type"
+    type = "S"
+  }
+
+  attribute {
+    name = "site_id"
+    type = "S"
+  }
+
+  attribute {
+    name = "date"
+    type = "S"
+  }
+
+  attribute {
+    name = "filename"
+    type = "S"
+  }
+
+  global_secondary_index {
+    name     = "SiteDateIndex"
+    hash_key  = "site_id"
+    range_key = "date"
+    projection_type = "ALL"
+  }
+
+  global_secondary_index {
+    name     = "EntityTypeIndex"
+    hash_key  = "entity_type"
+    range_key = "PK"
+    projection_type = "ALL"
+  }
+
+  point_in_time_recovery {
+    enabled = true
+  }
+
+  tags = local.common_tags
+}
+
+# ==============================================================================
 # Lambda: RAG Parser (HTML to PDF links extractor)
 # ==============================================================================
 
@@ -384,6 +447,79 @@ module "lambda_parser" {
 
   source_path = local.lambda_parser_path
   environment = var.environment
+
+  tags = local.common_tags
+}
+
+module "lambda_s3writer" {
+  source = "./modules/lambda"
+
+  function_name          = "rag_lmbd_s3writer-${var.environment}"
+  description            = "Downloads PDFs and uploads to S3"
+  handler                = "index.handler"
+  runtime                = "python3.12"
+  timeout                = 300  # 5 minutos para descargar múltiples archivos
+  memory_size            = 512
+  ephemeral_storage_size = 1024
+
+  source_path = local.lambda_s3writer_path
+  environment = var.environment
+
+  environment_variables = {
+    S3_BUCKET_NAME      = module.s3_documents.bucket_name
+    REQUEST_TIMEOUT      = "60"
+    MAX_FILE_SIZE        = "52428800"  # 50MB
+  }
+
+  # IAM Permissions
+  attach_policy_statements = [
+    {
+      effect = "Allow"
+      actions = [
+        "s3:PutObject",
+        "s3:PutObjectAcl"
+      ]
+      resources = [
+        "${module.s3_documents.bucket_arn}/*"
+      ]
+    }
+  ]
+
+  tags = local.common_tags
+}
+
+module "lambda_dbwriter" {
+  source = "./modules/lambda"
+
+  function_name          = "rag_lmbd_dbwriter-${var.environment}"
+  description            = "Upserts document metadata to DynamoDB"
+  handler                = "index.handler"
+  runtime                = "python3.12"
+  timeout                = 300  # 5 minutos para batch writes
+  memory_size            = 256
+  ephemeral_storage_size = 512
+
+  source_path = local.lambda_dbwriter_path
+  environment = var.environment
+
+  environment_variables = {
+    DYNAMODB_TABLE_NAME = aws_dynamodb_table.documents.name
+  }
+
+  # IAM Permissions
+  attach_policy_statements = [
+    {
+      effect = "Allow"
+      actions = [
+        "dynamodb:PutItem",
+        "dynamodb:BatchWriteItem",
+        "dynamodb:UpdateItem"
+      ]
+      resources = [
+        aws_dynamodb_table.documents.arn
+      ]
+    }
+  ]
 
   tags = local.common_tags
 }
