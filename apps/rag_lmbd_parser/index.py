@@ -167,6 +167,13 @@ def handler(event, context):
     """
     Lambda handler para parsear HTML y extraer PDFs
     """
+    # CORS headers
+    CORS_HEADERS = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Headers": "*",
+        "Access-Control-Allow-Methods": "OPTIONS,POST,GET",
+    }
+    
     # Detectar si es un evento HTTP (API Gateway) o directo
     http_method = event.get("requestContext", {}).get("http", {}).get("method") or event.get("httpMethod")
     
@@ -182,19 +189,19 @@ def handler(event, context):
         if http_method:
             # Request HTTP
             body = json.loads(event.get("body") or "{}")
-            html_content = body.get("html")
-            base_url = body.get("base_url")
+            html_content = body.get("raw_html")  # Cambiado de 'html' a 'raw_html'
+            base_url = body.get("url")  # Cambiado de 'base_url' a 'url'
         else:
-            # Invocación directa
-            html_content = event.get("html")
-            base_url = event.get("base_url")
+            # Invocación directa (desde Step Function)
+            html_content = event.get("raw_html")  # Cambiado de 'html' a 'raw_html'
+            base_url = event.get("url")  # Cambiado de 'base_url' a 'url'
         
         # Validar parámetro HTML
         if not html_content:
             return {
                 "statusCode": 400,
                 "headers": {"Content-Type": "application/json", **CORS_HEADERS},
-                "body": json.dumps({"error": "Missing required parameter: html"})
+                "body": json.dumps({"error": "Missing required parameter: raw_html"})
             }
         
         # Limitar tamaño del HTML (máximo 5MB)

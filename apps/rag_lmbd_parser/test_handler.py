@@ -3,7 +3,7 @@ from index import handler
 
 # Test handler
 def test_parser():
-    # Test con HTML de ejemplo
+    # Test con HTML de ejemplo que simula output del fetcher
     test_html = """
     <html>
     <head><title>Boletín Oficial de la República Argentina</title></head>
@@ -29,8 +29,8 @@ def test_parser():
             }
         },
         "body": json.dumps({
-            "html": test_html,
-            "base_url": "https://www.boletinoficial.gob.ar"
+            "raw_html": test_html,  # Cambiado a 'raw_html'
+            "url": "https://www.boletinoficial.gob.ar/seccion/primera"  # Cambiado a 'url'
         })
     }
     
@@ -38,10 +38,10 @@ def test_parser():
     result = handler(test_event_http, context)
     print("HTTP Event Result:", json.dumps(result, indent=2))
     
-    # Test como invocación directa (Lambda)
+    # Test como invocación directa (desde Step Function)
     test_event_direct = {
-        "html": test_html,
-        "base_url": "https://www.boletinoficial.gob.ar"
+        "raw_html": test_html,  # Cambiado a 'raw_html'
+        "url": "https://www.boletinoficial.gob.ar/seccion/primera"  # Cambiado a 'url'
     }
     
     result_direct = handler(test_event_direct, context)
