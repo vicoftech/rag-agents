@@ -159,8 +159,8 @@ def parse_html_content(html_content: str, base_url: str = None) -> Dict:
             'page_date': page_date,
             'section': extract_section_from_text(html_content),
             'total_links_found': total_links,
-            'pdf_links_count': len(pdf_links),
-            'pdf_links': pdf_links,
+            'pdf_links_count': len(pdf_links.get('pdf_links', [])),  # Acceder a la lista interna
+            'pdf_links': pdf_links.get('pdf_links', []),  # Extraer solo la lista
             'base_url': base_url
         }
         

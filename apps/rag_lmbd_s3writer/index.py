@@ -43,6 +43,11 @@ def generate_site_id(url: str) -> str:
         domain = domain[4:]
     # Reemplazar caracteres no válidos
     site_id = domain.replace('.', '_').replace('-', '_')
+    
+    # Si no hay dominio válido, usar un valor por defecto
+    if not site_id:
+        site_id = 'boletin_oficial'
+    
     return site_id
 
 def extract_date_from_context(context: Dict) -> Optional[str]:
@@ -218,7 +223,9 @@ def process_parser_output(parser_output: Dict) -> Dict:
             }
         
         # Generar metadata
-        site_id = generate_site_id(url)
+        # Usar la URL original del parser para generar site_id, no la URL del PDF
+        original_url = parser_output.get('base_url', url)
+        site_id = generate_site_id(original_url)
         date_str = extract_date_from_context(parser_output)
         
         print(f"Processing {len(pdf_links)} PDFs for site: {site_id}, date: {date_str}")

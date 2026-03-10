@@ -73,6 +73,7 @@ locals {
   lambda_s3writer_path   = "${path.module}/../apps/rag_lmbd_s3writer"
   lambda_dbwriter_path   = "${path.module}/../apps/rag_lmbd_dbwriter"
   lambda_notifier_path  = "${path.module}/../apps/rag_lmbd_notifier"
+  lambda_stepfunction_path = "${path.module}/../apps/rag_lmbd_stepfunction"
   lambda_agent_path      = "${path.module}/../apps/agent"
 
   # Base environment variables (computed from other resources)
@@ -596,6 +597,52 @@ module "lambda_fetcher" {
 }
 
 # ==============================================================================
+# Lambda: RAG Step Function (Pipeline Orchestrator)
+# ==============================================================================
+
+module "lambda_stepfunction" {
+  source = "./modules/lambda"
+
+  function_name          = "rag_lmbd_stepfunction-${var.environment}"
+  description            = "Orchestrates the complete RAG pipeline: fetcher → parser → s3writer → dbwriter → notifier"
+  handler                = "index.handler"
+  runtime                = "python3.12"
+  timeout                = 900  # 15 minutos para ejecutar todo el pipeline
+  memory_size            = 512
+  ephemeral_storage_size = 1024
+
+  source_path = local.lambda_stepfunction_path
+  environment = var.environment
+
+  environment_variables = {
+    FETCHER_FUNCTION_NAME   = module.lambda_fetcher.function_name
+    PARSER_FUNCTION_NAME    = module.lambda_parser.function_name
+    S3WRITER_FUNCTION_NAME = module.lambda_s3writer.function_name
+    DBWRITER_FUNCTION_NAME = module.lambda_dbwriter.function_name
+    NOTIFIER_FUNCTION_NAME = module.lambda_notifier.function_name
+  }
+
+  # IAM Permissions - permisos para invocar otras lambdas
+  attach_policy_statements = [
+    {
+      effect = "Allow"
+      actions = [
+        "lambda:InvokeFunction"
+      ]
+      resources = [
+        module.lambda_fetcher.function_arn,
+        module.lambda_parser.function_arn,
+        module.lambda_s3writer.function_arn,
+        module.lambda_dbwriter.function_arn,
+        module.lambda_notifier.function_arn
+      ]
+    }
+  ]
+
+  tags = local.common_tags
+}
+
+# ==============================================================================
 # Bedrock Agent Core
 # ==============================================================================
 
@@ -766,4 +813,23 @@ module "agentcore" {
   gateway_target_tool_description       = var.agentcore_gateway_target_tool_description
   gateway_target_tool_input_description = var.agentcore_gateway_target_tool_input_description
   gateway_target_tool_input_properties  = var.agentcore_gateway_target_tool_input_properties
+}
+
+# ==============================================================================
+# Outputs
+# ==============================================================================
+
+output "lambda_stepfunction_function_name" {
+  description = "Name of the step function orchestrator Lambda"
+  value       = module.lambda_stepfunction.function_name
+}
+
+output "lambda_stepfunction_function_arn" {
+  description = "ARN of the step function orchestrator Lambda"
+  value       = module.lambda_stepfunction.function_arn
+}
+
+output "lambda_stepfunction_invoke_arn" {
+  description = "Invoke ARN of the step function orchestrator Lambda"
+  value       = module.lambda_stepfunction.invoke_arn
 }
