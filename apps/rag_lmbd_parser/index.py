@@ -268,7 +268,7 @@ if __name__ == "__main__":
     """
     
     test_event = {
-        "html": test_html,
+        "raw_html": test_html,
         "base_url": "https://www.boletinoficial.gob.ar"
     }
     
