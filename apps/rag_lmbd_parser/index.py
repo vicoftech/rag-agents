@@ -82,11 +82,18 @@ def extract_pdf_links(html_content: str, base_url: str = None) -> List[Dict[str,
             if url not in unique_pdfs or len(pdf['text']) > len(unique_pdfs[url]['text']):
                 unique_pdfs[url] = pdf
         
-        return list(unique_pdfs.values())
+        return {
+            'success': True,
+            'pdf_links': list(unique_pdfs.values())
+        }
         
     except Exception as e:
         print(f"Error parsing HTML: {e}")
-        return []
+        return {
+            'success': False,
+            'error': f'Error parsing HTML: {str(e)}',
+            'pdf_links': []
+        }
 
 def extract_date_from_text(text: str) -> Optional[str]:
     """
@@ -150,6 +157,7 @@ def parse_html_content(html_content: str, base_url: str = None) -> Dict:
             'success': True,
             'page_title': page_title,
             'page_date': page_date,
+            'section': extract_section_from_text(html_content),
             'total_links_found': total_links,
             'pdf_links_count': len(pdf_links),
             'pdf_links': pdf_links,
