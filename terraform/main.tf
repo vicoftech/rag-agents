@@ -405,11 +405,6 @@ resource "aws_dynamodb_table" "documents" {
     type = "S"
   }
 
-  attribute {
-    name = "filename"
-    type = "S"
-  }
-
   global_secondary_index {
     name     = "SiteDateIndex"
     hash_key  = "site_id"
@@ -421,6 +416,13 @@ resource "aws_dynamodb_table" "documents" {
     name     = "EntityTypeIndex"
     hash_key  = "entity_type"
     range_key = "PK"
+    projection_type = "ALL"
+  }
+
+  global_secondary_index {
+    name     = "EntityDateIndex"
+    hash_key  = "entity_type"
+    range_key = "date"
     projection_type = "ALL"
   }
 
