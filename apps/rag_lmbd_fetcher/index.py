@@ -5,6 +5,7 @@ import requests
 from datetime import datetime
 from bs4 import BeautifulSoup
 import re
+from urllib.parse import urlparse
 
 # AWS Session
 session_args = {'region_name': os.getenv('AWS_REGION', 'us-east-1')}
@@ -71,7 +72,7 @@ def fetch_boletin_by_url(url):
             page_title = title_tag.get_text(strip=True)
         
         # Extraer fecha del contenido si existe
-        page_date = extract_date_from_text(response.text)
+        page_date = datetime.now().strftime('%d/%m/%Y')
         
         return {
             'success': True,
