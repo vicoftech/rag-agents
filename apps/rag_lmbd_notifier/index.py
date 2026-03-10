@@ -6,11 +6,12 @@ from typing import Dict, Optional
 
 # AWS Session
 session_args = {'region_name': os.getenv('AWS_REGION', 'us-east-1')}
-if os.getenv('AWS_ACCESS_KEY_ID') and os.getenv('AWS_SECRET_ACCESS_KEY'):
-    session_args.update({
-        'aws_access_key_id': os.getenv('AWS_ACCESS_KEY_ID'),
-        'aws_secret_access_key': os.getenv('AWS_SECRET_ACCESS_KEY')
-    })
+# No usar credenciales hardcodeadas - usar rol de ejecución de Lambda
+# if os.getenv('AWS_ACCESS_KEY_ID') and os.getenv('AWS_SECRET_ACCESS_KEY'):
+#     session_args.update({
+#         'aws_access_key_id': os.getenv('AWS_ACCESS_KEY_ID'),
+#         'aws_secret_access_key': os.getenv('AWS_SECRET_ACCESS_KEY')
+#     })
 
 # AWS Clients
 sns_client = boto3.client('sns', **session_args)
@@ -337,7 +338,7 @@ if __name__ == "__main__":
         "uploaded_files_count": 3,
         "db_records_count": 4,  # 1 site + 3 documents
         "s3_bucket": "rag-documents-dev-913123310997",
-        "dynamodb_table": "rag-documents-dev"
+        "dynamodb_table": "rag-documents-dev",
         "execution_context": "Some files exceeded size limit"
     }
     
