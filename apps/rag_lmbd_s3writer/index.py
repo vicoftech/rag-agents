@@ -10,11 +10,12 @@ import hashlib
 
 # AWS Session
 session_args = {'region_name': os.getenv('AWS_REGION', 'us-east-1')}
-if os.getenv('AWS_ACCESS_KEY_ID') and os.getenv('AWS_SECRET_ACCESS_KEY'):
-    session_args.update({
-        'aws_access_key_id': os.getenv('AWS_ACCESS_KEY_ID'),
-        'aws_secret_access_key': os.getenv('AWS_SECRET_ACCESS_KEY')
-    })
+# No usar credenciales hardcodeadas - usar rol de ejecución de Lambda
+# if os.getenv('AWS_ACCESS_KEY_ID') and os.getenv('AWS_SECRET_ACCESS_KEY'):
+#     session_args.update({
+#         'aws_access_key_id': os.getenv('AWS_ACCESS_KEY_ID'),
+#         'aws_secret_access_key': os.getenv('AWS_SECRET_ACCESS_KEY')
+#     })
 
 # AWS Clients
 s3_client = boto3.client('s3', **session_args)
