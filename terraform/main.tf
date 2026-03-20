@@ -69,6 +69,7 @@ locals {
   lambda_embeddings_path = "${path.module}/../apps/rag_lmbd_embeddings"
   lambda_query_path      = "${path.module}/../apps/rag_lmbd_query"
   lambda_fetcher_path    = "${path.module}/../apps/rag_lmbd_fetcher"
+  lambda_bolinks_path    = "${path.module}/../apps/rag_lmbd_bolinks"
   lambda_parser_path     = "${path.module}/../apps/rag_lmbd_parser"
   lambda_s3writer_path   = "${path.module}/../apps/rag_lmbd_s3writer"
   lambda_dbwriter_path   = "${path.module}/../apps/rag_lmbd_dbwriter"
@@ -597,6 +598,33 @@ module "lambda_fetcher" {
 }
 
 # ==============================================================================
+# Lambda: RAG Bolinks (Boletín Oficial Links Processor)
+# ==============================================================================
+
+module "lambda_bolinks" {
+  source = "./modules/lambda"
+
+  function_name          = "rag_lmbd_bolinks-${var.environment}"
+  description            = "Processes Boletín Oficial links and extracts structured data"
+  handler                = "index.handler"
+  runtime                = "python3.12"
+  timeout                = 60
+  memory_size            = 512
+  ephemeral_storage_size = 512
+
+  source_path = local.lambda_bolinks_path
+  environment = var.environment
+
+  environment_variables = {
+    BOLETIN_BASE_URL = var.boletin_base_url
+    DEFAULT_SECTION   = var.boletin_default_section
+    REQUEST_TIMEOUT   = var.boletin_request_timeout
+  }
+
+  tags = local.common_tags
+}
+
+# ==============================================================================
 # Lambda: RAG Step Function (Pipeline Orchestrator)
 # ==============================================================================
 
@@ -616,6 +644,7 @@ module "lambda_stepfunction" {
 
   environment_variables = {
     FETCHER_FUNCTION_NAME   = module.lambda_fetcher.function_name
+    BOLINKS_FUNCTION_NAME   = module.lambda_bolinks.function_name
     PARSER_FUNCTION_NAME    = module.lambda_parser.function_name
     S3WRITER_FUNCTION_NAME = module.lambda_s3writer.function_name
     DBWRITER_FUNCTION_NAME = module.lambda_dbwriter.function_name
@@ -631,6 +660,7 @@ module "lambda_stepfunction" {
       ]
       resources = [
         module.lambda_fetcher.function_arn,
+        module.lambda_bolinks.function_arn,
         module.lambda_parser.function_arn,
         module.lambda_s3writer.function_arn,
         module.lambda_dbwriter.function_arn,
@@ -832,4 +862,19 @@ output "lambda_stepfunction_function_arn" {
 output "lambda_stepfunction_invoke_arn" {
   description = "Invoke ARN of the step function orchestrator Lambda"
   value       = module.lambda_stepfunction.invoke_arn
+}
+
+output "lambda_bolinks_function_name" {
+  description = "Name of the bolinks Lambda"
+  value       = module.lambda_bolinks.function_name
+}
+
+output "lambda_bolinks_function_arn" {
+  description = "ARN of the bolinks Lambda"
+  value       = module.lambda_bolinks.function_arn
+}
+
+output "lambda_bolinks_invoke_arn" {
+  description = "Invoke ARN of the bolinks Lambda"
+  value       = module.lambda_bolinks.invoke_arn
 }
