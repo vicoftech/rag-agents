@@ -117,15 +117,61 @@ def handler(event, context):
         
         # TODO: Implementar aquí la lógica específica de rag_lmbd_bolinks
         # Por ahora, retornar una respuesta básica
-        pdf_links = get_pdf_links(body.get('date'), body.get('section', 'primera'))
-
-        result = {
-            'success': True,
-            'message': 'rag_lmbd_bolinks Lambda is ready for implementation',
-            'timestamp': datetime.now().isoformat(),
-            'received_params': body,
-            'pdf_links': pdf_links
-        }
+        date_str = body.get('date')
+        section = body.get('section', 'primera')
+        
+        # Validar formato de fecha y verificar si es fin de semana
+        if date_str and len(date_str) == 8 and date_str.isdigit():
+            try:
+                # Convertir YYYYMMDD a datetime
+                date_obj = datetime.strptime(date_str, '%Y%m%d')
+                
+                # Verificar si es sábado (5) o domingo (6)
+                if date_obj.weekday() in [5, 6]:  # 5 = sábado, 6 = domingo
+                    print(f"Date {date_str} is weekend ({date_obj.strftime('%A')}), returning empty PDF links")
+                    pdf_links = []
+                    result = {
+                        'success': True,
+                        'message': f'No PDF links available for weekend date: {date_str} ({date_obj.strftime("%A")})',
+                        'timestamp': datetime.now().isoformat(),
+                        'received_params': body,
+                        'pdf_links': pdf_links,
+                        'is_weekend': True,
+                        'day_of_week': date_obj.strftime('%A')
+                    }
+                else:
+                    print(f"Date {date_str} is weekday ({date_obj.strftime('%A')}), proceeding with PDF extraction")
+                    pdf_links = get_pdf_links(date_str, section)
+                    result = {
+                        'success': True,
+                        'message': 'rag_lmbd_bolinks Lambda is ready for implementation',
+                        'timestamp': datetime.now().isoformat(),
+                        'received_params': body,
+                        'pdf_links': pdf_links,
+                        'is_weekend': False,
+                        'day_of_week': date_obj.strftime('%A')
+                    }
+            except ValueError as e:
+                print(f"Invalid date format: {date_str}, error: {e}")
+                pdf_links = []
+                result = {
+                    'success': False,
+                    'message': f'Invalid date format: {date_str}. Expected format: YYYYMMDD',
+                    'timestamp': datetime.now().isoformat(),
+                    'received_params': body,
+                    'pdf_links': pdf_links,
+                    'error': str(e)
+                }
+        else:
+            # Fecha no proporcionada o formato inválido, proceder con extracción normal
+            pdf_links = get_pdf_links(date_str, section)
+            result = {
+                'success': True,
+                'message': 'rag_lmbd_bolinks Lambda is ready for implementation',
+                'timestamp': datetime.now().isoformat(),
+                'received_params': body,
+                'pdf_links': pdf_links
+            }
         
         # Preparar respuesta
         response = {
