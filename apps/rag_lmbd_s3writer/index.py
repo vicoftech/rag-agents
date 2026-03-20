@@ -197,22 +197,45 @@ def upload_to_s3(content: bytes, bucket: str, key: str) -> bool:
         print(f"Error uploading to S3: {e}")
         return False
 
-def process_parser_output(parser_output: Dict) -> Dict:
+def generate_filename_from_url(pdf_url: str, index: int, date_str: str, section: str) -> str:
     """
-    Procesa el output del parser y sube los PDFs a S3
+    Genera nombre de archivo para PDF basado en URL, fecha y sección
+    """
+    # Extraer ID del aviso de la URL
+    # Ej: https://www.boletinoficial.gob.ar/pdf/aviso/primera/339534/20260317
+    # -> aviso_339534_20260317_primera.pdf
+    parts = pdf_url.strip('/').split('/')
+    if len(parts) >= 6:
+        aviso_id = parts[5]  # El ID del aviso
+    else:
+        aviso_id = f"aviso_{index:03d}"
+    
+    # Limpiar URL de parámetros
+    clean_url = pdf_url.split('?')[0]
+    
+    # Generar nombre único
+    timestamp = datetime.now().strftime('%H%M%S')
+    filename = f"aviso_{aviso_id}_{date_str}_{section}_{timestamp}.pdf"
+    
+    return filename
+
+def process_bolinks_output(bolinks_output: Dict) -> Dict:
+    """
+    Procesa el output de bolinks y sube los PDFs a S3
     """
     try:
-        # Validar que el parser tuvo éxito
-        if not parser_output.get('success', False):
+        # Validar que bolinks tuvo éxito
+        if not bolinks_output.get('success', False):
             return {
                 'success': False,
-                'error': 'Parser output indicates failure',
-                'parser_output': parser_output
+                'error': 'Bolinks output indicates failure',
+                'bolinks_output': bolinks_output
             }
         
         # Extraer información del contexto
-        url = parser_output.get('url', '')
-        pdf_links = parser_output.get('pdf_links', [])
+        pdf_links = bolinks_output.get('pdf_links', [])
+        date = bolinks_output.get('received_params', {}).get('date', '')
+        section = bolinks_output.get('received_params', {}).get('section', 'primera')
         
         if not pdf_links:
             return {
@@ -223,19 +246,16 @@ def process_parser_output(parser_output: Dict) -> Dict:
             }
         
         # Generar metadata
-        # Usar la URL original del parser para generar site_id, no la URL del PDF
-        original_url = parser_output.get('base_url', url)
-        site_id = generate_site_id(original_url)
-        date_str = extract_date_from_context(parser_output)
+        site_id = 'boletin_oficial'
+        date_str = date
         
-        print(f"Processing {len(pdf_links)} PDFs for site: {site_id}, date: {date_str}")
+        print(f"Processing {len(pdf_links)} PDFs for site: {site_id}, date: {date_str}, section: {section}")
         
         uploaded_files = []
         processed_count = 0
         failed_count = 0
         
-        for index, pdf_info in enumerate(pdf_links):
-            pdf_url = pdf_info.get('url', '')
+        for index, pdf_url in enumerate(pdf_links):
             if not pdf_url:
                 continue
             
@@ -246,23 +266,20 @@ def process_parser_output(parser_output: Dict) -> Dict:
                 continue
             
             # Generar nombre de archivo
-            filename = generate_filename(pdf_info, index)
-            
-            # Construir S3 key: site_id/fecha/archivo
-            s3_key = f"{site_id}/{date_str}/{filename}"
+            filename = generate_filename_from_url(pdf_url, index, date_str, section)
             
             # Subir a S3
+            s3_key = f"{site_id}/{date_str}/{section}/{filename}"
             if upload_to_s3(pdf_content, S3_BUCKET, s3_key):
                 uploaded_files.append({
-                    'original_url': pdf_url,
+                    'url': pdf_url,
                     's3_key': s3_key,
-                    's3_uri': f"s3://{S3_BUCKET}/{s3_key}",
                     'filename': filename,
                     'size': len(pdf_content),
                     'metadata': {
-                        'title': pdf_info.get('title', ''),
-                        'date': pdf_info.get('date', ''),
-                        'section': pdf_info.get('section', '')
+                        'date': date_str,
+                        'section': section,
+                        'site_id': site_id
                     }
                 })
                 processed_count += 1
@@ -273,6 +290,7 @@ def process_parser_output(parser_output: Dict) -> Dict:
             'success': True,
             'site_id': site_id,
             'date': date_str,
+            'section': section,
             'processed_count': processed_count,
             'failed_count': failed_count,
             'total_found': len(pdf_links),
@@ -283,7 +301,8 @@ def process_parser_output(parser_output: Dict) -> Dict:
     except Exception as e:
         return {
             'success': False,
-            'error': f'Error processing parser output: {str(e)}'
+            'error': f'Error processing bolinks output: {str(e)}',
+            'exception': str(e)
         }
 
 def handler(event, context):
@@ -312,21 +331,21 @@ def handler(event, context):
         if http_method:
             # Request HTTP
             body = json.loads(event.get("body") or "{}")
-            parser_output = body.get("parser_output")
+            bolinks_output = body.get("bolinks_output")
         else:
             # Invocación directa (desde Step Function)
-            parser_output = event.get("parser_output")
+            bolinks_output = event.get("bolinks_output")
         
-        # Validar parámetro parser_output
-        if not parser_output:
+        # Validar parámetro bolinks_output
+        if not bolinks_output:
             return {
                 "statusCode": 400,
                 "headers": {"Content-Type": "application/json", **CORS_HEADERS},
-                "body": json.dumps({"error": "Missing required parameter: parser_output"})
+                "body": json.dumps({"error": "Missing required parameter: bolinks_output"})
             }
         
-        # Procesar output del parser
-        result = process_parser_output(parser_output)
+        # Procesar output de bolinks
+        result = process_bolinks_output(bolinks_output)
         
         # Preparar respuesta
         if result['success']:

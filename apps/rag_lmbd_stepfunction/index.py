@@ -17,8 +17,7 @@ session_args = {'region_name': os.getenv('AWS_REGION', 'us-east-1')}
 lambda_client = boto3.client('lambda', **session_args)
 
 # Environment variables
-FETCHER_FUNCTION = os.getenv('FETCHER_FUNCTION_NAME', 'rag_lmbd_fetcher-dev')
-PARSER_FUNCTION = os.getenv('PARSER_FUNCTION_NAME', 'rag_lmbd_parser-dev')
+BOLINKS_FUNCTION = os.getenv('BOLINKS_FUNCTION_NAME', 'rag_lmbd_bolinks-dev')
 S3WRITER_FUNCTION = os.getenv('S3WRITER_FUNCTION_NAME', 'rag_lmbd_s3writer-dev')
 DBWRITER_FUNCTION = os.getenv('DBWRITER_FUNCTION_NAME', 'rag_lmbd_dbwriter-dev')
 NOTIFIER_FUNCTION = os.getenv('NOTIFIER_FUNCTION_NAME', 'rag_lmbd_notifier-dev')
@@ -49,75 +48,57 @@ def invoke_lambda(function_name: str, payload: Dict[str, Any]) -> Dict[str, Any]
             'error': f'Error invoking {function_name}: {str(e)}'
         }
 
-def extract_parser_result(parser_response: Dict[str, Any]) -> Dict[str, Any]:
+def extract_bolinks_result(bolinks_response: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Extrae el resultado del parser de la respuesta Lambda
+    Extrae el resultado de bolinks de la respuesta Lambda
     """
     # Si la respuesta tiene statusCode, extraer del body
-    if 'statusCode' in parser_response and 'body' in parser_response:
-        body = json.loads(parser_response['body'])
+    if 'statusCode' in bolinks_response and 'body' in bolinks_response:
+        body = json.loads(bolinks_response['body'])
         return body
     else:
-        return parser_response
+        return bolinks_response
 
-def execute_pipeline(url: str) -> Dict[str, Any]:
+def execute_pipeline(date: str, section: str = 'primera') -> Dict[str, Any]:
     """
-    Ejecuta el pipeline completo: fetcher → parser → s3writer → dbwriter → notifier
+    Ejecuta el pipeline completo: bolinks → s3writer → dbwriter → notifier
     """
     execution_data = {
-        'url': url,
+        'date': date,
+        'section': section,
         'start_time': datetime.now().isoformat(),
         'steps': []
     }
     
-    # Step 1: Fetcher
-    print(f"Step 1: Fetching content from {url}")
-    fetcher_payload = {"url": url}
-    fetcher_result = invoke_lambda(FETCHER_FUNCTION, fetcher_payload)
+    # Step 1: Bolinks (Fetcher + Parser combinado)
+    print(f"Step 1: Getting PDF links for date {date}, section {section}")
     
-    execution_data['steps'].append({
-        'step': 'fetcher',
-        'success': fetcher_result.get('success', False),
-        'result': fetcher_result
-    })
-    
-    if not fetcher_result.get('success'):
-        # Pipeline falló en fetcher - notificar y salir
+    # Validar formato de fecha YYYYMMDD
+    if len(date) != 8 or not date.isdigit():
+        error_msg = f"Invalid date format: {date}. Expected format: YYYYMMDD"
+        print(error_msg)
         execution_data['success'] = False
-        execution_data['failed_step'] = 'fetcher'
-        execution_data['error_message'] = fetcher_result.get('error', 'Unknown error')
+        execution_data['error_message'] = error_msg
         execution_data['end_time'] = datetime.now().isoformat()
-        
-        # Notificar fallo
-        notify_result = invoke_lambda(NOTIFIER_FUNCTION, {
-            "requestContext": {"http": {"method": "POST"}},
-            "body": json.dumps({"execution_data": execution_data})
-        })
-        
         return execution_data
     
-    # Step 2: Parser
-    print("Step 2: Parsing HTML content")
-    parser_payload = {
-        "raw_html": fetcher_result.get('raw_html', ''),
-        "url": url
+    bolinks_payload = {
+        "date": date,
+        "section": section
     }
-    parser_result = invoke_lambda(PARSER_FUNCTION, parser_payload)
-    
-    # Extraer el resultado real del parser (manejar respuesta HTTP)
-    parser_data = extract_parser_result(parser_result)
+    bolinks_result = invoke_lambda(BOLINKS_FUNCTION, bolinks_payload)
     
     execution_data['steps'].append({
-        'step': 'parser',
-        'success': parser_data.get('success', False),
-        'result': parser_result
+        'step': 'bolinks',
+        'success': bolinks_result.get('success', False),
+        'result': bolinks_result
     })
     
-    if not parser_data.get('success'):
-        # Pipeline falló en parser - notificar y salir
+    if not bolinks_result.get('success'):
+        # Pipeline falló en bolinks - notificar y salir
         execution_data['success'] = False
-        execution_data['failed_step'] = 'parser'
-        execution_data['error_message'] = parser_data.get('error', 'Unknown error')
+        execution_data['failed_step'] = 'bolinks'
+        execution_data['error_message'] = bolinks_result.get('error', 'Unknown error')
         execution_data['end_time'] = datetime.now().isoformat()
         
         # Notificar fallo
@@ -128,10 +109,18 @@ def execute_pipeline(url: str) -> Dict[str, Any]:
         
         return execution_data
     
-    # Step 3: S3Writer
-    print("Step 3: Downloading PDFs and uploading to S3")
+    # Step 2: S3Writer (procesar PDFs desde bolinks)
+    print("Step 2: Processing PDF links from bolinks result")
+    
+    # Extraer pdf_links del resultado de bolinks
+    pdf_links = bolinks_result.get('pdf_links', [])
+    
+    # Crear payload para s3writer con los PDFs
     s3writer_payload = {
-        "parser_output": parser_data  # Usar parser_data (no parser_result)
+        "bolinks_output": bolinks_result,
+        "pdf_links": pdf_links,
+        "date": date,
+        "section": section
     }
     s3writer_result = invoke_lambda(S3WRITER_FUNCTION, s3writer_payload)
     
@@ -156,8 +145,8 @@ def execute_pipeline(url: str) -> Dict[str, Any]:
         
         return execution_data
     
-    # Step 4: DBWriter
-    print("Step 4: Writing metadata to DynamoDB")
+    # Step 3: DBWriter
+    print("Step 3: Writing metadata to DynamoDB")
     dbwriter_payload = {
         "s3writer_output": s3writer_result
     }
@@ -184,12 +173,24 @@ def execute_pipeline(url: str) -> Dict[str, Any]:
         
         return execution_data
     
+    # Step 4: Notifier (éxito completo)
+    print("Step 4: Sending success notification")
+    execution_data['success'] = True
+    execution_data['end_time'] = datetime.now().isoformat()
+    
+    # Notificar éxito
+    notify_result = invoke_lambda(NOTIFIER_FUNCTION, {
+        "requestContext": {"http": {"method": "POST"}},
+        "body": json.dumps({"execution_data": execution_data})
+    })
+    
     # Pipeline exitoso - preparar datos de éxito
     execution_data.update({
         'success': True,
-        'site_id': s3writer_result.get('site_id', 'unknown'),
-        'date': s3writer_result.get('date', datetime.now().strftime('%Y-%m-%d')),
-        'total_found': parser_data.get('pdf_links_count', 0),  # Usar parser_data
+        'site_id': s3writer_result.get('site_id', 'boletin_oficial'),
+        'date': date,
+        'section': section,
+        'total_found': len(pdf_links),
         'processed_count': s3writer_result.get('processed_count', 0),
         'failed_count': s3writer_result.get('failed_count', 0),
         'uploaded_files_count': s3writer_result.get('processed_count', 0),
@@ -198,19 +199,6 @@ def execute_pipeline(url: str) -> Dict[str, Any]:
         'dynamodb_table': dbwriter_result.get('dynamodb_table', ''),
         'sample_files': s3writer_result.get('uploaded_files', [])[:3],  # Primeros 3 archivos
         'end_time': datetime.now().isoformat()
-    })
-    
-    # Step 5: Notifier (éxito)
-    print("Step 5: Sending success notification")
-    notify_result = invoke_lambda(NOTIFIER_FUNCTION, {
-        "requestContext": {"http": {"method": "POST"}},
-        "body": json.dumps({"execution_data": execution_data})
-    })
-    
-    execution_data['steps'].append({
-        'step': 'notifier',
-        'success': notify_result.get('success', False),
-        'result': notify_result
     })
     
     return execution_data
@@ -241,21 +229,23 @@ def handler(event, context):
         if http_method:
             # Request HTTP
             body = json.loads(event.get("body") or "{}")
-            url = body.get("url")
+            date = body.get("date")
+            section = body.get("section", "primera")
         else:
             # Invocación directa
-            url = event.get("url")
+            date = event.get("date")
+            section = event.get("section", "primera")
         
-        # Validar parámetro URL
-        if not url:
+        # Validar parámetro date
+        if not date:
             return {
                 "statusCode": 400,
                 "headers": {"Content-Type": "application/json", **CORS_HEADERS},
-                "body": json.dumps({"error": "Missing required parameter: url"})
+                "body": json.dumps({"error": "Missing required parameter: date. Expected format: YYYYMMDD"})
             }
         
         # Ejecutar pipeline completo
-        result = execute_pipeline(url)
+        result = execute_pipeline(date, section)
         
         # Preparar respuesta
         if result['success']:
