@@ -463,8 +463,8 @@ module "lambda_s3writer" {
   description            = "Downloads PDFs and uploads to S3"
   handler                = "index.handler"
   runtime                = "python3.12"
-  timeout                = 300  # 5 minutos para descargar múltiples archivos
-  memory_size            = 512
+  timeout                = 900  # 15 minutos para descargar múltiples archivos
+  memory_size            = 1024
   ephemeral_storage_size = 1024
 
   source_path = local.lambda_s3writer_path

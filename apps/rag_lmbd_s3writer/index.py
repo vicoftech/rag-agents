@@ -22,7 +22,7 @@ s3_client = boto3.client('s3', **session_args)
 
 # Environment variables
 S3_BUCKET = os.getenv('S3_BUCKET_NAME')
-REQUEST_TIMEOUT = int(os.getenv('REQUEST_TIMEOUT', '60'))
+REQUEST_TIMEOUT = int(os.getenv('REQUEST_TIMEOUT', '30'))
 MAX_FILE_SIZE = int(os.getenv('MAX_FILE_SIZE', str(50 * 1024 * 1024)))  # 50MB
 
 # Headers para descargar archivos
@@ -30,6 +30,9 @@ DOWNLOAD_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
     'Accept': 'application/pdf,application/octet-stream,*/*',
     'Accept-Language': 'es-AR,es;q=0.8,en-US;q=0.5,en;q=0.3',
+    'Connection': 'keep-alive',
+    'Cache-Control': 'no-cache',
+    'Pragma': 'no-cache'
 }
 
 def generate_site_id(url: str) -> str:
@@ -147,7 +150,12 @@ def download_pdf(url: str) -> Optional[bytes]:
     """
     try:
         print(f"Downloading PDF from: {url}")
-        response = requests.get(url, headers=DOWNLOAD_HEADERS, timeout=REQUEST_TIMEOUT, stream=True)
+        
+        # Limpiar URL de parámetros para evitar duplicados
+        clean_url = url.split('?')[0]
+        print(f"Clean URL for download: {clean_url}")
+        
+        response = requests.get(clean_url, headers=DOWNLOAD_HEADERS, timeout=REQUEST_TIMEOUT, stream=True)
         response.raise_for_status()
         
         # Verificar tamaño del archivo
@@ -156,19 +164,27 @@ def download_pdf(url: str) -> Optional[bytes]:
             print(f"File too large: {content_length} bytes")
             return None
         
-        # Descargar contenido
+        # Descargar contenido con chunks más pequeños para mejor control
         content = b''
-        for chunk in response.iter_content(chunk_size=8192):
+        chunk_count = 0
+        for chunk in response.iter_content(chunk_size=4096):  # Reducir chunk size
             if chunk:
                 content += chunk
+                chunk_count += 1
+                
+                # Logging periódico para monitoreo
+                if chunk_count % 50 == 0:
+                    print(f"Downloaded {len(content)} bytes so far...")
+                
                 if len(content) > MAX_FILE_SIZE:
                     print(f"File exceeded maximum size: {len(content)} bytes")
                     return None
         
+        print(f"Successfully downloaded {len(content)} bytes in {chunk_count} chunks")
+        
         # Verificar que sea un PDF válido
         if not content.startswith(b'%PDF'):
-            print("Downloaded file is not a valid PDF")
-            return None
+            print(f"Warning: Downloaded content may not be a valid PDF")
         
         return content
         
@@ -249,19 +265,28 @@ def process_bolinks_output(bolinks_output: Dict) -> Dict:
         site_id = 'boletin_oficial'
         date_str = date
         
-        print(f"Processing {len(pdf_links)} PDFs for site: {site_id}, date: {date_str}, section: {section}")
+        print(f"Starting to process {len(pdf_links)} PDFs for site: {site_id}, date: {date_str}, section: {section}")
         
         uploaded_files = []
         processed_count = 0
         failed_count = 0
         
-        for index, pdf_url in enumerate(pdf_links):
+        # Limitar el número de PDFs a procesar para evitar timeouts
+        max_pdfs = min(len(pdf_links), 20)  # Procesar máximo 20 PDFs
+        pdf_links_to_process = pdf_links[:max_pdfs]
+        
+        print(f"Processing {len(pdf_links_to_process)} PDFs (limited from {len(pdf_links)} total)")
+        
+        for index, pdf_url in enumerate(pdf_links_to_process):
             if not pdf_url:
                 continue
+            
+            print(f"Processing PDF {index + 1}/{len(pdf_links_to_process)}: {pdf_url}")
             
             # Descargar PDF
             pdf_content = download_pdf(pdf_url)
             if not pdf_content:
+                print(f"Failed to download PDF {index + 1}")
                 failed_count += 1
                 continue
             
@@ -283,8 +308,12 @@ def process_bolinks_output(bolinks_output: Dict) -> Dict:
                     }
                 })
                 processed_count += 1
+                print(f"Successfully uploaded PDF {index + 1}/{len(pdf_links_to_process)}")
             else:
+                print(f"Failed to upload PDF {index + 1}/{len(pdf_links_to_process)}")
                 failed_count += 1
+        
+        print(f"Processing complete: {processed_count} successful, {failed_count} failed")
         
         return {
             'success': True,
@@ -294,6 +323,7 @@ def process_bolinks_output(bolinks_output: Dict) -> Dict:
             'processed_count': processed_count,
             'failed_count': failed_count,
             'total_found': len(pdf_links),
+            'processed_limit': max_pdfs,
             'uploaded_files': uploaded_files,
             's3_bucket': S3_BUCKET
         }
