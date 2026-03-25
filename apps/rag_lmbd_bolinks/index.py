@@ -78,7 +78,23 @@ def get_pdf_links(target_date: str, seccion: str = 'primera'):
                 
                 pdf_url = f"{base_pdf_url}{seccion}/{id_aviso}/{fecha_aviso}"
                 if pdf_url not in pdf_links:
-                    pdf_links.append(pdf_url)
+                    # Verificar si el link realmente contiene un PDF
+                    try:
+                        response = requests.head(pdf_url, headers={
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                        }, timeout=10)
+                        
+                        # Verificar si el contenido es un PDF
+                        content_type = response.headers.get('content-type', '').lower()
+                        if 'application/pdf' in content_type:
+                            pdf_links.append(pdf_url)
+                            print(f"Added valid PDF: {pdf_url}")
+                        else:
+                            print(f"Skipping non-PDF link: {pdf_url} (Content-Type: {content_type})")
+                    except requests.RequestException as e:
+                        print(f"Error checking PDF link {pdf_url}: {e}")
+                        # Omitir el link si hay error al verificar
+                        continue
 
     # print(f"Se encontraron {len(pdf_links)} enlaces a PDFs en la sección '{seccion}'.")
     return pdf_links
