@@ -608,7 +608,7 @@ module "lambda_bolinks" {
   description            = "Processes Boletín Oficial links and extracts structured data"
   handler                = "index.handler"
   runtime                = "python3.12"
-  timeout                = 60
+  timeout                = 180
   memory_size            = 512
   ephemeral_storage_size = 512
 

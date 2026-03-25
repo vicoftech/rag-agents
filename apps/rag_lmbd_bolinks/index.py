@@ -78,11 +78,11 @@ def get_pdf_links(target_date: str, seccion: str = 'primera'):
                 
                 pdf_url = f"{base_pdf_url}{seccion}/{id_aviso}/{fecha_aviso}"
                 if pdf_url not in pdf_links:
-                    # Verificar si el link realmente contiene un PDF
+                    # Verificar si el link realmente contiene un PDF con timeout reducido
                     try:
                         response = requests.head(pdf_url, headers={
                             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                        }, timeout=10)
+                        }, timeout=3)  # Reducir timeout a 3 segundos
                         
                         # Verificar si el contenido es un PDF
                         content_type = response.headers.get('content-type', '').lower()
@@ -96,7 +96,7 @@ def get_pdf_links(target_date: str, seccion: str = 'primera'):
                         # Omitir el link si hay error al verificar
                         continue
 
-    # print(f"Se encontraron {len(pdf_links)} enlaces a PDFs en la sección '{seccion}'.")
+    print(f"Found {len(pdf_links)} valid PDF links in section '{seccion}'")
     return pdf_links
 
 def handler(event, context):
