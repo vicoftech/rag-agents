@@ -27,27 +27,28 @@ terraform {
   }
   required_version = ">= 1.2.0"
 
-  # Uncomment to use S3 backend for state
-  # backend "s3" {
-  #   bucket         = "your-terraform-state-bucket"
-  #   key            = "rag-agents/terraform.tfstate"
-  #   region         = "us-east-1"
-  #   encrypt        = true
-  #   dynamodb_table = "terraform-locks"
-  # }
+  # Estado remoto (bucket + DynamoDB creados con terraform/bootstrap/)
+  backend "s3" {
+    bucket         = "rag-agents-terraform-state-615216531593"
+    key            = "rag-agents/terraform.tfstate"
+    region         = "us-east-1"
+    encrypt        = true
+    dynamodb_table = "rag-agents-terraform-locks"
+    profile        = "asap_dev"
+  }
 }
 
 # Provider configuration
 # If aws_profile is empty string, Terraform will use default AWS credentials
 # (from AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY env vars or ~/.aws/credentials)
 provider "aws" {
-  profile = "default"
   region  = var.aws_region
+  profile = var.aws_profile != "" ? var.aws_profile : "default"
 }
 
 provider "awscc" {
-  profile = "default"
   region  = var.aws_region
+  profile = var.aws_profile != "" ? var.aws_profile : "default"
 }
 
 provider "null" {}
@@ -66,16 +67,16 @@ locals {
   }
 
   # Lambda source paths (relative to terraform directory)
-  lambda_embeddings_path = "${path.module}/../apps/rag_lmbd_embeddings"
-  lambda_query_path      = "${path.module}/../apps/rag_lmbd_query"
-  lambda_fetcher_path    = "${path.module}/../apps/rag_lmbd_fetcher"
-  lambda_bolinks_path    = "${path.module}/../apps/rag_lmbd_bolinks"
-  lambda_parser_path     = "${path.module}/../apps/rag_lmbd_parser"
-  lambda_s3writer_path   = "${path.module}/../apps/rag_lmbd_s3writer"
-  lambda_dbwriter_path   = "${path.module}/../apps/rag_lmbd_dbwriter"
-  lambda_notifier_path  = "${path.module}/../apps/rag_lmbd_notifier"
+  lambda_embeddings_path   = "${path.module}/../apps/rag_lmbd_embeddings"
+  lambda_query_path        = "${path.module}/../apps/rag_lmbd_query"
+  lambda_fetcher_path      = "${path.module}/../apps/rag_lmbd_fetcher"
+  lambda_bolinks_path      = "${path.module}/../apps/rag_lmbd_bolinks"
+  lambda_parser_path       = "${path.module}/../apps/rag_lmbd_parser"
+  lambda_s3writer_path     = "${path.module}/../apps/rag_lmbd_s3writer"
+  lambda_dbwriter_path     = "${path.module}/../apps/rag_lmbd_dbwriter"
+  lambda_notifier_path     = "${path.module}/../apps/rag_lmbd_notifier"
   lambda_stepfunction_path = "${path.module}/../apps/rag_lmbd_stepfunction"
-  lambda_agent_path      = "${path.module}/../apps/agent"
+  lambda_agent_path        = "${path.module}/../apps/agent"
 
   # Base environment variables (computed from other resources)
   base_db_env_vars = {
@@ -96,6 +97,31 @@ locals {
     local.base_db_env_vars,
     var.lambda_query_env_vars
   )
+
+  # Modelos serverless vía AWS Marketplace (p. ej. Cohere Embed en Bedrock) requieren que el rol
+  # de ejecución pueda ViewSubscriptions/Subscribe cuando Bedrock completa la suscripción.
+  # Ver: https://repost.aws/knowledge-center/bedrock-serverless-models-access-denied
+  lambda_bedrock_with_marketplace = [
+    {
+      effect = "Allow"
+      actions = [
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream",
+      ]
+      resources = [
+        "arn:aws:bedrock:${var.aws_region}::foundation-model/*"
+      ]
+    },
+    {
+      effect = "Allow"
+      actions = [
+        "aws-marketplace:ViewSubscriptions",
+        "aws-marketplace:Subscribe",
+        "aws-marketplace:Unsubscribe",
+      ]
+      resources = ["*"]
+    },
+  ]
 }
 
 # ==============================================================================
@@ -124,24 +150,20 @@ module "s3_documents" {
 # VPC Endpoints (para acceso desde Lambda en VPC)
 # ==============================================================================
 
-# Obtener route tables de las subnets
-data "aws_subnet" "selected" {
-  count = length(var.subnets)
-  id    = var.subnets[count.index]
-}
-
-data "aws_route_table" "selected" {
-  count     = length(var.subnets)
-  subnet_id = var.subnets[count.index]
+# Route tables de la VPC (solo si creamos el endpoint Gateway S3)
+data "aws_route_tables" "vpc_for_s3_endpoint" {
+  count  = var.create_vpc_endpoint_s3 ? 1 : 0
+  vpc_id = var.vpc_id
 }
 
 # VPC Endpoint para S3 (Gateway type - gratuito)
 resource "aws_vpc_endpoint" "s3" {
+  count             = var.create_vpc_endpoint_s3 ? 1 : 0
   vpc_id            = var.vpc_id
   service_name      = "com.amazonaws.${var.aws_region}.s3"
   vpc_endpoint_type = "Gateway"
 
-  route_table_ids = distinct(data.aws_route_table.selected[*].id)
+  route_table_ids = data.aws_route_tables.vpc_for_s3_endpoint[0].ids
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -161,22 +183,9 @@ resource "aws_vpc_endpoint" "s3" {
   })
 }
 
-# VPC Endpoint para Bedrock Runtime (Interface type)
-resource "aws_vpc_endpoint" "bedrock" {
-  vpc_id              = var.vpc_id
-  service_name        = "com.amazonaws.${var.aws_region}.bedrock-runtime"
-  vpc_endpoint_type   = "Interface"
-  subnet_ids          = var.subnets
-  security_group_ids  = [aws_security_group.vpc_endpoints.id]
-  private_dns_enabled = true
-
-  tags = merge(local.common_tags, {
-    Name = "bedrock-endpoint-${var.environment}"
-  })
-}
-
-# Security Group para VPC Endpoints de tipo Interface
+# Security Group para VPC Endpoints de tipo Interface (Bedrock)
 resource "aws_security_group" "vpc_endpoints" {
+  count       = var.create_vpc_endpoint_bedrock ? 1 : 0
   name        = "vpc-endpoints-sg-${var.environment}"
   description = "Security group for VPC endpoints"
   vpc_id      = var.vpc_id
@@ -198,6 +207,21 @@ resource "aws_security_group" "vpc_endpoints" {
 
   tags = merge(local.common_tags, {
     Name = "vpc-endpoints-sg-${var.environment}"
+  })
+}
+
+# VPC Endpoint para Bedrock Runtime (Interface type)
+resource "aws_vpc_endpoint" "bedrock" {
+  count               = var.create_vpc_endpoint_bedrock ? 1 : 0
+  vpc_id              = var.vpc_id
+  service_name        = "com.amazonaws.${var.aws_region}.bedrock-runtime"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = var.subnets
+  security_group_ids  = [aws_security_group.vpc_endpoints[0].id]
+  private_dns_enabled = true
+
+  tags = merge(local.common_tags, {
+    Name = "bedrock-endpoint-${var.environment}"
   })
 }
 
@@ -258,36 +282,32 @@ module "lambda_embeddings" {
   s3_filter_suffix   = ".pdf"
 
   # IAM Permissions
-  attach_policy_statements = [
-    {
-      effect = "Allow"
-      actions = [
-        "s3:GetObject",
-        "s3:ListBucket"
-      ]
-      resources = [
-        module.s3_documents.bucket_arn,
-        "${module.s3_documents.bucket_arn}/*"
-      ]
-    },
-    {
-      effect = "Allow"
-      actions = [
-        "bedrock:InvokeModel"
-      ]
-      resources = [
-        "arn:aws:bedrock:${var.aws_region}::foundation-model/*"
-      ]
-    },
-    {
-      effect = "Allow"
-      actions = [
-        "textract:StartDocumentTextDetection",
-        "textract:GetDocumentTextDetection"
-      ]
-      resources = ["*"]
-    }
-  ]
+  attach_policy_statements = concat(
+    [
+      {
+        effect = "Allow"
+        actions = [
+          "s3:GetObject",
+          "s3:ListBucket"
+        ]
+        resources = [
+          module.s3_documents.bucket_arn,
+          "${module.s3_documents.bucket_arn}/*"
+        ]
+      },
+    ],
+    local.lambda_bedrock_with_marketplace,
+    [
+      {
+        effect = "Allow"
+        actions = [
+          "textract:StartDocumentTextDetection",
+          "textract:GetDocumentTextDetection"
+        ]
+        resources = ["*"]
+      }
+    ]
+  )
 
   tags = local.common_tags
 }
@@ -321,18 +341,8 @@ module "lambda_query" {
 
   environment_variables = local.lambda_query_env
 
-  # IAM Permissions - grant access to all Bedrock models
-  attach_policy_statements = [
-    {
-      effect = "Allow"
-      actions = [
-        "bedrock:InvokeModel"
-      ]
-      resources = [
-        "arn:aws:bedrock:${var.aws_region}::foundation-model/*"
-      ]
-    }
-  ]
+  # IAM Permissions - Bedrock + Marketplace (suscripción automática a modelos Marketplace)
+  attach_policy_statements = local.lambda_bedrock_with_marketplace
 
   tags = local.common_tags
 }
@@ -377,10 +387,10 @@ module "api_gateway_query" {
 # ==============================================================================
 
 resource "aws_dynamodb_table" "documents" {
-  name           = "rag-documents-${var.environment}"
-  billing_mode   = "PAY_PER_REQUEST"
-  hash_key       = "PK"
-  range_key      = "SK"
+  name         = "rag-documents-${var.environment}"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "PK"
+  range_key    = "SK"
 
   attribute {
     name = "PK"
@@ -408,23 +418,23 @@ resource "aws_dynamodb_table" "documents" {
   }
 
   global_secondary_index {
-    name     = "SiteDateIndex"
-    hash_key  = "site_id"
-    range_key = "date"
+    name            = "SiteDateIndex"
+    hash_key        = "site_id"
+    range_key       = "date"
     projection_type = "ALL"
   }
 
   global_secondary_index {
-    name     = "EntityTypeIndex"
-    hash_key  = "entity_type"
-    range_key = "PK"
+    name            = "EntityTypeIndex"
+    hash_key        = "entity_type"
+    range_key       = "PK"
     projection_type = "ALL"
   }
 
   global_secondary_index {
-    name     = "EntityDateIndex"
-    hash_key  = "entity_type"
-    range_key = "date"
+    name            = "EntityDateIndex"
+    hash_key        = "entity_type"
+    range_key       = "date"
     projection_type = "ALL"
   }
 
@@ -463,7 +473,7 @@ module "lambda_s3writer" {
   description            = "Downloads PDFs and uploads to S3"
   handler                = "index.handler"
   runtime                = "python3.12"
-  timeout                = 900  # 15 minutos para descargar múltiples archivos
+  timeout                = 900 # 15 minutos para descargar múltiples archivos
   memory_size            = 1024
   ephemeral_storage_size = 1024
 
@@ -471,9 +481,9 @@ module "lambda_s3writer" {
   environment = var.environment
 
   environment_variables = {
-    S3_BUCKET_NAME      = module.s3_documents.bucket_name
-    REQUEST_TIMEOUT      = "60"
-    MAX_FILE_SIZE        = "52428800"  # 50MB
+    S3_BUCKET_NAME  = module.s3_documents.bucket_name
+    REQUEST_TIMEOUT = "60"
+    MAX_FILE_SIZE   = "52428800" # 50MB
   }
 
   # IAM Permissions
@@ -500,7 +510,7 @@ module "lambda_dbwriter" {
   description            = "Upserts document metadata to DynamoDB"
   handler                = "index.handler"
   runtime                = "python3.12"
-  timeout                = 300  # 5 minutos para batch writes
+  timeout                = 300 # 5 minutos para batch writes
   memory_size            = 256
   ephemeral_storage_size = 512
 
@@ -550,7 +560,7 @@ module "lambda_notifier" {
   environment = var.environment
 
   environment_variables = {
-    SNS_TOPIC_ARN = aws_sns_topic.rag_notifications.arn
+    SNS_TOPIC_ARN      = aws_sns_topic.rag_notifications.arn
     NOTIFICATION_EMAIL = var.notification_email
   }
 
@@ -590,8 +600,8 @@ module "lambda_fetcher" {
 
   environment_variables = {
     BOLETIN_BASE_URL = var.boletin_base_url
-    DEFAULT_SECTION   = var.boletin_default_section
-    REQUEST_TIMEOUT   = var.boletin_request_timeout
+    DEFAULT_SECTION  = var.boletin_default_section
+    REQUEST_TIMEOUT  = var.boletin_request_timeout
   }
 
   tags = local.common_tags
@@ -617,8 +627,8 @@ module "lambda_bolinks" {
 
   environment_variables = {
     BOLETIN_BASE_URL = var.boletin_base_url
-    DEFAULT_SECTION   = var.boletin_default_section
-    REQUEST_TIMEOUT   = var.boletin_request_timeout
+    DEFAULT_SECTION  = var.boletin_default_section
+    REQUEST_TIMEOUT  = var.boletin_request_timeout
   }
 
   tags = local.common_tags
@@ -635,7 +645,7 @@ module "lambda_stepfunction" {
   description            = "Orchestrates the complete RAG pipeline: fetcher → parser → s3writer → dbwriter → notifier"
   handler                = "index.handler"
   runtime                = "python3.12"
-  timeout                = 900  # 15 minutos para ejecutar todo el pipeline
+  timeout                = 900 # 15 minutos para ejecutar todo el pipeline
   memory_size            = 512
   ephemeral_storage_size = 1024
 
@@ -643,9 +653,9 @@ module "lambda_stepfunction" {
   environment = var.environment
 
   environment_variables = {
-    FETCHER_FUNCTION_NAME   = module.lambda_fetcher.function_name
-    BOLINKS_FUNCTION_NAME   = module.lambda_bolinks.function_name
-    PARSER_FUNCTION_NAME    = module.lambda_parser.function_name
+    FETCHER_FUNCTION_NAME  = module.lambda_fetcher.function_name
+    BOLINKS_FUNCTION_NAME  = module.lambda_bolinks.function_name
+    PARSER_FUNCTION_NAME   = module.lambda_parser.function_name
     S3WRITER_FUNCTION_NAME = module.lambda_s3writer.function_name
     DBWRITER_FUNCTION_NAME = module.lambda_dbwriter.function_name
     NOTIFIER_FUNCTION_NAME = module.lambda_notifier.function_name

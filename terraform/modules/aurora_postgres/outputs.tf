@@ -1,10 +1,15 @@
 output "cluster_endpoint" {
-  description = "Aurora cluster endpoint"
+  description = "Hostname del writer (lectura/escritura). En Aurora, cluster.endpoint ES el host writer."
+  value       = aws_rds_cluster.this.endpoint
+}
+
+output "writer_endpoint" {
+  description = "Alias del host writer; mismo valor que cluster_endpoint."
   value       = aws_rds_cluster.this.endpoint
 }
 
 output "reader_endpoint" {
-  description = "Aurora reader endpoint"
+  description = "Hostname del reader endpoint (solo lectura, load-balanced sobre réplicas)."
   value       = aws_rds_cluster.this.reader_endpoint
 }
 

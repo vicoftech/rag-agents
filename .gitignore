@@ -5,3 +5,8 @@
 **dist
 **__pycache__
 postman/rag_environment.json
+
+# Terraform state and local plugins (never commit)
+*.tfstate
+*.tfstate.*
+.terraform/

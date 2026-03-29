@@ -39,6 +39,18 @@ variable "subnets" {
   type        = list(string)
 }
 
+variable "create_vpc_endpoint_s3" {
+  description = "Crear VPC endpoint Gateway para S3 (desactivar si la VPC ya tiene ruta/prefix list a S3)"
+  type        = bool
+  default     = true
+}
+
+variable "create_vpc_endpoint_bedrock" {
+  description = "Crear VPC endpoint Interface para bedrock-runtime (desactivar si ya existe uno con private DNS en la VPC)"
+  type        = bool
+  default     = true
+}
+
 # ==============================================================================
 # Aurora PostgreSQL Configuration
 # ==============================================================================

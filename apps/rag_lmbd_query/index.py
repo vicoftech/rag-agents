@@ -7,6 +7,9 @@ from lib.llmClient import LLMClient
 from string import Template
 import numpy as np
 from pgvector.psycopg2 import register_vector
+
+from lib.bedrock_embeddings import parse_embedding_vector
+from lib.tenant_schema import resolve_schema_name
 # AWS Session Setup (for local testing)
 AWS_REGION = os.getenv('AWS_REGION', 'us-east-1')
 AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID_DEV', "")
@@ -44,6 +47,14 @@ FALLBACK_LLM_MODEL = os.getenv("FALLBACK_LLM_MODEL", "openai.gpt-oss-20b-1:0")
 EMBEDDINGS_MODEL = os.getenv("EMBEDDINGS_MODEL", "cohere.embed-v4:0")
 OUTPUT_TOKENS = os.getenv("OUTPUT_TOKENS", "2048")
 MAX_EMBED_TEXT_LENGTH = 20000
+COHERE_TRUNCATE = os.getenv("COHERE_TRUNCATE", "RIGHT")
+EXPECTED_EMBEDDING_DIM = int(os.getenv("EXPECTED_EMBEDDING_DIM", "1536"))
+
+
+def _cohere_embed_extras():
+    if "cohere" in EMBEDDINGS_MODEL.lower():
+        return {"truncate": COHERE_TRUNCATE, "embedding_types": ["float"]}
+    return {}
 
 
 
@@ -67,49 +78,22 @@ def normalize(v):
 def to_pgvector(vec):
     return "(" + ",".join(str(v) for v in vec) + ")"
 
-def embed(text: str):
+def embed(text: str, input_type: str = "search_query"):
+    """Consultas de búsqueda deben usar search_query (Cohere v4 / asimétrico)."""
     if len(text) > MAX_EMBED_TEXT_LENGTH:
         text = text[:MAX_EMBED_TEXT_LENGTH]
 
-    payload = {
-        "texts": [text],
-        "input_type": "search_document"
-    }
+    payload = {"texts": [text], "input_type": input_type, **_cohere_embed_extras()}
 
     response = bedrock.invoke_model(
         modelId=EMBEDDINGS_MODEL,
         body=json.dumps(payload),
         contentType="application/json",
-        accept="application/json"
+        accept="application/json",
     )
 
     result = json.loads(response["body"].read())
-
-    # ----- ADAPTACIÓN A TU CASO REAL -----
-    # El modelo está devolviendo algo así como:
-    # { "float": [[ ... ]] }
-    #
-    # Por lo tanto: tomar la primera clave y su primer vector.
-    # --------------------------------------
-    if isinstance(result, dict) and len(result) == 1:
-        key = list(result.keys())[0]
-        raw = result[key]
-
-        # caso típico: [[floats]]
-        if isinstance(raw, list) and len(raw) > 0 and isinstance(raw[0], list):
-            vec = raw[0]
-        else:
-            raise RuntimeError(f"Formato inesperado para embedding en key '{key}': {raw}")
-
-    elif "embeddings" in result:
-        float_list = result["embeddings"]
-        vec = float_list["float"][0]
-
-
-    else:
-        raise RuntimeError(f"No se encontró un vector de embeddings en: {result}")
-
-    # normalizar
+    vec = parse_embedding_vector(result, 0)
     return normalize(vec).tolist()
 
 
@@ -117,18 +101,19 @@ def embed(text: str):
 
 # --- Semantic Search adaptado al nuevo esquema ---
 def semantic_search(query, tenant_id, document_name=None, agent_id=None, chunk_text=None, k=50):
-    # 1) Obtener embedding del query
-    q_emb = embed(query)  # <-- tu función embed()
-    
+    q_emb = embed(query, input_type="search_query")
+
     if not isinstance(q_emb, list):
         raise ValueError("El embedding debe ser una lista")
-    if len(q_emb) != 1536:
-        raise ValueError(f"Embedding query tiene {len(q_emb)} dims y deben ser 1536")
+    if len(q_emb) != EXPECTED_EMBEDDING_DIM:
+        raise ValueError(
+            f"Embedding query tiene {len(q_emb)} dims; se esperaban {EXPECTED_EMBEDDING_DIM} "
+            "(ajuste EXPECTED_EMBEDDING_DIM o output_dimension del modelo)"
+        )
 
-    # Convertimos a formato pgvector: [0.1,0.2,...]
     q_emb_str = "[" + ",".join(str(float(x)) for x in q_emb) + "]"
 
-    schema = f"tenant_{tenant_id}"
+    schema = resolve_schema_name(tenant_id)
     conn = get_connection()
     cur = conn.cursor()
 
@@ -182,7 +167,7 @@ def semantic_search(query, tenant_id, document_name=None, agent_id=None, chunk_t
 
 # --- Get prompt template of the agent ---
 def get_prompt_template(tenant_id, agent_id):
-    schema = f"tenant_{tenant_id}"
+    schema = resolve_schema_name(tenant_id)
 
     conn = get_connection()
     cur = conn.cursor()
@@ -309,8 +294,22 @@ def handler(event, context):
             }
         return resp
 
+    try:
+        resolve_schema_name(tenant_id)
+    except ValueError as e:
+        resp = {
+            "statusCode": 400,
+            "body": json.dumps({"error": str(e)}),
+        }
+        if is_http_event:
+            resp["headers"] = {
+                "Content-Type": "application/json",
+                **CORS_HEADERS,
+            }
+        return resp
+
     # Obtener chunks relevantes
-    chunks, documents = semantic_search(query, tenant_id, document_name , agent_id, chunk_text)
+    chunks, documents = semantic_search(query, tenant_id, document_name, agent_id, chunk_text)
     context_text = "\n\n".join(chunks)
 
     # Obtener prompt del agente

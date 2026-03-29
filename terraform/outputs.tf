@@ -3,12 +3,22 @@
 # ==============================================================================
 
 output "aurora_cluster_endpoint" {
-  description = "Aurora cluster endpoint"
+  description = "Hostname writer (lectura/escritura). En Aurora, cluster.endpoint ES el host writer (-h en psql)."
   value       = module.aurora.cluster_endpoint
 }
 
+output "aurora_writer_host" {
+  description = "Igual que aurora_cluster_endpoint (writer)."
+  value       = module.aurora.writer_endpoint
+}
+
 output "aurora_reader_endpoint" {
-  description = "Aurora reader endpoint"
+  description = "Hostname reader (solo lectura)."
+  value       = module.aurora.reader_endpoint
+}
+
+output "aurora_reader_host" {
+  description = "Alias de aurora_reader_endpoint."
   value       = module.aurora.reader_endpoint
 }
 
@@ -60,8 +70,8 @@ output "lambda_query_arn" {
 # ==============================================================================
 
 output "upload_document_example" {
-  description = "Example command to upload a document"
-  value       = "aws s3 cp document.pdf s3://${module.s3_documents.bucket_name}/tenant_id/agent_id/document.pdf"
+  description = "Example command to upload a document (key must include /documents/ after agent UUID)"
+  value       = "aws s3 cp document.pdf s3://${module.s3_documents.bucket_name}/tenant_boletin/<agent-uuid>/documents/20260310/primera/archivo.pdf"
 }
 
 output "invoke_query_example" {
