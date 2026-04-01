@@ -117,6 +117,11 @@ output "query_api_gateway_endpoint" {
   value       = module.api_gateway_query.invoke_url
 }
 
+output "query_presigned_url_endpoint" {
+  description = "API Gateway URL for GET /presigned-url?key=<s3-object-key> (JWT same as /query)"
+  value       = module.api_gateway_query.presigned_url_invoke_url
+}
+
 output "api_gateway_id" {
   description = "API Gateway ID"
   value       = var.create_agentcore ? module.api_gateway[0].api_id : null

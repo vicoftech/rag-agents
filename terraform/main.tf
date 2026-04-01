@@ -2,7 +2,9 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = ">= 5.20.0"
+      # El estado remoto (p. ej. QA) puede exigir un 6.x más reciente que el lock viejo (6.28);
+      # subir el mínimo y ejecutar: terraform init -upgrade
+      version = ">= 6.35.0"
     }
     awscc = {
       source  = "hashicorp/awscc"
@@ -339,10 +341,25 @@ module "lambda_query" {
   use_s3_deployment = true
   s3_bucket_name    = module.s3_documents.bucket_name
 
-  environment_variables = local.lambda_query_env
+  environment_variables = merge(local.lambda_query_env, {
+    DOCUMENTS_S3_BUCKET = module.s3_documents.bucket_name
+  })
 
-  # IAM Permissions - Bedrock + Marketplace (suscripción automática a modelos Marketplace)
-  attach_policy_statements = local.lambda_bedrock_with_marketplace
+  # IAM Permissions - Bedrock + Marketplace + S3 presigned URLs for documents bucket
+  attach_policy_statements = concat(
+    local.lambda_bedrock_with_marketplace,
+    [
+      {
+        effect = "Allow"
+        actions = [
+          "s3:GetObject",
+        ]
+        resources = [
+          "${module.s3_documents.bucket_arn}/*",
+        ]
+      },
+    ],
+  )
 
   tags = local.common_tags
 }

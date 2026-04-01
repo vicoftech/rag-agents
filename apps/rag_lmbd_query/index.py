@@ -1,5 +1,6 @@
 import os
 import json
+import urllib.parse
 import boto3
 from botocore.exceptions import ClientError
 import psycopg2
@@ -49,6 +50,86 @@ OUTPUT_TOKENS = os.getenv("OUTPUT_TOKENS", "2048")
 MAX_EMBED_TEXT_LENGTH = 20000
 COHERE_TRUNCATE = os.getenv("COHERE_TRUNCATE", "RIGHT")
 EXPECTED_EMBEDDING_DIM = int(os.getenv("EXPECTED_EMBEDDING_DIM", "1536"))
+
+DOCUMENTS_S3_BUCKET = os.getenv("DOCUMENTS_S3_BUCKET", "")
+PRESIGNED_URL_EXPIRES_SECONDS = int(os.getenv("PRESIGNED_URL_EXPIRES_SECONDS", "3600"))
+
+
+def _http_json_response(status_code, payload, is_http_event=True):
+    body = json.dumps(payload)
+    if not is_http_event:
+        return {"statusCode": status_code, "body": body}
+    return {
+        "statusCode": status_code,
+        "headers": {"Content-Type": "application/json", **CORS_HEADERS},
+        "body": body,
+    }
+
+
+def _normalize_s3_key(raw_key: str) -> str:
+    """Decode query param and reject traversal / empty keys."""
+    if raw_key is None or not str(raw_key).strip():
+        raise ValueError("key es requerido")
+    key = urllib.parse.unquote(str(raw_key).strip(), errors="strict")
+    if not key or key.startswith("/") or ".." in key.split("/"):
+        raise ValueError("key inválido")
+    return key
+
+
+def handle_presigned_download(event, is_http_event=True):
+    """
+    GET /presigned-url?key=<object-key>
+    Devuelve JSON con URL firmada para descargar (GetObject) del bucket de documentos.
+    """
+    if not DOCUMENTS_S3_BUCKET:
+        return _http_json_response(
+            500,
+            {"error": "DOCUMENTS_S3_BUCKET no configurado"},
+            is_http_event,
+        )
+
+    params = event.get("queryStringParameters") or {}
+    raw_key = params.get("key")
+    try:
+        object_key = _normalize_s3_key(raw_key)
+    except ValueError as e:
+        return _http_json_response(400, {"error": str(e)}, is_http_event)
+
+    try:
+        url = s3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": DOCUMENTS_S3_BUCKET, "Key": object_key},
+            ExpiresIn=PRESIGNED_URL_EXPIRES_SECONDS,
+        )
+    except ClientError as e:
+        return _http_json_response(
+            500,
+            {"error": "No se pudo generar la URL firmada", "detail": str(e)},
+            is_http_event,
+        )
+
+    return _http_json_response(
+        200,
+        {
+            "url": url,
+            "expires_in": PRESIGNED_URL_EXPIRES_SECONDS,
+            "bucket": DOCUMENTS_S3_BUCKET,
+            "key": object_key,
+        },
+        is_http_event,
+    )
+
+
+def _is_presigned_url_route(event, http_method: str) -> bool:
+    route_key = (event.get("routeKey") or "").strip()
+    if route_key == "GET /presigned-url":
+        return True
+    path = (
+        event.get("requestContext", {}).get("http", {}).get("path")
+        or event.get("path")
+        or ""
+    )
+    return http_method == "GET" and path.rstrip("/").endswith("presigned-url")
 
 
 def _cohere_embed_extras():
@@ -243,7 +324,9 @@ def handler(event, context):
     if not http_method:
         http_method = event.get("httpMethod")
 
-    if http_method and str(http_method).upper() == "OPTIONS":
+    method_upper = str(http_method or "").upper()
+
+    if http_method and method_upper == "OPTIONS":
         return {
             "statusCode": 200,
             "headers": {
@@ -254,6 +337,9 @@ def handler(event, context):
         }
 
     is_http_event = bool(http_method)
+
+    if is_http_event and _is_presigned_url_route(event, method_upper):
+        return handle_presigned_download(event, is_http_event=True)
 
     if is_http_event:
         body = event.get("body") or "{}"
