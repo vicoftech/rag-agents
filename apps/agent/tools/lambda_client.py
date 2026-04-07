@@ -23,17 +23,14 @@ if AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY:
 lambda_client = boto3.client("lambda", **session_args)
 
 
-def invoke_embeddings_lambda(text: str) -> list:
+def invoke_embeddings_lambda(text: str, input_type: str = "search_document") -> list:
     """
     Invoca la Lambda de embeddings para generar el vector de un texto.
-    
-    Args:
-        text: Texto a convertir en embedding
-        
-    Returns:
-        Lista de floats representando el embedding
+
+    Para comparar con el corpus indexado con Cohere v4 suele usarse search_document;
+    para consultas de retrieval, search_query.
     """
-    payload = {"text": text}
+    payload = {"text": text, "input_type": input_type}
     
     response = lambda_client.invoke(
         FunctionName=LAMBDA_EMBEDDINGS,

@@ -188,10 +188,11 @@ class TestInvokeEmbeddingsLambda:
         mock_lambda_client.invoke.return_value = {"Payload": payload}
         
         invoke_embeddings_lambda("")
-        
+
         call_args = mock_lambda_client.invoke.call_args
         sent_payload = json.loads(call_args.kwargs["Payload"])
         assert sent_payload["text"] == ""
+        assert sent_payload.get("input_type") == "search_document"
 
     def test_embedding_from_direct_response(self, mock_lambda_client):
         """Verifica extracción de embedding sin key 'body'."""

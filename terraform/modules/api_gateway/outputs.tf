@@ -13,6 +13,11 @@ output "invoke_url" {
   value       = "${aws_apigatewayv2_api.this.api_endpoint}/${var.environment}/query"
 }
 
+output "presigned_url_invoke_url" {
+  description = "Base path for GET /presigned-url (append ?key=<object-key>)"
+  value       = "${aws_apigatewayv2_api.this.api_endpoint}/${var.environment}/presigned-url"
+}
+
 output "authorizer_id" {
   description = "ID of the JWT authorizer"
   value       = aws_apigatewayv2_authorizer.jwt.id

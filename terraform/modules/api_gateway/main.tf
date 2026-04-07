@@ -56,6 +56,20 @@ resource "aws_apigatewayv2_route" "query_options" {
   target    = "integrations/${aws_apigatewayv2_integration.lambda.id}"
 }
 
+resource "aws_apigatewayv2_route" "presigned_url" {
+  api_id             = aws_apigatewayv2_api.this.id
+  route_key          = "GET /presigned-url"
+  target             = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+  authorization_type = "JWT"
+}
+
+resource "aws_apigatewayv2_route" "presigned_url_options" {
+  api_id    = aws_apigatewayv2_api.this.id
+  route_key = "OPTIONS /presigned-url"
+  target    = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+}
+
 resource "aws_cloudwatch_log_group" "api_gateway" {
   name              = "/aws/apigateway/${var.api_name}"
   retention_in_days = 14
@@ -90,6 +104,8 @@ resource "aws_apigatewayv2_deployment" "this" {
   depends_on = [
     aws_apigatewayv2_route.query,
     aws_apigatewayv2_route.query_options,
+    aws_apigatewayv2_route.presigned_url,
+    aws_apigatewayv2_route.presigned_url_options,
   ]
 
   lifecycle {

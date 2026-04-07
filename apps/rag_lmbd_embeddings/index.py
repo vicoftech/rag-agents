@@ -11,6 +11,9 @@ import io
 import time
 import numpy as np
 from urllib.parse import unquote_plus
+
+from lib.bedrock_embeddings import parse_embedding_vector, parse_embedding_vectors
+
 # AWS Session Setup (for local testing)
 AWS_REGION = os.getenv('AWS_REGION', 'us-east-1')
 AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID_DEV', "")
@@ -39,8 +42,69 @@ DB_HOST = os.getenv("DB_HOST","localhost")
 DB_PORT = os.getenv("DB_PORT", "5432")
 #EMBEDDINGS_MODEL = os.getenv("EMBEDDINGS_MODEL", "amazon.titan-embed-text-v2:0")
 EMBEDDINGS_MODEL = os.getenv("EMBEDDINGS_MODEL", "cohere.embed-v4:0")
-
+# Truncado en el modelo Cohere (Bedrock); alineado con chunks por caracteres.
+COHERE_TRUNCATE = os.getenv("COHERE_TRUNCATE", "RIGHT")
 MAX_EMBED_TEXT_LENGTH = 20000
+EMBED_BATCH_SIZE = min(96, int(os.getenv("EMBED_BATCH_SIZE", "96")))
+# ivfflat por defecto (Aurora/pgvector antiguo). Si la instancia soporta HNSW: PGVECTOR_INDEX_TYPE=hnsw
+PGVECTOR_INDEX_TYPE = os.getenv("PGVECTOR_INDEX_TYPE", "ivfflat").lower()
+
+
+def _cohere_embed_extras():
+    if "cohere" in EMBEDDINGS_MODEL.lower():
+        return {"truncate": COHERE_TRUNCATE, "embedding_types": ["float"]}
+    return {}
+
+
+UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
+SCHEMA_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]{0,62}$")
+
+
+def assert_valid_schema_name(name: str) -> None:
+    if not name or not SCHEMA_NAME_RE.match(name):
+        raise ValueError(f"Nombre de esquema tenant inválido: {name!r}")
+
+
+def parse_s3_rag_key(key: str) -> tuple:
+    """
+    Key esperada (prefijo fijo + sufijo flexible):
+
+        {tenant_schema}/{agent_uuid}/documents/[<fecha>/[<carpeta>/]]<archivo>
+
+    Ejemplos válidos:
+        tenant_boletin/<uuid>/documents/informe.pdf
+        tenant_boletin/<uuid>/documents/20260310/primera/aviso_....pdf
+
+    - tenant_schema: nombre del esquema PostgreSQL (ej. tenant_boletin).
+    - Tras ``documents/`` puede haber 1 segmento (solo archivo) o varios
+      (fecha, carpeta lógica, etc.); el último segmento es siempre el nombre del objeto.
+    - document_name (retorno): ruta relativa bajo ``documents/`` (join con ``/``),
+      usada en BD para deduplicar re-ingestas sin colisionar por basename entre carpetas.
+    """
+    parts = [p for p in key.split("/") if p]
+    if len(parts) < 4:
+        raise ValueError(
+            "Key S3 inválida: mínimo "
+            "{tenant_schema}/{agent_uuid}/documents/<archivo> "
+            "(opcional: .../documents/<fecha>/<carpeta>/<archivo>)"
+        )
+    tenant_schema, agent_id, doc_segment = parts[0], parts[1], parts[2]
+    if doc_segment != "documents":
+        raise ValueError("Key S3 inválida: el tercer segmento debe ser 'documents'")
+    if not UUID_RE.match(agent_id):
+        raise ValueError("Key S3 inválida: el segundo segmento debe ser UUID del agente")
+    assert_valid_schema_name(tenant_schema)
+    under_documents = parts[3:]
+    if not under_documents:
+        raise ValueError("Key S3 inválida: falta ruta bajo documents/ (al menos el archivo)")
+    basename = under_documents[-1]
+    if not basename or basename.endswith("/"):
+        raise ValueError("Key S3 inválida: falta nombre de archivo (último segmento)")
+    document_name = "/".join(under_documents)
+    return tenant_schema, agent_id, document_name
 
 def get_connection():
     return psycopg2.connect(
@@ -109,13 +173,32 @@ def ensure_tenant_schema_exists(tenant_id: str, agent_id: str):
                 )
             """)
             
-            # Crear índice para búsqueda vectorial (IVFFlat)
-            cur.execute(f"""
-                CREATE INDEX IF NOT EXISTS idx_{tenant_id}_documents_embedding 
-                ON {tenant_id}.documents 
-                USING ivfflat (embedding vector_cosine_ops) 
-                WITH (lists = 100)
-            """)
+            # Índice vectorial: IVFFlat por defecto; HNSW mejor recall si pgvector lo soporta.
+            # Tras cargas masivas considerar REINDEX en el índice o ajustar lists (IVFFlat).
+            idx_emb = f"idx_{tenant_id}_documents_embedding".replace("-", "_")
+            if PGVECTOR_INDEX_TYPE == "hnsw":
+                try:
+                    cur.execute(f"""
+                        CREATE INDEX IF NOT EXISTS {idx_emb}
+                        ON {tenant_id}.documents
+                        USING hnsw (embedding vector_cosine_ops)
+                        WITH (m = 16, ef_construction = 64)
+                    """)
+                except Exception as ex:
+                    print(f"[WARN] HNSW no disponible ({ex!s}); usando IVFFlat")
+                    cur.execute(f"""
+                        CREATE INDEX IF NOT EXISTS {idx_emb}
+                        ON {tenant_id}.documents
+                        USING ivfflat (embedding vector_cosine_ops)
+                        WITH (lists = 100)
+                    """)
+            else:
+                cur.execute(f"""
+                    CREATE INDEX IF NOT EXISTS {idx_emb}
+                    ON {tenant_id}.documents
+                    USING ivfflat (embedding vector_cosine_ops)
+                    WITH (lists = 100)
+                """)
             
             # Crear índice para agents
             cur.execute(f"""
@@ -226,71 +309,70 @@ def normalize(v):
     return v if n == 0 else v / n
 
 
-def embed(text: str):
+def embed(text: str, input_type: str = "search_document"):
+    """Corpus (chunks): input_type=search_document. Consultas puntuales: search_query."""
     if len(text) > MAX_EMBED_TEXT_LENGTH:
         text = text[:MAX_EMBED_TEXT_LENGTH]
 
-    payload = {
-        "texts": [text],
-        "input_type": "search_document"
-    }
+    payload = {"texts": [text], "input_type": input_type, **_cohere_embed_extras()}
 
     response = bedrock.invoke_model(
         modelId=EMBEDDINGS_MODEL,
         body=json.dumps(payload),
         contentType="application/json",
-        accept="application/json"
+        accept="application/json",
     )
 
     result = json.loads(response["body"].read())
-
-    # ----- ADAPTACIÓN A TU CASO REAL -----
-    # El modelo está devolviendo algo así como:
-    # { "float": [[ ... ]] }
-    #
-    # Por lo tanto: tomar la primera clave y su primer vector.
-    # --------------------------------------
-    if isinstance(result, dict) and len(result) == 1:
-        key = list(result.keys())[0]
-        raw = result[key]
-
-        # caso típico: [[floats]]
-        if isinstance(raw, list) and len(raw) > 0 and isinstance(raw[0], list):
-            vec = raw[0]
-        else:
-            raise RuntimeError(f"Formato inesperado para embedding en key '{key}': {raw}")
-
-    elif "embeddings" in result:
-        float_list = result["embeddings"]
-        vec = float_list["float"][0]
-
-
-    else:
-        raise RuntimeError(f"No se encontró un vector de embeddings en: {result}")
-
-    # normalizar
+    vec = parse_embedding_vector(result, 0)
     return normalize(vec).tolist()
 
 
-def semantic_search(tenant_id,query, k=3):
-    # Generar embedding desde el LLM
-    q_emb = embed(query)
+def embed_texts_batch(texts: list, input_type: str = "search_document") -> list:
+    """Varios textos en una o más llamadas Bedrock (máx. EMBED_BATCH_SIZE por request)."""
+    if not texts:
+        return []
+    out: list = []
+    for start in range(0, len(texts), EMBED_BATCH_SIZE):
+        batch = texts[start : start + EMBED_BATCH_SIZE]
+        batch = [t[:MAX_EMBED_TEXT_LENGTH] if len(t) > MAX_EMBED_TEXT_LENGTH else t for t in batch]
+        payload = {"texts": batch, "input_type": input_type, **_cohere_embed_extras()}
+        response = bedrock.invoke_model(
+            modelId=EMBEDDINGS_MODEL,
+            body=json.dumps(payload),
+            contentType="application/json",
+            accept="application/json",
+        )
+        result = json.loads(response["body"].read())
+        rows = parse_embedding_vectors(result)
+        if len(rows) != len(batch):
+            raise RuntimeError(
+                f"Bedrock devolvió {len(rows)} vectores, se enviaron {len(batch)} textos"
+            )
+        for r in rows:
+            out.append(normalize(np.array(r, dtype=np.float32)).tolist())
+    return out
 
-    # Convertir la lista de floats al formato textual esperado por pgvector: [x,y,z,...]
+
+def semantic_search(tenant_id, query, k=3):
+    """tenant_id: nombre de esquema PostgreSQL (ej. tenant_gp), igual que en S3."""
+    q_emb = embed(query, input_type="search_query")
     q_emb_str = "[" + ",".join(str(x) for x in q_emb) + "]"
 
     conn = get_connection()
     cur = conn.cursor()
 
-    # Hacer la búsqueda semántica casteando explícitamente a vector
-    cur.execute(f"""
-        SELECT 
-            chunk_text, 
+    cur.execute(
+        f"""
+        SELECT
+            chunk_text,
             embedding <=> %s::vector AS distance
         FROM {tenant_id}.documents
         ORDER BY embedding <=> %s::vector
         LIMIT %s;
-    """, (q_emb_str, q_emb_str, k))
+        """,
+        (q_emb_str, q_emb_str, k),
+    )
 
     return cur.fetchall()
 
@@ -551,44 +633,86 @@ def to_pgvector(vec):
 def handler(event, context):
     print(f"Event received: {event}")
     start_time = time.time()
-    
-    # 1️⃣ Obtener bucket y key del evento S3
+
+    # Invocación directa (agente): payload con "text"; opcional "input_type" (default search_document).
+    if not event.get("Records"):
+        text = event.get("text")
+        input_type = event.get("input_type", "search_document")
+        if isinstance(event.get("body"), str):
+            try:
+                body = json.loads(event["body"])
+                text = text if text is not None else body.get("text")
+                input_type = body.get("input_type", input_type)
+            except json.JSONDecodeError:
+                body = {}
+        elif isinstance(event.get("body"), dict):
+            body = event["body"]
+            text = text if text is not None else body.get("text")
+            input_type = body.get("input_type", input_type)
+        if text is not None:
+            try:
+                vec = embed(str(text), input_type=input_type)
+                return {"statusCode": 200, "body": json.dumps({"embedding": vec})}
+            except Exception as e:
+                print(f"[ERROR] embed directo: {e}")
+                return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "Se esperaba evento S3 (Records) o campo text"}),
+        }
+
     record = event["Records"][0]
     bucket = record["s3"]["bucket"]["name"]
-    # Decodificar caracteres URL-encoded (espacios, ñ, acentos, etc.)
     key_raw = record["s3"]["object"]["key"]
     key = unquote_plus(key_raw).lstrip("/")
-    
+
     print(f"[INFO] Bucket: {bucket}")
     print(f"[INFO] Key raw: {key_raw}")
     print(f"[INFO] Key decoded: {key}")
-    
-    parts = key.split("/")
-    tenant_id = parts[0]       # "tenant_name"
-    agent_id = parts[1]        # "agent_uuid"
-    file_name = parts[-1]      # "documento.pdf"
-    document_id = str(uuid.uuid4())  
 
-    # 2️⃣ Descargar PDF a /tmp
+    try:
+        tenant_id, agent_id, document_name = parse_s3_rag_key(key)
+    except ValueError as e:
+        print(f"[ERROR] {e}")
+        return {"statusCode": 400, "body": json.dumps({"error": str(e)})}
+
+    document_id = str(uuid.uuid4())
+
     local_path = f"/tmp/{key.split('/')[-1]}"
     try:
         s3.download_file(bucket, key, local_path)
         print("HEAD OK")
     except ClientError as e:
         print("HEAD ERROR:", e.response)
+        return {"statusCode": 500, "body": json.dumps({"error": "No se pudo descargar el PDF"})}
 
     chunks = generate_semantic_chunks(bucket, key, local_path)
-    
-    # 3️⃣ Asegurar que el esquema del tenant y el agente existen
+
+    if not chunks:
+        print("[WARN] Sin chunks extraídos; no se eliminan ni insertan filas")
+        return {
+            "statusCode": 200,
+            "body": json.dumps({"message": "PDF sin texto extraíble; base sin cambios"}),
+        }
+
     ensure_tenant_schema_exists(tenant_id, agent_id)
-    
-    # 4️⃣ Insertar embeddings en Aurora PostgreSQL
+
+    # Reemplazo lógico por documento: mismo agente + nombre de archivo → borrar chunks viejos (A3).
     conn = get_connection()
     cur = conn.cursor()
-    
-    for chunk in chunks:
-        embedding = embed(chunk)
-                
+    cur.execute(
+        f"""
+        DELETE FROM {tenant_id}.documents
+        WHERE agent_id = %s::uuid AND document_name = %s
+        """,
+        (agent_id, document_name),
+    )
+
+    # Texto embebido con prefijo ligero de archivo; chunk_text almacenado sin prefijo (M5).
+    texts_for_embed = [f"[{document_name}]\n{c}" for c in chunks]
+    embeddings = embed_texts_batch(texts_for_embed, input_type="search_document")
+
+    for chunk, embedding in zip(chunks, embeddings):
         cur.execute(
             f"""
             INSERT INTO {tenant_id}.documents (
@@ -600,7 +724,7 @@ def handler(event, context):
             )
             VALUES (%s, %s, %s, %s, %s)
             """,
-            (agent_id, document_id, file_name, chunk, to_pgvector(embedding))
+            (agent_id, document_id, document_name, chunk, to_pgvector(embedding)),
         )
 
     conn.commit()
@@ -612,5 +736,5 @@ def handler(event, context):
 
     return {
         "statusCode": 200,
-        "body": json.dumps({"message": "PDF procesado correctamente"})
+        "body": json.dumps({"message": "PDF procesado correctamente"}),
     }

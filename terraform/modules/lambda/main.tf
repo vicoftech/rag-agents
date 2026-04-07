@@ -108,46 +108,41 @@ resource "null_resource" "build_lambda" {
     requirements   = fileexists("${var.source_path}/requirements.txt") ? filemd5("${var.source_path}/requirements.txt") : "no-requirements"
     source_hash    = sha256(join("", [for f in fileset(var.source_path, "**/*.py") : filesha256("${var.source_path}/${f}")]))
     build_platform = "manylinux2014_x86_64" # Force rebuild when platform changes
-    build_version  = "8"                    # Increment to force rebuild
+    build_version  = "9"                    # Increment to force rebuild
   }
 
+  # POSIX shell (macOS/Linux). PowerShell no suele estar en PATH en Mac.
   provisioner "local-exec" {
-    interpreter = ["PowerShell", "-Command"]
     command = <<-EOT
-      $ErrorActionPreference = 'Stop'
+      set -e
+      BUILD_DIR="${path.module}/.builds/${var.function_name}"
+      rm -rf "$BUILD_DIR"
+      mkdir -p "$BUILD_DIR"
 
-      $BuildDir = "${path.module}/.builds/${var.function_name}"
-      if (Test-Path $BuildDir) {
-        Remove-Item -Recurse -Force $BuildDir
-      }
-      New-Item -ItemType Directory -Force -Path $BuildDir | Out-Null
-
-      $ReqFile = "${var.source_path}/requirements.txt"
-      if (Test-Path $ReqFile) {
-        Write-Host "Installing Python dependencies for Linux/Lambda..."
-        python -m pip install `
-          -r $ReqFile `
-          -t $BuildDir `
-          --platform manylinux2014_x86_64 `
-          --implementation cp `
-          --python-version 3.12 `
-          --abi cp312 `
-          --only-binary=:all: `
-          --upgrade `
+      if [ -f "${var.source_path}/requirements.txt" ]; then
+        echo "Installing Python dependencies for Linux/Lambda..."
+        python3 -m pip install \
+          -r "${var.source_path}/requirements.txt" \
+          -t "$BUILD_DIR" \
+          --platform manylinux2014_x86_64 \
+          --implementation cp \
+          --python-version 3.12 \
+          --abi cp312 \
+          --only-binary=:all: \
+          --upgrade \
           --quiet
-      }
+      fi
 
-      Get-ChildItem -Path "${var.source_path}" -Filter "*.py" -File -ErrorAction SilentlyContinue |
-        ForEach-Object { Copy-Item -Force $_.FullName -Destination $BuildDir }
+      for f in "${var.source_path}"/*.py; do
+        [ -f "$f" ] && cp -f "$f" "$BUILD_DIR/" || true
+      done
 
-      $LibDir = "${var.source_path}/lib"
-      if (Test-Path $LibDir) {
-        $BuildLibDir = Join-Path $BuildDir "lib"
-        New-Item -ItemType Directory -Force -Path $BuildLibDir | Out-Null
-
-        Get-ChildItem -Path $LibDir -Filter "*.py" -File -ErrorAction SilentlyContinue |
-          ForEach-Object { Copy-Item -Force $_.FullName -Destination $BuildLibDir }
-      }
+      if [ -d "${var.source_path}/lib" ]; then
+        mkdir -p "$BUILD_DIR/lib"
+        for f in "${var.source_path}/lib"/*.py; do
+          [ -f "$f" ] && cp -f "$f" "$BUILD_DIR/lib/" || true
+        done
+      fi
     EOT
   }
 }

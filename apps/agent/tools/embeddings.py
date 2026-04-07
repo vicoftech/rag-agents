@@ -5,14 +5,8 @@ Usa Lambda para generar embeddings
 from .lambda_client import invoke_embeddings_lambda
 
 
-def embed_text(text: str) -> list:
+def embed_text(text: str, input_type: str = "search_document") -> list:
     """
-    Genera embeddings para un texto usando la Lambda de embeddings.
-    
-    Args:
-        text: Texto a convertir en embedding
-        
-    Returns:
-        Lista de floats representando el embedding
+    Genera embeddings vía Lambda. Ver `invoke_embeddings_lambda` para input_type.
     """
-    return invoke_embeddings_lambda(text)
+    return invoke_embeddings_lambda(text, input_type=input_type)

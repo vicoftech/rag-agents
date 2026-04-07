@@ -9,8 +9,10 @@ terraform/
 ├── main.tf                    # Configuración principal
 ├── variables.tf               # Definición de variables
 ├── outputs.tf                 # Outputs del deployment
+├── bootstrap/                 # Crea bucket S3 + DynamoDB para estado remoto (una vez por cuenta)
 ├── environments/
-│   ├── asap_main.tfvars       # Config para ambiente dev
+│   ├── asap_main.tfvars       # Config histórica (otra cuenta / referencia)
+│   ├── asap_dev_615.tfvars    # Instalación limpia cuenta 615216531593 + perfil asap_dev
 │   └── prod.tfvars.example    # Ejemplo para producción
 ├── modules/
 │   ├── aurora_postgres/       # Módulo Aurora PostgreSQL
@@ -20,6 +22,31 @@ terraform/
     ├── deploy.sh              # Script de deploy
     └── build-lambdas.sh       # Script de build
 ```
+
+## Estado remoto Terraform (S3 + DynamoDB)
+
+El `backend "s3"` en `main.tf` usa:
+
+- **Bucket:** `rag-agents-terraform-state-615216531593`
+- **Tabla locks:** `rag-agents-terraform-locks`
+- **Perfil backend:** `asap_dev` (ajustar en `main.tf` si cambiás de perfil)
+
+**Primera vez en la cuenta:** crear bucket y tabla con estado **local**:
+
+```bash
+cd terraform/bootstrap
+terraform init
+terraform apply -auto-approve
+```
+
+Luego en `terraform/`:
+
+```bash
+terraform init -reconfigure
+terraform apply -var-file=environments/asap_dev_615.tfvars
+```
+
+Para instalación limpia, no migrar un `terraform.tfstate` viejo de otra cuenta; el estado vive solo en S3.
 
 ## 🚀 Quick Start
 
