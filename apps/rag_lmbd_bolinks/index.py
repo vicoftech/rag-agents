@@ -79,6 +79,7 @@ def get_pdf_links(target_date: str, seccion: str = 'primera'):
                 pdf_url = f"{base_pdf_url}{seccion}/{id_aviso}/{fecha_aviso}"
                 if pdf_url not in pdf_links:
                     # Verificar si el link realmente contiene un PDF con timeout reducido
+
                     try:
                         response = requests.head(pdf_url, headers={
                             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -135,6 +136,12 @@ def handler(event, context):
         # Por ahora, retornar una respuesta básica
         date_str = body.get('date')
         section = body.get('section', 'primera')
+        
+        # Si no se proporcionó fecha, usar la fecha anterior al día de hoy
+        if not date_str:
+            yesterday = datetime.now() - timedelta(days=1)
+            date_str = yesterday.strftime('%Y%m%d')
+            print(f"No date provided, using yesterday's date: {date_str}")
         
         # Validar formato de fecha y verificar si es fin de semana
         if date_str and len(date_str) == 8 and date_str.isdigit():

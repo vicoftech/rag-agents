@@ -474,6 +474,8 @@ module "lambda_s3writer" {
     S3_BUCKET_NAME      = module.s3_documents.bucket_name
     REQUEST_TIMEOUT      = "60"
     MAX_FILE_SIZE        = "52428800"  # 50MB
+    TENANT_ID           = "7c9aa113-ecf2-4449-a955-d91c76e7ee27"
+    SITE_NAME           = "boletin"
   }
 
   # IAM Permissions

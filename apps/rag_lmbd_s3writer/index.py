@@ -25,6 +25,11 @@ S3_BUCKET = os.getenv('S3_BUCKET_NAME')
 REQUEST_TIMEOUT = int(os.getenv('REQUEST_TIMEOUT', '30'))
 MAX_FILE_SIZE = int(os.getenv('MAX_FILE_SIZE', str(50 * 1024 * 1024)))  # 50MB
 
+# Tenant and Site configuration
+TENANT_ID = os.getenv('TENANT_ID', '7c9aa113-ecf2-4449-a955-d91c76e7ee27')
+SITE_NAME = os.getenv('SITE_NAME', 'boletin')
+SITE_ID = f'tenant_{SITE_NAME}/{TENANT_ID}'
+
 # Headers para descargar archivos
 DOWNLOAD_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
@@ -262,7 +267,7 @@ def process_bolinks_output(bolinks_output: Dict) -> Dict:
             }
         
         # Generar metadata
-        site_id = 'boletin_oficial'
+        site_id = SITE_ID
         date_str = date
         
         print(f"Starting to process {len(pdf_links)} PDFs for site: {site_id}, date: {date_str}, section: {section}")
