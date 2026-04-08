@@ -377,6 +377,18 @@ def handler(event, context):
                 "headers": {"Content-Type": "application/json", **CORS_HEADERS},
                 "body": json.dumps({"error": "Missing required parameter: bolinks_output"})
             }
+        if not tenant_id:
+            return {
+                "statusCode": 400,
+                "headers": {"Content-Type": "application/json", **CORS_HEADERS},
+                "body": json.dumps({"error": "Missing required parameter: tenant_id"})
+            }
+        if not agent_id:
+            return {
+                "statusCode": 400,
+                "headers": {"Content-Type": "application/json", **CORS_HEADERS},
+                "body": json.dumps({"error": "Missing required parameter: agent_id"})
+            }
         
         # Procesar output de bolinks
         result = process_bolinks_output(bolinks_output, tenant_id, agent_id)
