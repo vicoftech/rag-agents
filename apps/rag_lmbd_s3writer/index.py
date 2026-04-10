@@ -250,8 +250,8 @@ def process_bolinks_output(bolinks_output: Dict, tenant_id: str, agent_id: str) 
         
         # Extraer información del contexto
         pdf_links = bolinks_output.get('pdf_links', [])
-        date = bolinks_output.get('received_params', {}).get('date', '')
-        section = bolinks_output.get('received_params', {}).get('section', 'primera')
+        #date = bolinks_output.get('received_params', {}).get('date', '')
+        #section = bolinks_output.get('received_params', {}).get('section', 'primera')
         
         if not pdf_links:
             return {
@@ -263,7 +263,7 @@ def process_bolinks_output(bolinks_output: Dict, tenant_id: str, agent_id: str) 
         
         # Generar metadata
         site_id = f'tenant_{tenant_id}/{agent_id}/documents'
-        date_str = date
+        #date_str = date
         
         print(f"Starting to process {len(pdf_links)} PDFs for site: {site_id}, date: {date_str}, section: {section}")
         
@@ -277,27 +277,28 @@ def process_bolinks_output(bolinks_output: Dict, tenant_id: str, agent_id: str) 
         
         print(f"Processing {len(pdf_links_to_process)} PDFs (limited from {len(pdf_links)} total)")
         
-        for index, pdf_url in enumerate(pdf_links_to_process):
-            if not pdf_url:
+        for index, pdf in enumerate(pdf_links_to_process):
+            if not pdf["url"]:
                 continue
             
-            print(f"Processing PDF {index + 1}/{len(pdf_links_to_process)}: {pdf_url}")
+            print(f"Processing PDF {index + 1}/{len(pdf_links_to_process)}: {pdf["url"]}")
             
             # Descargar PDF
-            pdf_content = download_pdf(pdf_url)
+            pdf_content = download_pdf(pdf["url"])
             if not pdf_content:
                 print(f"Failed to download PDF {index + 1}")
                 failed_count += 1
                 continue
             
             # Generar nombre de archivo
-            filename = generate_filename_from_url(pdf_url, index, date_str, section)
-            
+            filename = generate_filename_from_url(pdf["url"], index, date_str, section)
+            section = pdf["section"]
+            date_str = pdf["date"]
             # Subir a S3
             s3_key = f"{site_id}/{date_str}/{section}/{filename}"
             if upload_to_s3(pdf_content, S3_BUCKET, s3_key):
                 uploaded_files.append({
-                    'url': pdf_url,
+                    'url': pdf["url"],
                     's3_key': s3_key,
                     'filename': filename,
                     'size': len(pdf_content),
@@ -318,8 +319,8 @@ def process_bolinks_output(bolinks_output: Dict, tenant_id: str, agent_id: str) 
         return {
             'success': True,
             'site_id': site_id,
-            'date': date_str,
-            'section': section,
+            #'date': date_str,
+            #'section': section,
             'processed_count': processed_count,
             'failed_count': failed_count,
             'total_found': len(pdf_links),
