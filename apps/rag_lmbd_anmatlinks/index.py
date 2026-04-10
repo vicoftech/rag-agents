@@ -56,13 +56,21 @@ def scrape_anmat(year, muestra=1):
             total_records = 0
             
         # Límite para pruebas o producción
-        max_paginas = 10 if muestra == 1 else 999  # 999 páginas ~ todas las páginas en producción
-        print(f"Límite de páginas: {max_paginas}")
+        if muestra == 1:
+            max_paginas = 10  # Modo pruebas: limitado a 10 páginas
+            print(f"Límite de páginas: {max_paginas}")
+        else:
+            max_paginas = None  # Modo producción: sin límite
+            print("Modo producción: sin límite de páginas")
         
         pdf_links = set()
         page_num = 1
         
-        while page_num <= max_paginas:
+        while True:
+            if max_paginas is not None and page_num > max_paginas:
+                print(f"Límite de prueba de {max_paginas} páginas alcanzado. Deteniendo scraping.")
+                break
+                
             print(f"Procesando página {page_num}...")
             # Extraemos los links de la tabla actual
             rows = page.locator("a[id*='lnkPDF']").all()
@@ -104,11 +112,7 @@ def scrape_anmat(year, muestra=1):
                     page_num += 1 
                 else:
                     # No hay ni mas números ni puntos suspensivos avanzando
-                     break
-
-            if page_num > max_paginas:
-                print(f"Límite de prueba de {max_paginas} páginas alcanzado. Deteniendo scraping.")
-                break
+                    break
                 
         browser.close()
         
@@ -171,7 +175,7 @@ def lambda_handler(event, context):
 if __name__ == "__main__":
     # Evento de prueba simulado como si el año viniera en el "queryStringParameters" o "body"
     evento_de_prueba = {
-        "year": "2023",  # Puedes cambiar este año
+        "year": "2024",  # Puedes cambiar este año
         "muestra": 1  # 0=producción (todas las páginas), 1=pruebas (limitado a 10 páginas)
     }
     
