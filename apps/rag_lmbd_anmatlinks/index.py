@@ -3,6 +3,40 @@ import time
 from datetime import datetime
 from playwright.sync_api import sync_playwright
 
+def extraer_fecha_url(url, year, meses):
+    """
+    Extrae la fecha en formato YYYYMMDD de una URL de ANMAT.
+    
+    Args:
+        url (str): URL del PDF
+        year (str): Año de búsqueda como fallback
+        meses (dict): Diccionario de meses en español a números
+        
+    Returns:
+        str: Fecha en formato YYYYMMDD
+    """
+    # Formato URL: .../BuscaDispoPDF/2026/marzo/...
+    parts = url.split('/')
+    fecha_aviso = f"{year}0101"  # Default fallback
+    
+    try:
+        # Buscar el año (4 dígitos) y el mes en el path
+        for i, part in enumerate(parts):
+            if part.isdigit() and len(part) == 4 and part.startswith('20'):
+                year_from_url = part
+                # El mes debería estar después del año
+                if i + 1 < len(parts):
+                    month_name = parts[i + 1].lower()
+                    if month_name in meses:
+                        month_num = meses[month_name]
+                        fecha_aviso = f"{year_from_url}{month_num}01"
+                        break
+    except Exception as e:
+        print(f"Error extrayendo fecha de URL: {e}")
+        fecha_aviso = f"{year}0101"  # Fallback al año de búsqueda
+    
+    return fecha_aviso
+
 def scrape_anmat(year, muestra=1):
     """
     Extrae PDFs de ANMAT para un año específico.
@@ -13,6 +47,13 @@ def scrape_anmat(year, muestra=1):
     """
     print(f"Iniciando scraping para el año {year}...")
     print(f"Modo: {'PRODUCCIÓN (todas las páginas)' if muestra == 0 else 'PRUEBAS (limitado)'}")
+    
+    # Mapeo de meses en español a números
+    meses = {
+        'enero': '01', 'febrero': '02', 'marzo': '03', 'abril': '04',
+        'mayo': '05', 'junio': '06', 'julio': '07', 'agosto': '08',
+        'septiembre': '09', 'octubre': '10', 'noviembre': '11', 'diciembre': '12'
+    }
     
     with sync_playwright() as p:
         # Iniciamos el navegador en modo headless
@@ -64,6 +105,7 @@ def scrape_anmat(year, muestra=1):
             print("Modo producción: sin límite de páginas")
         
         pdf_links = set()
+        pdf_links_dict = []
         page_num = 1
         
         while True:
@@ -93,6 +135,10 @@ def scrape_anmat(year, muestra=1):
                     
                     pdf_links.add(full_url)
                     
+                    # Extraer fecha de la URL usando la función auxiliar
+                    fecha_aviso = extraer_fecha_url(full_url, year, meses)
+                    pdf_links_dict.append({"url": full_url, "date": fecha_aviso, "section": "default"})
+                    
             # Buscamos el elemento span dentro del bloque de paginación que nos dice la pagina actual
             next_page_str = str(page_num + 1)
             
@@ -116,7 +162,7 @@ def scrape_anmat(year, muestra=1):
                 
         browser.close()
         
-    return list(pdf_links), total_pages_approx, total_records
+    return pdf_links_dict, total_pages_approx, total_records
 
 def lambda_handler(event, context):
     try:

@@ -63,6 +63,7 @@ def get_pdf_links(target_date: str, seccion: str = 'primera'):
     # Buscar todos los enlaces de avisos
     links = soup.find_all('a', href=True)
     pdf_links = []
+    pdf_links_dict = []
     
     # URL base para la descarga de los PDFs individuales
     base_pdf_url = "https://www.boletinoficial.gob.ar/pdf/aviso/"
@@ -89,6 +90,7 @@ def get_pdf_links(target_date: str, seccion: str = 'primera'):
                         content_type = response.headers.get('content-type', '').lower()
                         if 'application/pdf' in content_type:
                             pdf_links.append(pdf_url)
+                            pdf_links_dict.append({"url": pdf_url, "section": seccion, "date": fecha_aviso})
                             print(f"Added valid PDF: {pdf_url}")
                         else:
                             print(f"Skipping non-PDF link: {pdf_url} (Content-Type: {content_type})")
@@ -98,7 +100,7 @@ def get_pdf_links(target_date: str, seccion: str = 'primera'):
                         continue
 
     print(f"Found {len(pdf_links)} valid PDF links in section '{seccion}'")
-    return pdf_links
+    return pdf_links_dict
 
 def handler(event, context):
     """
