@@ -1,0 +1,9 @@
+boto3==1.34.144
+botocore==1.34.144
+requests==2.31.0
+playwright==1.58.0
+# Usar versiones pre-compiladas para evitar problemas en Windows
+lxml==6.0.3
+greenlet==3.2.4
+pyee==13.0.1
+typing_extensions==4.15.0
