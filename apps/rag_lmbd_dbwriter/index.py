@@ -317,6 +317,18 @@ if __name__ == "__main__":
     test_event = {
         "s3writer_output": test_s3writer_output
     }
+
+    test_anmat_event = {
+        "s3writer_output": {
+            "success": True,
+            "site_id": "anmat",
+            "uploaded_files": [
+                "https://buscadispo.anmat.gob.ar:443//BuscaDispoPDF/2024/abril/Dispo_3618-24.pdf",
+                "https://buscadispo.anmat.gob.ar:443//BuscaDispoPDF/2024/abril/Dispo_3724-24.pdf",
+                "https://buscadispo.anmat.gob.ar:443//BuscaDispoPDF/2024/abril/Dispo_3304-24.pdf"
+            ]
+        }
+    }
     
-    result = handler(test_event, None)
+    result = handler(test_anmat_event, None)
     print("Result:", json.dumps(result, indent=2))

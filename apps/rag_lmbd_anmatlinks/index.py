@@ -153,7 +153,9 @@ def lambda_handler(event, context):
                 'success': True,
                 'timestamp': datetime.now().isoformat(),
                 'received_params': {
-                    'year': year
+                    'year': year,
+                    'date': f"{year}0101",  # Formato YYYYMMDD (1/1/year)
+                    'section': 'default'
                 },
                 'total_records': total_records,
                 'total_pages_approx': total_pages,
@@ -175,7 +177,7 @@ def lambda_handler(event, context):
 if __name__ == "__main__":
     # Evento de prueba simulado como si el año viniera en el "queryStringParameters" o "body"
     evento_de_prueba = {
-        "year": "2024",  # Puedes cambiar este año
+        "year": "2026",  # Puedes cambiar este año
         "muestra": 1  # 0=producción (todas las páginas), 1=pruebas (limitado a 10 páginas)
     }
     

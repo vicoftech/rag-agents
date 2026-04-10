@@ -221,6 +221,7 @@ def handler(event, context):
 if __name__ == "__main__":
     # Para testing local
     test_event = {
-        "url": "https://www.boletinoficial.gob.ar/seccion/primera"
+        "date": "20260408",
+        "section": "primera"
     }
     print(handler(test_event, None))
