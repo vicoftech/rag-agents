@@ -73,6 +73,7 @@ locals {
   lambda_query_path        = "${path.module}/../apps/rag_lmbd_query"
   lambda_fetcher_path      = "${path.module}/../apps/rag_lmbd_fetcher"
   lambda_bolinks_path      = "${path.module}/../apps/rag_lmbd_bolinks"
+  lambda_anmatlinks_path   = "${path.module}/../apps/rag_lmbd_anmatlinks"
   lambda_parser_path       = "${path.module}/../apps/rag_lmbd_parser"
   lambda_s3writer_path     = "${path.module}/../apps/rag_lmbd_s3writer"
   lambda_dbwriter_path     = "${path.module}/../apps/rag_lmbd_dbwriter"

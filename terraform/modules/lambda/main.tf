@@ -165,21 +165,31 @@ resource "aws_s3_object" "lambda_package" {
 }
 
 resource "aws_lambda_function" "this" {
-  function_name = var.function_name
-  description   = var.description
-  role          = aws_iam_role.lambda.arn
-  handler       = var.handler
-  runtime       = var.runtime
-  timeout       = var.timeout
-  memory_size   = var.memory_size
+  filename         = var.deployment_package
+  function_name    = var.function_name
+  role            = aws_iam_role.lambda.arn
+  handler         = var.handler
+  runtime         = var.runtime
+  timeout         = contains(var.function_name, "anmatlinks") ? 900 : var.timeout
+  memory_size     = contains(var.function_name, "anmatlinks") ? 1024 : var.memory_size
 
-  # Use S3 if enabled (for large packages), otherwise use direct upload
+  layers = contains(var.function_name, "anmatlinks") ? [
+    # Layer de Playwright para Chromium (necesitarás crear este layer)
+    # aws_lambda_layer_version.playwright_chromium.arn
+  ] : var.layers
+
+  environment {
+    variables = merge(var.environment_variables, {
+      # Variables específicas para ANMAT con Playwright
+      PLAYWRIGHT_BROWSERS_PATH = contains(var.function_name, "anmatlinks") ? "/opt" : null
+      DISPLAY = contains(var.function_name, "anmatlinks") ? ":99" : null
+    })
+  }
+
   s3_bucket        = var.use_s3_deployment ? var.s3_bucket_name : null
   s3_key           = var.use_s3_deployment ? aws_s3_object.lambda_package[0].key : null
-  filename         = var.use_s3_deployment ? null : data.archive_file.lambda.output_path
   source_code_hash = data.archive_file.lambda.output_base64sha256
 
-  layers = var.layers
 
   reserved_concurrent_executions = var.reserved_concurrent_executions
 
