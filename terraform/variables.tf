@@ -539,3 +539,9 @@ variable "agentcore_gateway_target_tool_input_properties" {
     }
   ]
 }
+
+variable "sparticuz_chromium_layer_zip_url" {
+  description = "Official Sparticuz Chromium Lambda layer (x86_64) ZIP URL for rag_lmbd_anmatlinks"
+  type        = string
+  default     = "https://github.com/Sparticuz/chromium/releases/download/v143.0.4/chromium-v143.0.4-layer.x64.zip"
+}

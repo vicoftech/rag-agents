@@ -1,5 +1,7 @@
 import os
 import json
+import urllib.parse
+from datetime import date, datetime, time, timedelta, timezone
 import boto3
 from botocore.exceptions import ClientError
 import psycopg2
@@ -51,11 +53,119 @@ COHERE_TRUNCATE = os.getenv("COHERE_TRUNCATE", "RIGHT")
 EXPECTED_EMBEDDING_DIM = int(os.getenv("EXPECTED_EMBEDDING_DIM", "1536"))
 MAX_SEMANTIC_DISTANCE = float(os.getenv("MAX_SEMANTIC_DISTANCE", "0.45"))
 
+DOCUMENTS_S3_BUCKET = os.getenv("DOCUMENTS_S3_BUCKET", "")
+PRESIGNED_URL_EXPIRES_SECONDS = int(os.getenv("PRESIGNED_URL_EXPIRES_SECONDS", "3600"))
+
+
+def _http_json_response(status_code, payload, is_http_event=True):
+    body = json.dumps(payload)
+    if not is_http_event:
+        return {"statusCode": status_code, "body": body}
+    return {
+        "statusCode": status_code,
+        "headers": {"Content-Type": "application/json", **CORS_HEADERS},
+        "body": body,
+    }
+
+
+def _normalize_s3_key(raw_key: str) -> str:
+    """Decode query param and reject traversal / empty keys."""
+    if raw_key is None or not str(raw_key).strip():
+        raise ValueError("key es requerido")
+    key = urllib.parse.unquote(str(raw_key).strip(), errors="strict")
+    if not key or key.startswith("/") or ".." in key.split("/"):
+        raise ValueError("key inválido")
+    return key
+
+
+def handle_presigned_download(event, is_http_event=True):
+    """
+    GET /presigned-url?key=<object-key>
+    Devuelve JSON con URL firmada para descargar (GetObject) del bucket de documentos.
+    """
+    if not DOCUMENTS_S3_BUCKET:
+        return _http_json_response(
+            500,
+            {"error": "DOCUMENTS_S3_BUCKET no configurado"},
+            is_http_event,
+        )
+
+    params = event.get("queryStringParameters") or {}
+    raw_key = params.get("key")
+    try:
+        object_key = _normalize_s3_key(raw_key)
+    except ValueError as e:
+        return _http_json_response(400, {"error": str(e)}, is_http_event)
+
+    try:
+        url = s3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": DOCUMENTS_S3_BUCKET, "Key": object_key},
+            ExpiresIn=PRESIGNED_URL_EXPIRES_SECONDS,
+        )
+    except ClientError as e:
+        return _http_json_response(
+            500,
+            {"error": "No se pudo generar la URL firmada", "detail": str(e)},
+            is_http_event,
+        )
+
+    return _http_json_response(
+        200,
+        {
+            "url": url,
+            "expires_in": PRESIGNED_URL_EXPIRES_SECONDS,
+            "bucket": DOCUMENTS_S3_BUCKET,
+            "key": object_key,
+        },
+        is_http_event,
+    )
+
+
+def _is_presigned_url_route(event, http_method: str) -> bool:
+    route_key = (event.get("routeKey") or "").strip()
+    if route_key == "GET /presigned-url":
+        return True
+    path = (
+        event.get("requestContext", {}).get("http", {}).get("path")
+        or event.get("path")
+        or ""
+    )
+    return http_method == "GET" and path.rstrip("/").endswith("presigned-url")
+
 
 def _cohere_embed_extras():
     if "cohere" in EMBEDDINGS_MODEL.lower():
         return {"truncate": COHERE_TRUNCATE, "embedding_types": ["float"]}
     return {}
+
+
+def parse_created_at_day(raw):
+    """
+    Opcional: filtra chunks por día de created_at en BD.
+    None / vacío → sin filtro (búsqueda general).
+    Acepta 'YYYY-MM-DD' o ISO datetime (se usa solo el día civil en UTC).
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, str) and not raw.strip():
+        return None
+    s = str(raw).strip()
+    try:
+        if len(s) == 10 and s[4] == "-" and s[7] == "-":
+            return date.fromisoformat(s)
+    except ValueError:
+        pass
+    try:
+        s2 = s.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(s2)
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(timezone.utc)
+        return dt.date()
+    except ValueError as e:
+        raise ValueError(
+            "created_at inválido: use YYYY-MM-DD o ISO-8601 (ej. 2026-03-15 o 2026-03-15T12:00:00Z)"
+        ) from e
 
 
 
@@ -101,7 +211,15 @@ def embed(text: str, input_type: str = "search_query"):
 
 
 # --- Semantic Search adaptado al nuevo esquema ---
-def semantic_search(query, tenant_id, document_name=None, agent_id=None, chunk_text=None, k=50):
+def semantic_search(
+    query,
+    tenant_id,
+    document_name=None,
+    agent_id=None,
+    chunk_text=None,
+    created_at_day=None,
+    k=50,
+):
     q_emb = embed(query, input_type="search_query")
 
     if not isinstance(q_emb, list):
@@ -142,6 +260,15 @@ def semantic_search(query, tenant_id, document_name=None, agent_id=None, chunk_t
     if chunk_text:
         filters.append("chunk_text = %s")
         params.append(chunk_text)
+
+    if created_at_day is not None:
+        # Día civil UTC; created_at es timestamp sin TZ guardado como instante UTC (NOW() en Lambda).
+        # Rango [start, end) usa índice btree en created_at (AT TIME ZONE no es IMMUTABLE → no indexable).
+        start_utc = datetime.combine(created_at_day, time.min, tzinfo=timezone.utc)
+        end_utc = start_utc + timedelta(days=1)
+        filters.append("created_at >= %s AND created_at < %s")
+        params.append(start_utc.replace(tzinfo=None))
+        params.append(end_utc.replace(tzinfo=None))
 
     if filters:
         sql += " WHERE " + " AND ".join(filters)
@@ -248,7 +375,9 @@ def handler(event, context):
     if not http_method:
         http_method = event.get("httpMethod")
 
-    if http_method and str(http_method).upper() == "OPTIONS":
+    method_upper = str(http_method or "").upper()
+
+    if http_method and method_upper == "OPTIONS":
         return {
             "statusCode": 200,
             "headers": {
@@ -259,6 +388,9 @@ def handler(event, context):
         }
 
     is_http_event = bool(http_method)
+
+    if is_http_event and _is_presigned_url_route(event, method_upper):
+        return handle_presigned_download(event, is_http_event=True)
 
     if is_http_event:
         body = event.get("body") or "{}"
@@ -280,12 +412,18 @@ def handler(event, context):
         query = body.get("query")
         document_name = body.get("document_name")
         chunk_text = body.get("chunk_text")
+        created_at_raw = body.get("created_at")
+        if created_at_raw is None:
+            created_at_raw = body.get("create_at")
     else:
         tenant_id = event.get("tenant_id")
         agent_id = event.get("agent_id")
         query = event.get("query")
         document_name = event.get("document_name")  # opcional
         chunk_text = event.get("chunk_text")  # opcional
+        created_at_raw = event.get("created_at")
+        if created_at_raw is None:
+            created_at_raw = event.get("create_at")
 
     if not tenant_id or not agent_id or not query:
         resp = {
@@ -313,16 +451,13 @@ def handler(event, context):
             }
         return resp
 
-    # Obtener chunks relevantes
-    chunks, documents = semantic_search(query, tenant_id, document_name, agent_id, chunk_text)
-    if not chunks:
+    created_at_day = None
+    try:
+        created_at_day = parse_created_at_day(created_at_raw)
+    except ValueError as e:
         resp = {
-            "statusCode": 200,
-            "body": json.dumps({
-                "response": "No se encontraron coincidencias semánticas para la consulta.",
-                "contexts": [],
-                "documents": []
-            }),
+            "statusCode": 400,
+            "body": json.dumps({"error": str(e)}),
         }
         if is_http_event:
             resp["headers"] = {
@@ -331,6 +466,8 @@ def handler(event, context):
             }
         return resp
 
+    # Obtener chunks relevantes
+    chunks, documents = semantic_search(query, tenant_id, document_name, agent_id, chunk_text)
     context_text = "\n\n".join(chunks)
 
     # Obtener prompt del agente
