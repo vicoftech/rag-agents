@@ -2,213 +2,97 @@
   "info": {
     "_postman_id": "c6fe5b8e-2d67-4e21-bc0f-2a0a4b7a6a4f",
     "name": "rag-agents",
-    "description": "RAG Query API (JWT), presigned S3 download URL, Cognito auth, y Agent Core API (POST /invoke) cuando esté desplegado.\n\nVariables: `base_url` = API RAG query (`...amazonaws.com/<stage>` sin path final). `base_url_agent` = API Agent (`.../invoke`). Tokens vía request Auth o variable `access_token`.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
-  "variable": [
-    {
-      "key": "base_url",
-      "value": "https://YOUR_API_ID.execute-api.us-east-1.amazonaws.com/dev"
-    },
-    {
-      "key": "base_url_agent",
-      "value": "https://YOUR_AGENT_API_ID.execute-api.us-east-1.amazonaws.com/dev"
-    },
-    {
-      "key": "cognito_user_pool_url",
-      "value": "https://cognito-idp.us-east-1.amazonaws.com/"
-    },
-    {
-      "key": "cognito_client_id",
-      "value": ""
-    },
-    {
-      "key": "username",
-      "value": ""
-    },
-    {
-      "key": "password",
-      "value": ""
-    },
-    {
-      "key": "access_token",
-      "value": ""
-    },
-    {
-      "key": "s3_object_key",
-      "value": "path/to/file.pdf"
-    }
-  ],
   "item": [
     {
-      "name": "Auth",
-      "item": [
-        {
-          "name": "Cognito InitiateAuth (USER_PASSWORD_AUTH)",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/x-amz-json-1.1"
-              },
-              {
-                "key": "X-Amz-Target",
-                "value": "AWSCognitoIdentityProviderService.InitiateAuth"
-              }
-            ],
-            "url": {
-              "raw": "{{cognito_user_pool_url}}/",
-              "host": ["{{cognito_user_pool_url}}"],
-              "path": [""]
-            },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"AuthFlow\": \"USER_PASSWORD_AUTH\",\n  \"ClientId\": \"{{cognito_client_id}}\",\n  \"AuthParameters\": {\n    \"USERNAME\": \"{{username}}\",\n    \"PASSWORD\": \"{{password}}\"\n  }\n}"
-            }
+      "name": "Auth - Cognito InitiateAuth (USER_PASSWORD_AUTH)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/x-amz-json-1.1"
           },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "const json = pm.response.json();",
-                  "const token = json?.AuthenticationResult?.AccessToken || json?.AuthenticationResult?.IdToken;",
-                  "if (token) {",
-                  "  pm.environment.set('access_token', token);",
-                  "  pm.collectionVariables.set('access_token', token);",
-                  "}"
-                ]
-              }
-            }
+          {
+            "key": "X-Amz-Target",
+            "value": "AWSCognitoIdentityProviderService.InitiateAuth"
+          }
+        ],
+        "url": {
+          "raw": "{{cognito_user_pool_url}}/",
+          "host": [
+            "{{cognito_user_pool_url}}"
+          ],
+          "path": [
+            ""
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"AuthFlow\": \"USER_PASSWORD_AUTH\",\n  \"ClientId\": \"{{cognito_client_id}}\",\n  \"AuthParameters\": {\n    \"USERNAME\": \"{{username}}\",\n    \"PASSWORD\": \"{{password}}\"\n  }\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const json = pm.response.json();",
+              "const token = json?.AuthenticationResult?.AccessToken || json?.AuthenticationResult?.IdToken;",
+              "if (token) {",
+              "  pm.environment.set('access_token', token);",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "OPTIONS /query (CORS preflight)",
+      "request": {
+        "method": "OPTIONS",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/query",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "query"
           ]
         }
-      ]
+      }
     },
     {
-      "name": "RAG Query API",
-      "item": [
-        {
-          "name": "OPTIONS /query (CORS)",
-          "request": {
-            "method": "OPTIONS",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/query",
-              "host": ["{{base_url}}"],
-              "path": ["query"]
-            }
+      "name": "POST /query (Semantic query)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}"
           }
+        ],
+        "url": {
+          "raw": "{{base_url}}/query",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "query"
+          ]
         },
-        {
-          "name": "POST /query (semantic search + LLM)",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              },
-              {
-                "key": "Authorization",
-                "value": "Bearer {{access_token}}"
-              }
-            ],
-            "url": {
-              "raw": "{{base_url}}/query",
-              "host": ["{{base_url}}"],
-              "path": ["query"]
-            },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"tenant_id\": \"asap\",\n  \"agent_id\": \"d8c38f93-f4cd-4a85-9c31-297d14ce7009\",\n  \"query\": \"Dame un resumen del documento\",\n  \"created_at\": \"2026-03-15\"\n}"
-            },
-            "description": "Opcional: created_at o create_at (YYYY-MM-DD o ISO-8601); si se omite, búsqueda sin filtro por fecha (día en UTC)."
-          }
-        },
-        {
-          "name": "OPTIONS /presigned-url (CORS)",
-          "request": {
-            "method": "OPTIONS",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/presigned-url",
-              "host": ["{{base_url}}"],
-              "path": ["presigned-url"]
-            }
-          }
-        },
-        {
-          "name": "GET /presigned-url (S3 download URL)",
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{access_token}}"
-              }
-            ],
-            "url": {
-              "raw": "{{base_url}}/presigned-url?key={{s3_object_key}}",
-              "host": ["{{base_url}}"],
-              "path": ["presigned-url"],
-              "query": [
-                {
-                  "key": "key",
-                  "value": "{{s3_object_key}}",
-                  "description": "S3 object key (URL-encoded si tiene /)"
-                }
-              ]
-            },
-            "description": "Devuelve JSON con `url` (presigned GET), `expires_in`, `bucket`, `key`. Mismo JWT authorizer que POST /query."
-          }
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"agent_id\": \"{{agent_id}}\",\n  \"query\": \"{{query}}\"\n}"
         }
-      ]
-    },
-    {
-      "name": "Agent Core API",
-      "description": "Solo si Terraform `create_agentcore` despliega `api_gateway_jwt` hacia el handler del agente.",
-      "item": [
-        {
-          "name": "OPTIONS /invoke (CORS)",
-          "request": {
-            "method": "OPTIONS",
-            "header": [],
-            "url": {
-              "raw": "{{base_url_agent}}/invoke",
-              "host": ["{{base_url_agent}}"],
-              "path": ["invoke"]
-            }
-          }
-        },
-        {
-          "name": "POST /invoke",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              },
-              {
-                "key": "Authorization",
-                "value": "Bearer {{access_token}}"
-              }
-            ],
-            "url": {
-              "raw": "{{base_url_agent}}/invoke",
-              "host": ["{{base_url_agent}}"],
-              "path": ["invoke"]
-            },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"prompt\": \"Hello\",\n  \"sessionId\": \"optional-session-id\"\n}"
-            },
-            "description": "Ajustar body al contrato real del lambda `api_gateway_handler`."
-          }
-        }
-      ]
+      }
     }
   ]
 }
