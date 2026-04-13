@@ -40,16 +40,16 @@ def extraer_fecha_url(url, year, meses):
     
     return fecha_aviso
 
-def scrape_anmat(year, muestra=1):
+def scrape_anmat(year, page_start=1, page_end=None):
     """
     Extrae PDFs de ANMAT para un año específico.
     
     Args:
         year (int): Año a buscar
-        muestra (int): 0=producción (descarga todas las páginas), 1=pruebas (limitado a 10 páginas)
+        page_start (int): Página de inicio (default: 1)
+        page_end (int): Página final (None para sin límite)
     """
     print(f"Iniciando scraping para el año {year}...")
-    print(f"Modo: {'PRODUCCIÓN (todas las páginas)' if muestra == 0 else 'PRUEBAS (limitado)'}")
     
     # Mapeo de meses en español a números
     meses = {
@@ -86,7 +86,7 @@ def scrape_anmat(year, muestra=1):
         page.goto("https://buscadispo.anmat.gob.ar/", wait_until="networkidle")
         
         # 2. Llenamos el año en el input correspondiente
-        page.fill("id=ctl00_MainContent_txtAnioDispo", str(year))
+        page.fill("id=ctl00_MainContent_txtAnioDispo", str(year), timeout=60000)
         
         # 3. Hacemos click en el botón de búsqueda
         print(f"Buscando disposiciones del año {year}...")
@@ -111,21 +111,45 @@ def scrape_anmat(year, muestra=1):
             total_pages_approx = "Desconocido"
             total_records = 0
             
-        # Límite para pruebas o producción
-        if muestra == 1:
-            max_paginas = 10  # Modo pruebas: limitado a 10 páginas
-            print(f"Límite de páginas: {max_paginas}")
+        # Determinar límite de páginas
+        if page_end is not None:
+            max_paginas = page_end
+            print(f"Procesando desde página {page_start} hasta {page_end}")
         else:
-            max_paginas = None  # Modo producción: sin límite
-            print("Modo producción: sin límite de páginas")
+            max_paginas = None  # Sin límite, procesar hasta la última página disponible
+            print("Procesando hasta la última página disponible")
         
         pdf_links = set()
         pdf_links_dict = []
-        page_num = 1
+        page_num = page_start
+        has_more = True
+        
+        # Navegar a la página de inicio si no es la primera
+        if page_num > 1:
+            print(f"Navegando a página de inicio: {page_num}")
+            # Navegar a la página específica haciendo clic en los números de página
+            for target_page in range(2, page_num + 1):
+                try:
+                    next_link = page.locator(f"tr.paginacion a:has-text('{target_page}'), td a:text-is('{target_page}')").first
+                    if next_link.count() > 0:
+                        with page.expect_navigation(wait_until="load", timeout=60000):
+                            next_link.click()
+                        print(f"Navegado a página {target_page}")
+                    else:
+                        # Si no encuentra el número directo, intentar con "..."
+                        dots_link = page.locator("td a:text-is('...')").first
+                        if dots_link.count() > 0:
+                            with page.expect_navigation(wait_until="load", timeout=60000):
+                                dots_link.click()
+                            print(f"Usando '...' para avanzar hacia página {target_page}")
+                except Exception as e:
+                    print(f"Error navegando a página {target_page}: {e}")
+                    break
         
         while True:
             if max_paginas is not None and page_num > max_paginas:
-                print(f"Límite de prueba de {max_paginas} páginas alcanzado. Deteniendo scraping.")
+                print(f"Límite de {max_paginas} páginas alcanzado. Deteniendo scraping.")
+                has_more = max_paginas < total_pages_approx
                 break
                 
             print(f"Procesando página {page_num}...")
@@ -177,7 +201,7 @@ def scrape_anmat(year, muestra=1):
                 
         browser.close()
         
-    return pdf_links_dict, total_pages_approx, total_records
+    return pdf_links_dict, total_pages_approx, total_records, has_more
 
 def handler(event, context):
     try:
@@ -199,11 +223,12 @@ def handler(event, context):
                 'body': json.dumps({'error': 'Parámetro "year" es requerido.'})
             }
             
-        # Determinar modo de ejecución (producción=0, pruebas=1)
-        modo_muestra = event.get('muestra', 0)  # Default: modo produccion
+        # Extraer parámetros de paginación
+        page_start = event.get('page_start', 1)
+        page_end = event.get('page_end', None)
         
         # Ejecutamos el scraper
-        links, total_pages, total_records = scrape_anmat(year, modo_muestra)
+        links, total_pages, total_records, has_more = scrape_anmat(year, page_start, page_end)
         
         return {
             'statusCode': 200,
@@ -216,12 +241,15 @@ def handler(event, context):
                 'received_params': {
                     'year': year,
                     'date': f"{year}0101",  # Formato YYYYMMDD (1/1/year)
-                    'section': 'default'
+                    'section': 'default',
+                    'page_start': page_start,
+                    'page_end': page_end
                 },
                 'total_records': total_records,
                 'total_pages_approx': total_pages,
                 'pdfs_collected': len(links),
-                'pdf_links': links
+                'pdf_links': links,
+                'has_more': has_more
             })
         }
     except Exception as e:
@@ -238,8 +266,9 @@ def handler(event, context):
 if __name__ == "__main__":
     # Evento de prueba simulado como si el año viniera en el "queryStringParameters" o "body"
     evento_de_prueba = {
-        "year": "2026",  # Puedes cambiar este año
-        "muestra": 1  # 0=producción (todas las páginas), 1=pruebas (limitado a 10 páginas)
+        "year": "2025",  # Puedes cambiar este año
+        "page_start": 59,  # Página de inicio
+        "page_end": 59  # Página final (None para sin límite)
     }
     
     # Contexto ficticio que exige la estructura Lambda (aunque no lo usemos en el código)
