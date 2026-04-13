@@ -164,7 +164,7 @@ def scrape_anmat(year, muestra=1):
         
     return pdf_links_dict, total_pages_approx, total_records
 
-def lambda_handler(event, context):
+def handler(event, context):
     try:
         # Extraemos el año del evento (puede venir de body, queryStringParameters, o directamente)
         # Ajusta esto dependiendo de cómo expongas tu Lambda (API Gateway, llamado directo, etc)
@@ -233,7 +233,7 @@ if __name__ == "__main__":
     print("Iniciando prueba local simulando el evento Lambda...")
     
     # Invocamos la función igual a como Amazon AWS la ejecutaría
-    respuesta = lambda_handler(evento_de_prueba, contexto_de_prueba)
+    respuesta = handler(evento_de_prueba, contexto_de_prueba)
     
     print("\n--- RESPUESTA DE LA LAMBDA ---")
     print("STATUS CODE:", respuesta.get('statusCode'))
