@@ -176,13 +176,9 @@ resource "aws_lambda_function" "this" {
   role          = aws_iam_role.lambda.arn
   handler       = var.handler
   runtime       = var.runtime
-  timeout       = strcontains(var.function_name, "anmatlinks") ? 900 : var.timeout
-  memory_size   = strcontains(var.function_name, "anmatlinks") ? 1024 : var.memory_size
-
-  layers = strcontains(var.function_name, "anmatlinks") ? [
-    # Layer de Playwright para Chromium (necesitarás crear este layer)
-    # aws_lambda_layer_version.playwright_chromium.arn
-  ] : var.layers
+  timeout       = var.timeout
+  memory_size   = var.memory_size
+  layers        = var.layers
 
   s3_bucket        = var.use_s3_deployment ? var.s3_bucket_name : null
   s3_key           = var.use_s3_deployment ? aws_s3_object.lambda_package[0].key : null

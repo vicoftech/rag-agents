@@ -1,0 +1,4 @@
+# Real layer ZIP is downloaded by Terraform null_resource (often >50 MB).
+# Only the tiny committed placeholder is tracked so `terraform plan` can compute filemd5.
+.builds/*
+!.builds/sparticuz-chromium-layer.zip

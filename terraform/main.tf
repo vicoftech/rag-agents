@@ -150,6 +150,18 @@ module "s3_documents" {
 }
 
 # ==============================================================================
+# Sparticuz Chromium Lambda layer (rag_lmbd_anmatlinks / Playwright)
+# ==============================================================================
+
+module "sparticuz_chromium_layer" {
+  source = "./modules/sparticuz_chromium_layer"
+
+  environment    = var.environment
+  s3_bucket_name = module.s3_documents.bucket_name
+  layer_zip_url  = var.sparticuz_chromium_layer_zip_url
+}
+
+# ==============================================================================
 # VPC Endpoints (para acceso desde Lambda en VPC)
 # ==============================================================================
 
@@ -655,6 +667,36 @@ module "lambda_bolinks" {
 }
 
 # ==============================================================================
+# Lambda: RAG Anmatlinks (ANMAT BuscaDispo PDF link scraper)
+# ==============================================================================
+
+module "lambda_anmatlinks" {
+  source = "./modules/lambda"
+
+  function_name          = "rag_lmbd_anmatlinks-${var.environment}"
+  description            = "Scrapes ANMAT BuscaDispo for PDF links by year (Playwright/Chromium)"
+  handler                = "index.handler"
+  runtime                = "python3.12"
+  timeout                = 900
+  memory_size            = 1024
+  ephemeral_storage_size = 2048
+
+  source_path = local.lambda_anmatlinks_path
+  environment = var.environment
+
+  layers = [module.sparticuz_chromium_layer.layer_arn]
+
+  environment_variables = {
+    CHROMIUM_PACK_PATH = "/opt/chromium"
+  }
+
+  use_s3_deployment = true
+  s3_bucket_name    = module.s3_documents.bucket_name
+
+  tags = local.common_tags
+}
+
+# ==============================================================================
 # Lambda: RAG Step Function (Pipeline Orchestrator)
 # ==============================================================================
 
@@ -907,4 +949,24 @@ output "lambda_bolinks_function_arn" {
 output "lambda_bolinks_invoke_arn" {
   description = "Invoke ARN of the bolinks Lambda"
   value       = module.lambda_bolinks.invoke_arn
+}
+
+output "lambda_anmatlinks_function_name" {
+  description = "Name of the anmatlinks Lambda"
+  value       = module.lambda_anmatlinks.function_name
+}
+
+output "lambda_anmatlinks_function_arn" {
+  description = "ARN of the anmatlinks Lambda"
+  value       = module.lambda_anmatlinks.function_arn
+}
+
+output "lambda_anmatlinks_invoke_arn" {
+  description = "Invoke ARN of the anmatlinks Lambda"
+  value       = module.lambda_anmatlinks.invoke_arn
+}
+
+output "sparticuz_chromium_layer_arn" {
+  description = "Sparticuz Chromium Lambda layer attached to rag_lmbd_anmatlinks"
+  value       = module.sparticuz_chromium_layer.layer_arn
 }

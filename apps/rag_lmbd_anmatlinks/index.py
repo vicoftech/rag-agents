@@ -1,7 +1,10 @@
 import json
 import time
 from datetime import datetime
+
 from playwright.sync_api import sync_playwright
+
+from lib.lambda_chromium import try_sparticuz_launch_config
 
 def extraer_fecha_url(url, year, meses):
     """
@@ -55,14 +58,26 @@ def scrape_anmat(year, muestra=1):
         'septiembre': '09', 'octubre': '10', 'noviembre': '11', 'diciembre': '12'
     }
     
+    exec_path, sparticuz_args = try_sparticuz_launch_config()
+    local_fallback_args = [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--single-process",
+    ]
+
     with sync_playwright() as p:
-        # Iniciamos el navegador en modo headless
-        # En AWS Lambda, pueden ser necesarios argumentos adicionales (e.g. args=['--disable-gpu', '--single-process']) 
-        # dependiendo de la capa (layer) de Chromium que estés utilizando.
-        browser = p.chromium.launch(
-            headless=True,
-            args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--single-process']
-        )
+        launch_kw = {}
+        if exec_path and sparticuz_args:
+            # Sparticuz chrome-headless-shell: args ya incluyen --headless=shell
+            launch_kw["executable_path"] = exec_path
+            launch_kw["args"] = sparticuz_args
+            launch_kw["headless"] = False
+        else:
+            launch_kw["headless"] = True
+            launch_kw["args"] = local_fallback_args
+
+        browser = p.chromium.launch(**launch_kw)
         context = browser.new_context()
         page = context.new_page()
         
