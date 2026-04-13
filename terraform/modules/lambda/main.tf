@@ -111,38 +111,44 @@ resource "null_resource" "build_lambda" {
     build_version  = "9"                    # Increment to force rebuild
   }
 
-  # POSIX shell (macOS/Linux). PowerShell no suele estar en PATH en Mac.
   provisioner "local-exec" {
-    command = <<-EOT
-      set -e
-      BUILD_DIR="${path.module}/.builds/${var.function_name}"
-      rm -rf "$BUILD_DIR"
-      mkdir -p "$BUILD_DIR"
+    interpreter = ["PowerShell", "-Command"]
+    command     = <<-EOT
+      $ErrorActionPreference = 'Stop'
 
-      if [ -f "${var.source_path}/requirements.txt" ]; then
-        echo "Installing Python dependencies for Linux/Lambda..."
-        python3 -m pip install \
-          -r "${var.source_path}/requirements.txt" \
-          -t "$BUILD_DIR" \
-          --platform manylinux2014_x86_64 \
-          --implementation cp \
-          --python-version 3.12 \
-          --abi cp312 \
-          --only-binary=:all: \
-          --upgrade \
+      $BuildDir = "${path.module}/.builds/${var.function_name}"
+      if (Test-Path $BuildDir) {
+        Remove-Item -Recurse -Force $BuildDir
+      }
+      New-Item -ItemType Directory -Force -Path $BuildDir | Out-Null
+
+      $RequirementsPath = "${var.source_path}/requirements.txt"
+      if (Test-Path $RequirementsPath) {
+        Write-Host "Installing Python dependencies for Linux/Lambda..."
+        python -m pip install `
+          -r "$RequirementsPath" `
+          -t "$BuildDir" `
+          --platform manylinux2014_x86_64 `
+          --implementation cp `
+          --python-version 3.12 `
+          --abi cp312 `
+          --only-binary=:all: `
+          --upgrade `
           --quiet
-      fi
+      }
 
-      for f in "${var.source_path}"/*.py; do
-        [ -f "$f" ] && cp -f "$f" "$BUILD_DIR/" || true
-      done
+      Get-ChildItem -Path "${var.source_path}" -Filter "*.py" -File | ForEach-Object {
+        Copy-Item -Path $_.FullName -Destination $BuildDir -Force
+      }
 
-      if [ -d "${var.source_path}/lib" ]; then
-        mkdir -p "$BUILD_DIR/lib"
-        for f in "${var.source_path}/lib"/*.py; do
-          [ -f "$f" ] && cp -f "$f" "$BUILD_DIR/lib/" || true
-        done
-      fi
+      $LibPath = "${var.source_path}/lib"
+      if (Test-Path $LibPath) {
+        $BuildLibPath = Join-Path $BuildDir "lib"
+        New-Item -ItemType Directory -Force -Path $BuildLibPath | Out-Null
+        Get-ChildItem -Path $LibPath -Filter "*.py" -File | ForEach-Object {
+          Copy-Item -Path $_.FullName -Destination $BuildLibPath -Force
+        }
+      }
     EOT
   }
 }
@@ -165,26 +171,18 @@ resource "aws_s3_object" "lambda_package" {
 }
 
 resource "aws_lambda_function" "this" {
-  filename         = var.deployment_package
-  function_name    = var.function_name
-  role            = aws_iam_role.lambda.arn
-  handler         = var.handler
-  runtime         = var.runtime
-  timeout         = contains(var.function_name, "anmatlinks") ? 900 : var.timeout
-  memory_size     = contains(var.function_name, "anmatlinks") ? 1024 : var.memory_size
+  filename      = var.use_s3_deployment ? null : data.archive_file.lambda.output_path
+  function_name = var.function_name
+  role          = aws_iam_role.lambda.arn
+  handler       = var.handler
+  runtime       = var.runtime
+  timeout       = strcontains(var.function_name, "anmatlinks") ? 900 : var.timeout
+  memory_size   = strcontains(var.function_name, "anmatlinks") ? 1024 : var.memory_size
 
-  layers = contains(var.function_name, "anmatlinks") ? [
+  layers = strcontains(var.function_name, "anmatlinks") ? [
     # Layer de Playwright para Chromium (necesitarás crear este layer)
     # aws_lambda_layer_version.playwright_chromium.arn
   ] : var.layers
-
-  environment {
-    variables = merge(var.environment_variables, {
-      # Variables específicas para ANMAT con Playwright
-      PLAYWRIGHT_BROWSERS_PATH = contains(var.function_name, "anmatlinks") ? "/opt" : null
-      DISPLAY = contains(var.function_name, "anmatlinks") ? ":99" : null
-    })
-  }
 
   s3_bucket        = var.use_s3_deployment ? var.s3_bucket_name : null
   s3_key           = var.use_s3_deployment ? aws_s3_object.lambda_package[0].key : null
