@@ -165,7 +165,8 @@ data "archive_file" "lambda" {
 resource "aws_s3_object" "lambda_package" {
   count  = var.use_s3_deployment ? 1 : 0
   bucket = var.s3_bucket_name
-  key    = "lambda-packages/${var.function_name}/${data.archive_file.lambda.output_base64sha256}.zip"
+  # Hex SHA-256 avoids +, /, = in the key; base64 breaks Lambda UpdateFunctionCode GetObject for some keys.
+  key    = "lambda-packages/${var.function_name}/${data.archive_file.lambda.output_sha256}.zip"
   source = data.archive_file.lambda.output_path
   etag   = data.archive_file.lambda.output_md5
 }

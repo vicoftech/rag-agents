@@ -687,7 +687,7 @@ module "lambda_anmatlinks" {
   layers = [module.sparticuz_chromium_layer.layer_arn]
 
   environment_variables = {
-    CHROMIUM_PACK_PATH = "/opt/chromium"
+    CHROMIUM_PACK_PATH = "/opt/nodejs/node_modules/@sparticuz/chromium/bin"
   }
 
   use_s3_deployment = true

@@ -23,7 +23,7 @@ resource "aws_s3_object" "layer_zip" {
   bucket = var.s3_bucket_name
   key    = "lambda-layers/sparticuz-chromium/${var.environment}/layer.zip"
   source = "${path.module}/.builds/sparticuz-chromium-layer.zip"
-  etag   = filemd5("${path.module}/.builds/sparticuz-chromium-layer.zip")
+  # No filemd5(etag): null_resource rewrites the ZIP during apply (placeholder → full layer).
 
   depends_on = [null_resource.download_chromium_layer_zip]
 }

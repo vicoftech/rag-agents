@@ -207,8 +207,9 @@ def ensure_sparticuz_executable(pack_dir: str | None = None) -> Tuple[str, List[
 
 def _discover_pack_dir() -> Path | None:
     """
-    Sparticuz official -layer.x64.zip may expose packs under /opt/chromium.
-    The npm-based layer layout uses .../@sparticuz/chromium/bin/x64.
+    Official Sparticuz *-layer.x64.zip installs packs at:
+      /opt/nodejs/node_modules/@sparticuz/chromium/bin/
+    (not bin/x64). Some builds use /opt/chromium.
     """
     explicit = os.environ.get("CHROMIUM_PACK_PATH")
     candidates: List[Path] = []
@@ -216,13 +217,26 @@ def _discover_pack_dir() -> Path | None:
         candidates.append(Path(explicit))
     candidates.extend(
         [
-            Path("/opt/chromium"),
+            Path("/opt/nodejs/node_modules/@sparticuz/chromium/bin"),
             Path("/opt/nodejs/node_modules/@sparticuz/chromium/bin/x64"),
+            Path("/opt/nodejs/node_modules/@sparticuz/chromium/bin/arm64"),
+            Path("/opt/chromium"),
         ]
     )
+    seen: set[str] = set()
     for base in candidates:
+        key = str(base)
+        if key in seen:
+            continue
+        seen.add(key)
         if (base / "chromium.br").is_file():
             return base
+
+    opt = Path("/opt")
+    if opt.is_dir():
+        for found in opt.rglob("chromium.br"):
+            if found.is_file():
+                return found.parent
     return None
 
 

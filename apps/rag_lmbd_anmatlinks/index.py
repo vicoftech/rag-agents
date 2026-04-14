@@ -1,4 +1,5 @@
 import json
+import os
 import time
 from datetime import datetime
 
@@ -59,6 +60,14 @@ def scrape_anmat(year, page_start=1, page_end=None):
     }
     
     exec_path, sparticuz_args = try_sparticuz_launch_config()
+    if (not exec_path or not sparticuz_args) and os.environ.get(
+        "AWS_EXECUTION_ENV", ""
+    ).startswith("AWS_Lambda_"):
+        raise RuntimeError(
+            "Sparticuz Chromium no encontrado bajo /opt (falta chromium.br). "
+            "Revisá la capa Lambda y CHROMIUM_PACK_PATH."
+        )
+
     local_fallback_args = [
         "--no-sandbox",
         "--disable-setuid-sandbox",
