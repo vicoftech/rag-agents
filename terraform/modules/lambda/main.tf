@@ -108,47 +108,34 @@ resource "null_resource" "build_lambda" {
     requirements   = fileexists("${var.source_path}/requirements.txt") ? filemd5("${var.source_path}/requirements.txt") : "no-requirements"
     source_hash    = sha256(join("", [for f in fileset(var.source_path, "**/*.py") : filesha256("${var.source_path}/${f}")]))
     build_platform = "manylinux2014_x86_64" # Force rebuild when platform changes
-    build_version  = "9"                    # Increment to force rebuild
+    build_version  = "11"                   # Increment to force rebuild
   }
 
   provisioner "local-exec" {
-    interpreter = ["PowerShell", "-Command"]
+    interpreter = ["/bin/bash", "-c"]
     command     = <<-EOT
-      $ErrorActionPreference = 'Stop'
-
-      $BuildDir = "${path.module}/.builds/${var.function_name}"
-      if (Test-Path $BuildDir) {
-        Remove-Item -Recurse -Force $BuildDir
-      }
-      New-Item -ItemType Directory -Force -Path $BuildDir | Out-Null
-
-      $RequirementsPath = "${var.source_path}/requirements.txt"
-      if (Test-Path $RequirementsPath) {
-        Write-Host "Installing Python dependencies for Linux/Lambda..."
-        python -m pip install `
-          -r "$RequirementsPath" `
-          -t "$BuildDir" `
-          --platform manylinux2014_x86_64 `
-          --implementation cp `
-          --python-version 3.12 `
-          --abi cp312 `
-          --only-binary=:all: `
-          --upgrade `
+      set -euo pipefail
+      rm -rf "${path.module}/.builds/${var.function_name}"
+      mkdir -p "${path.module}/.builds/${var.function_name}"
+      if [ -f "${var.source_path}/requirements.txt" ]; then
+        echo "Installing Python dependencies for Linux/Lambda..."
+        if command -v python3 >/dev/null 2>&1; then PY=python3; else PY=python; fi
+        "$PY" -m pip install \
+          -r "${var.source_path}/requirements.txt" \
+          -t "${path.module}/.builds/${var.function_name}" \
+          --platform manylinux2014_x86_64 \
+          --implementation cp \
+          --python-version 3.12 \
+          --abi cp312 \
+          --only-binary=:all: \
+          --upgrade \
           --quiet
-      }
-
-      Get-ChildItem -Path "${var.source_path}" -Filter "*.py" -File | ForEach-Object {
-        Copy-Item -Path $_.FullName -Destination $BuildDir -Force
-      }
-
-      $LibPath = "${var.source_path}/lib"
-      if (Test-Path $LibPath) {
-        $BuildLibPath = Join-Path $BuildDir "lib"
-        New-Item -ItemType Directory -Force -Path $BuildLibPath | Out-Null
-        Get-ChildItem -Path $LibPath -Filter "*.py" -File | ForEach-Object {
-          Copy-Item -Path $_.FullName -Destination $BuildLibPath -Force
-        }
-      }
+      fi
+      find "${var.source_path}" -maxdepth 1 -name '*.py' -exec cp {} "${path.module}/.builds/${var.function_name}/" \;
+      if [ -d "${var.source_path}/lib" ]; then
+        mkdir -p "${path.module}/.builds/${var.function_name}/lib"
+        find "${var.source_path}/lib" -maxdepth 1 -name '*.py' -exec cp {} "${path.module}/.builds/${var.function_name}/lib/" \;
+      fi
     EOT
   }
 }
@@ -212,6 +199,30 @@ resource "aws_lambda_function" "this" {
     aws_iam_role_policy_attachment.lambda_basic,
     aws_iam_role_policy_attachment.lambda_vpc,
   ]
+}
+
+# SQS trigger: receive/delete/get queue attributes
+resource "aws_iam_role_policy_attachment" "lambda_sqs" {
+  count      = var.sqs_trigger_enabled ? 1 : 0
+  role       = aws_iam_role.lambda.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole"
+}
+
+resource "aws_lambda_event_source_mapping" "sqs" {
+  count            = var.sqs_trigger_enabled ? 1 : 0
+  event_source_arn = var.sqs_queue_arn
+  function_name    = aws_lambda_function.this.arn
+  batch_size       = var.sqs_batch_size
+  enabled          = true
+
+  dynamic "scaling_config" {
+    for_each = var.sqs_maximum_concurrency != null ? [1] : []
+    content {
+      maximum_concurrency = var.sqs_maximum_concurrency
+    }
+  }
+
+  depends_on = [aws_iam_role_policy_attachment.lambda_sqs]
 }
 
 # ==============================================================================

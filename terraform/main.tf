@@ -496,6 +496,41 @@ module "lambda_parser" {
   tags = local.common_tags
 }
 
+# DLQ: tras maxReceiveCount reintentos SQS→Lambda, mensaje a cola de fallos
+resource "aws_sqs_queue" "alert_s3writer_dlq" {
+  name = "alert-s3writer-dlq-${var.environment}"
+  tags = merge(local.common_tags, {
+    Name = "alert-s3writer-dlq-${var.environment}"
+  })
+}
+
+# SQS: trigger for rag_lmbd_s3writer (alert processing; Step Function envía aquí)
+resource "aws_sqs_queue" "alert_s3writer" {
+  name                       = "alert-s3writer-${var.environment}"
+  visibility_timeout_seconds = 5400 # >= 6 × Lambda timeout (900s) per AWS guidance
+
+  redrive_policy = jsonencode({
+    deadLetterTargetArn = aws_sqs_queue.alert_s3writer_dlq.arn
+    maxReceiveCount     = 3
+  })
+
+  tags = merge(local.common_tags, {
+    Name = "alert-s3writer-${var.environment}"
+  })
+}
+
+# Step Function: anmatlinks → mensaje a cola → s3writer (async, no invoca s3writer en la SFN)
+module "anmat_s3_stepfunction" {
+  source = "./modules/anmat_s3_stepfunction"
+
+  state_machine_name   = "rag-anmat-to-s3writer-${var.environment}"
+  anmat_function_arn   = module.lambda_anmatlinks.function_arn
+  anmat_function_name  = module.lambda_anmatlinks.function_name
+  alert_queue_url     = aws_sqs_queue.alert_s3writer.url
+  alert_queue_arn     = aws_sqs_queue.alert_s3writer.arn
+  tags                = local.common_tags
+}
+
 module "lambda_s3writer" {
   source = "./modules/lambda"
 
@@ -531,6 +566,12 @@ module "lambda_s3writer" {
       ]
     }
   ]
+
+  sqs_trigger_enabled       = true
+  sqs_queue_arn             = aws_sqs_queue.alert_s3writer.arn
+  sqs_batch_size            = 1 # 1 PDF por mensaje SQS
+  sqs_maximum_concurrency        = 20
+  reserved_concurrent_executions   = 20
 
   tags = local.common_tags
 }
@@ -969,4 +1010,19 @@ output "lambda_anmatlinks_invoke_arn" {
 output "sparticuz_chromium_layer_arn" {
   description = "Sparticuz Chromium Lambda layer attached to rag_lmbd_anmatlinks"
   value       = module.sparticuz_chromium_layer.layer_arn
+}
+
+output "anmat_s3writer_state_machine_arn" {
+  description = "Step Function: anmatlinks → SQS → rag_lmbd_s3writer (async)"
+  value       = module.anmat_s3_stepfunction.state_machine_arn
+}
+
+output "anmat_s3writer_state_machine_name" {
+  description = "Name of the anmat → s3writer pipeline state machine"
+  value       = module.anmat_s3_stepfunction.state_machine_name
+}
+
+output "alert_s3writer_dlq_url" {
+  description = "DLQ para mensajes que fallan tras reintentos SQS→s3writer"
+  value       = aws_sqs_queue.alert_s3writer_dlq.url
 }

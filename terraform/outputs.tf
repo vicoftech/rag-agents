@@ -287,6 +287,16 @@ output "lambda_s3writer_invoke_arn" {
   value       = module.lambda_s3writer.invoke_arn
 }
 
+output "alert_s3writer_sqs_queue_url" {
+  description = "URL of the SQS queue that triggers rag_lmbd_s3writer"
+  value       = aws_sqs_queue.alert_s3writer.url
+}
+
+output "alert_s3writer_sqs_queue_arn" {
+  description = "ARN of the SQS queue that triggers rag_lmbd_s3writer"
+  value       = aws_sqs_queue.alert_s3writer.arn
+}
+
 # ==============================================================================
 # Lambda Fetcher Outputs
 # ==============================================================================

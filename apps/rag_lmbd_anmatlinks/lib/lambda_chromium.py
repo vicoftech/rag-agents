@@ -16,11 +16,15 @@ from typing import List, Tuple
 
 import brotli
 
-# Sync with @sparticuz/chromium source/index.ts (graphics enabled)
-_SPARTICUZ_DISABLE_FEATURES = "AudioServiceOutOfProcess,IsolateOrigins,site-per-process"
+# Sync with @sparticuz/chromium source/index.ts (graphics enabled).
+# Un solo --disable-features: si hay dos, Chromium usa el último y se pierde AsyncDns.
+_SPARTICUZ_DISABLE_FEATURES = (
+    "AsyncDns,AudioServiceOutOfProcess,IsolateOrigins,site-per-process"
+)
 _SPARTICUZ_ENABLE_FEATURES = "SharedArrayBuffer"
 
 _SPARTICUZ_ARGS_GRAPHICS_ON: List[str] = [
+    "--dns-prefetch-disable",
     "--ash-no-nudges",
     "--disable-domain-reliability",
     "--disable-print-preview",
@@ -46,6 +50,7 @@ _SPARTICUZ_ARGS_GRAPHICS_ON: List[str] = [
 ]
 
 _SPARTICUZ_ARGS_GRAPHICS_OFF: List[str] = [
+    "--dns-prefetch-disable",
     "--ash-no-nudges",
     "--disable-domain-reliability",
     "--disable-print-preview",

@@ -123,6 +123,31 @@ variable "s3_filter_suffix" {
   default     = ".pdf"
 }
 
+# SQS trigger (optional)
+variable "sqs_trigger_enabled" {
+  description = "Enable SQS event source mapping for Lambda"
+  type        = bool
+  default     = false
+}
+
+variable "sqs_queue_arn" {
+  description = "SQS queue ARN to trigger the Lambda"
+  type        = string
+  default     = ""
+}
+
+variable "sqs_batch_size" {
+  description = "Max messages per Lambda invocation from SQS"
+  type        = number
+  default     = 10
+}
+
+variable "sqs_maximum_concurrency" {
+  description = "Optional max concurrent Lambda executions per SQS event source (null = AWS default)"
+  type        = number
+  default     = null
+}
+
 variable "environment" {
   description = "Environment name"
   type        = string

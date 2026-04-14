@@ -1,8 +1,11 @@
 import json
 import os
+import socket
+import time
 import requests
 import boto3
 import re
+import urllib3
 from urllib.parse import urlparse, unquote
 from datetime import datetime
 from typing import List, Dict, Optional
@@ -23,7 +26,10 @@ s3_client = boto3.client('s3', **session_args)
 # Environment variables
 S3_BUCKET = os.getenv('S3_BUCKET_NAME')
 REQUEST_TIMEOUT = int(os.getenv('REQUEST_TIMEOUT', '30'))
+S3WRITER_SQS_MAX_RETRIES = int(os.getenv('S3WRITER_SQS_MAX_RETRIES', '3'))
 MAX_FILE_SIZE = int(os.getenv('MAX_FILE_SIZE', str(50 * 1024 * 1024)))  # 50MB
+# Pausa entre descargas (serie); reduce presión al origen (no es paralelo).
+S3WRITER_PDF_DOWNLOAD_DELAY_SEC = float(os.getenv('S3WRITER_PDF_DOWNLOAD_DELAY_SEC', '0.25'))
 
 # Headers para descargar archivos
 DOWNLOAD_HEADERS = {
@@ -144,52 +150,126 @@ def generate_filename(pdf_info: Dict, index: int) -> str:
     
     return filename
 
-def download_pdf(url: str) -> Optional[bytes]:
+
+def _resolve_ipv4(host: str, port: int) -> str:
+    infos = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
+    if not infos:
+        raise OSError(f"no IPv4 address for {host}")
+    return infos[0][4][0]
+
+
+def _download_pdf_via_resolved_tls(
+    clean_url: str,
+) -> Optional[bytes]:
     """
-    Descarga un PDF desde una URL
+    Conecta a la IPv4 resolvida con SNI/cabecera Host correctos. En Lambda a veces
+    requests/urllib3 fallan en DNS (NameResolutionError) aunque getaddrinfo funcione.
     """
+    p = urlparse(clean_url)
+    host = p.hostname
+    if not host:
+        return None
+    port = p.port or 443
+    path = p.path or '/'
+    if p.query:
+        path = f"{path}?{p.query}"
+
+    ip = _resolve_ipv4(host, port)
+    print(f"download_pdf: {host} -> {ip} (TLS SNI={host})")
+
+    headers = {**DOWNLOAD_HEADERS, 'Host': host}
+    timeout = urllib3.Timeout(connect=min(REQUEST_TIMEOUT, 45), read=REQUEST_TIMEOUT)
+
+    pool = urllib3.HTTPSConnectionPool(
+        host=ip,
+        port=port,
+        server_hostname=host,
+        maxsize=1,
+        block=True,
+        cert_reqs='CERT_REQUIRED',
+    )
+    r = pool.request(
+        'GET',
+        path,
+        headers=headers,
+        timeout=timeout,
+        preload_content=False,
+        retries=False,
+    )
     try:
-        print(f"Downloading PDF from: {url}")
-        
-        # Limpiar URL de parámetros para evitar duplicados
-        clean_url = url.split('?')[0]
-        print(f"Clean URL for download: {clean_url}")
-        
-        response = requests.get(clean_url, headers=DOWNLOAD_HEADERS, timeout=REQUEST_TIMEOUT, stream=True)
-        response.raise_for_status()
-        
-        # Verificar tamaño del archivo
-        content_length = response.headers.get('content-length')
-        if content_length and int(content_length) > MAX_FILE_SIZE:
-            print(f"File too large: {content_length} bytes")
+        if r.status >= 400:
+            print(f"HTTP error: {r.status}")
             return None
-        
-        # Descargar contenido con chunks más pequeños para mejor control
+        cl = r.headers.get('content-length')
+        if cl and int(cl) > MAX_FILE_SIZE:
+            print(f"File too large: {cl} bytes")
+            return None
         content = b''
         chunk_count = 0
-        for chunk in response.iter_content(chunk_size=4096):  # Reducir chunk size
+        for chunk in r.stream(4096):
             if chunk:
                 content += chunk
                 chunk_count += 1
-                
-                # Logging periódico para monitoreo
                 if chunk_count % 50 == 0:
                     print(f"Downloaded {len(content)} bytes so far...")
-                
                 if len(content) > MAX_FILE_SIZE:
                     print(f"File exceeded maximum size: {len(content)} bytes")
                     return None
-        
-        print(f"Successfully downloaded {len(content)} bytes in {chunk_count} chunks")
-        
-        # Verificar que sea un PDF válido
+        print(f"Successfully downloaded {len(content)} bytes in {chunk_count} chunks (urllib3/TLS)")
         if not content.startswith(b'%PDF'):
-            print(f"Warning: Downloaded content may not be a valid PDF")
-        
+            print("Warning: Downloaded content may not be a valid PDF")
         return content
-        
+    finally:
+        r.release_conn()
+
+
+def download_pdf(url: str) -> Optional[bytes]:
+    """
+    Descarga un PDF desde una URL (serie; no hay paralelismo aquí).
+    Prioriza resolución IPv4 + HTTPS con SNI para evitar NameResolutionError en Lambda.
+    """
+    clean_url = url.split('?')[0]
+    print(f"Downloading PDF from: {url}")
+    print(f"Clean URL for download: {clean_url}")
+
+    try:
+        return _download_pdf_via_resolved_tls(clean_url)
+    except OSError as e:
+        print(f"Resolved-IP path DNS error: {e}")
+    except urllib3.exceptions.HTTPError as e:
+        print(f"Resolved-IP path HTTP error: {e}")
+    except Exception as e:
+        print(f"Resolved-IP path error: {e}")
+
+    try:
+        response = requests.get(
+            clean_url,
+            headers=DOWNLOAD_HEADERS,
+            timeout=REQUEST_TIMEOUT,
+            stream=True,
+        )
+        response.raise_for_status()
+        cl = response.headers.get('content-length')
+        if cl and int(cl) > MAX_FILE_SIZE:
+            print(f"File too large: {cl} bytes")
+            return None
+        content = b''
+        chunk_count = 0
+        for chunk in response.iter_content(chunk_size=4096):
+            if chunk:
+                content += chunk
+                chunk_count += 1
+                if chunk_count % 50 == 0:
+                    print(f"Downloaded {len(content)} bytes so far...")
+                if len(content) > MAX_FILE_SIZE:
+                    print(f"File exceeded maximum size: {len(content)} bytes")
+                    return None
+        print(f"Successfully downloaded {len(content)} bytes (requests fallback)")
+        if not content.startswith(b'%PDF'):
+            print("Warning: Downloaded content may not be a valid PDF")
+        return content
     except requests.RequestException as e:
-        print(f"Error downloading PDF: {e}")
+        print(f"Error downloading PDF (requests fallback): {e}")
         return None
     except Exception as e:
         print(f"Unexpected error downloading PDF: {e}")
@@ -263,9 +343,6 @@ def process_bolinks_output(bolinks_output: Dict, tenant_id: str, agent_id: str) 
         
         # Generar metadata
         site_id = f'tenant_{tenant_id}/{agent_id}/documents'
-        #date_str = date
-        
-        print(f"Starting to process {len(pdf_links)} PDFs for site: {site_id}, date: {date_str}, section: {section}")
         
         uploaded_files = []
         processed_count = 0
@@ -275,13 +352,19 @@ def process_bolinks_output(bolinks_output: Dict, tenant_id: str, agent_id: str) 
         max_pdfs = min(len(pdf_links), 20)  # Procesar máximo 20 PDFs
         pdf_links_to_process = pdf_links[:max_pdfs]
         
-        print(f"Processing {len(pdf_links_to_process)} PDFs (limited from {len(pdf_links)} total)")
+        print(f"Processing {len(pdf_links_to_process)} PDFs (limited from {len(pdf_links)} total) for site: {site_id}")
         
         for index, pdf in enumerate(pdf_links_to_process):
-            if not pdf["url"]:
+            if not pdf.get("url"):
                 continue
+
+            if index > 0 and S3WRITER_PDF_DOWNLOAD_DELAY_SEC > 0:
+                time.sleep(S3WRITER_PDF_DOWNLOAD_DELAY_SEC)
+
+            date_str = pdf.get("date") or ""
+            section = pdf.get("section") or "default"
             
-            print(f"Processing PDF {index + 1}/{len(pdf_links_to_process)}: {pdf["url"]}")
+            print(f"Processing PDF {index + 1}/{len(pdf_links_to_process)}: {pdf['url']}")
             
             # Descargar PDF
             pdf_content = download_pdf(pdf["url"])
@@ -292,8 +375,6 @@ def process_bolinks_output(bolinks_output: Dict, tenant_id: str, agent_id: str) 
             
             # Generar nombre de archivo
             filename = generate_filename_from_url(pdf["url"], index, date_str, section)
-            section = pdf["section"]
-            date_str = pdf["date"]
             # Subir a S3
             s3_key = f"{site_id}/{date_str}/{section}/{filename}"
             if upload_to_s3(pdf_content, S3_BUCKET, s3_key):
@@ -336,10 +417,159 @@ def process_bolinks_output(bolinks_output: Dict, tenant_id: str, agent_id: str) 
             'exception': str(e)
         }
 
+
+def process_single_pdf(pdf: Dict, tenant_id: str, agent_id: str) -> Dict:
+    """
+    Sube un único PDF (mensaje SQS mode=single_pdf desde Step Functions Map).
+    """
+    try:
+        if not pdf.get('url'):
+            return {'success': False, 'error': 'missing url'}
+        site_id = f'tenant_{tenant_id}/{agent_id}/documents'
+        date_str = pdf.get('date') or ''
+        section = pdf.get('section') or 'default'
+        print(f"single_pdf: {pdf['url']}")
+        pdf_content = download_pdf(pdf['url'])
+        if not pdf_content:
+            return {
+                'success': False,
+                'error': 'download failed',
+                'url': pdf.get('url'),
+            }
+        filename = generate_filename_from_url(pdf['url'], 0, date_str, section)
+        s3_key = f"{site_id}/{date_str}/{section}/{filename}"
+        if not upload_to_s3(pdf_content, S3_BUCKET, s3_key):
+            return {
+                'success': False,
+                'error': 's3 upload failed',
+                'url': pdf.get('url'),
+            }
+        uploaded = [{
+            'url': pdf['url'],
+            's3_key': s3_key,
+            'filename': filename,
+            'size': len(pdf_content),
+            'metadata': {
+                'date': date_str,
+                'section': section,
+                'site_id': site_id,
+            },
+        }]
+        return {
+            'success': True,
+            'site_id': site_id,
+            'processed_count': 1,
+            'failed_count': 0,
+            'uploaded_files': uploaded,
+            's3_bucket': S3_BUCKET,
+        }
+    except Exception as e:
+        return {
+            'success': False,
+            'error': str(e),
+            'exception': str(e),
+        }
+
+
+def process_single_pdf_with_retries(
+    pdf: Dict, tenant_id: str, agent_id: str
+) -> Dict:
+    last: Optional[Dict] = None
+    for attempt in range(S3WRITER_SQS_MAX_RETRIES):
+        result = process_single_pdf(pdf, tenant_id, agent_id)
+        if result.get('success'):
+            return result
+        last = result
+        if attempt < S3WRITER_SQS_MAX_RETRIES - 1:
+            delay = 2 ** attempt
+            print(
+                f"single_pdf reintento {attempt + 2}/{S3WRITER_SQS_MAX_RETRIES} "
+                f"tras {delay}s..."
+            )
+            time.sleep(delay)
+    return last or {'success': False, 'error': 'process_single_pdf_with_retries: empty'}
+
+
+def process_bolinks_with_retries(
+    bolinks_output: Dict, tenant_id: str, agent_id: str
+) -> Dict:
+    """
+    Reintentos con backoff exponencial (1s, 2s) ante resultado fallido.
+    Tras S3WRITER_SQS_MAX_RETRIES devuelve el último resultado (el caller puede lanzar).
+    """
+    last: Optional[Dict] = None
+    for attempt in range(S3WRITER_SQS_MAX_RETRIES):
+        result = process_bolinks_output(bolinks_output, tenant_id, agent_id)
+        if result.get('success'):
+            return result
+        last = result
+        if attempt < S3WRITER_SQS_MAX_RETRIES - 1:
+            delay = 2 ** attempt
+            print(
+                f"process_bolinks reintento {attempt + 2}/{S3WRITER_SQS_MAX_RETRIES} "
+                f"tras {delay}s (success=false)..."
+            )
+            time.sleep(delay)
+    return last or {'success': False, 'error': 'process_bolinks_with_retries: empty result'}
+
+
+def _is_sqs_event(event) -> bool:
+    r = event.get('Records')
+    return bool(r and isinstance(r, list) and r[0].get('eventSource') == 'aws:sqs')
+
+
+def _handle_sqs(event) -> Dict:
+    """
+    Cola alert-s3writer:
+    - mode=single_pdf + pdf: un archivo (Step Function Map).
+    - bolinks_output: lote legacy (varios PDFs en un mensaje).
+    """
+    results = []
+    for record in event.get('Records') or []:
+        if record.get('eventSource') != 'aws:sqs':
+            continue
+        body = json.loads(record['body'])
+        tenant_id = body.get('tenant_id')
+        agent_id = body.get('agent_id')
+        if not tenant_id or not agent_id:
+            raise ValueError('SQS message must include tenant_id and agent_id')
+
+        single = body.get('mode') == 'single_pdf' or (
+            body.get('pdf') is not None and body.get('bolinks_output') is None
+        )
+        if single:
+            pdf = body.get('pdf')
+            if not isinstance(pdf, dict) or not pdf.get('url'):
+                raise ValueError('single_pdf message needs pdf.url')
+            result = process_single_pdf_with_retries(pdf, tenant_id, agent_id)
+        else:
+            bolinks_output = body.get('bolinks_output')
+            if not bolinks_output:
+                raise ValueError(
+                    'SQS message needs bolinks_output or single_pdf payload'
+                )
+            result = process_bolinks_with_retries(bolinks_output, tenant_id, agent_id)
+
+        if not result.get('success'):
+            raise RuntimeError(
+                f"s3writer falló tras reintentos: {result.get('error', result)}"
+            )
+        results.append(result)
+    return {
+        'statusCode': 200,
+        'body': json.dumps({'success': True, 'results': results}),
+    }
+
+
 def handler(event, context):
     """
     Lambda handler para procesar output del parser y subir PDFs a S3
     """
+    print(f"handler event (raw): {json.dumps(event, default=str)}")
+
+    if _is_sqs_event(event):
+        return _handle_sqs(event)
+
     # CORS headers
     CORS_HEADERS = {
         "Access-Control-Allow-Origin": "*",

@@ -1,11 +1,151 @@
 import json
 import os
+import socket
 import time
 from datetime import datetime
+from urllib.parse import urlparse
 
 from playwright.sync_api import sync_playwright
 
 from lib.lambda_chromium import try_sparticuz_launch_config
+
+# URL base del BuscaDispo (sin barra final); override si ANMAT cambia el host
+DEFAULT_ANMAT_ORIGIN = "https://buscadispo.anmat.gob.ar"
+
+
+def _anmat_origin() -> str:
+    return os.environ.get("ANMAT_BASE_URL", DEFAULT_ANMAT_ORIGIN).rstrip("/")
+
+
+def _format_ip_for_chromium_map(ip: str) -> str:
+    """
+    IPv6 en --host-resolver-rules debe ir entre corchetes; si no, los ':' rompen el parser
+    y Chromium ignora el MAP → vuelve DNS propio → ERR_NAME_NOT_RESOLVED intermitente.
+    """
+    if ":" in ip:
+        return f"[{ip}]"
+    return ip
+
+
+def _resolve_ip_for_host(hostname: str) -> str | None:
+    """
+    Resuelve una IP usable para --host-resolver-rules. Reintenta porque en Lambda
+    el resolver del runtime a veces devuelve timeout / lista vacía de forma intermitente
+    (mismo orden de magnitud que "DNS secundario" o caché fría).
+    """
+    max_tries = int(os.environ.get("ANMAT_DNS_MAX_ATTEMPTS", "8"))
+    base_delay = float(os.environ.get("ANMAT_DNS_RETRY_DELAY_SEC", "0.35"))
+
+    def _try_family(family: int) -> str | None:
+        infos = socket.getaddrinfo(hostname, 443, family, socket.SOCK_STREAM)
+        if not infos:
+            return None
+        return infos[0][4][0]
+
+    ipv4_only = os.environ.get("ANMAT_RESOLVER_IPV4_ONLY", "true").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    families: list[tuple[int, str]] = [(socket.AF_INET, "A")]
+    if not ipv4_only:
+        families.append((socket.AF_INET6, "AAAA"))
+
+    last_err: OSError | None = None
+    for attempt in range(max_tries):
+        for family, label in families:
+            try:
+                ip = _try_family(family)
+                if ip:
+                    if attempt > 0:
+                        print(
+                            f"DNS {label} para {hostname}: {ip} "
+                            f"(intento {attempt + 1}/{max_tries})"
+                        )
+                    return ip
+            except OSError as e:
+                last_err = e
+                print(
+                    f"DNS ({label}) {hostname} intento {attempt + 1}/{max_tries}: {e}"
+                )
+        if attempt < max_tries - 1:
+            time.sleep(base_delay * (1.35**attempt))
+    if last_err:
+        print(f"DNS agotado para {hostname}: último error {last_err}")
+    return None
+
+
+def _resolve_ip_for_host_v6_only(hostname: str) -> str | None:
+    """Sólo AAAA, para fallback cuando ANMAT_RESOLVER_IPV4_ONLY y no hay registro A."""
+    max_tries = int(os.environ.get("ANMAT_DNS_MAX_ATTEMPTS", "8"))
+    base_delay = float(os.environ.get("ANMAT_DNS_RETRY_DELAY_SEC", "0.35"))
+    last_err: OSError | None = None
+    for attempt in range(max_tries):
+        try:
+            infos = socket.getaddrinfo(
+                hostname, 443, socket.AF_INET6, socket.SOCK_STREAM
+            )
+            if infos:
+                ip = infos[0][4][0]
+                print(f"DNS AAAA (fallback) para {hostname}: {ip}")
+                return ip
+        except OSError as e:
+            last_err = e
+            print(
+                f"DNS (AAAA fallback) {hostname} intento {attempt + 1}/{max_tries}: {e}"
+            )
+        if attempt < max_tries - 1:
+            time.sleep(base_delay * (1.35**attempt))
+    if last_err:
+        print(f"DNS AAAA fallback agotado para {hostname}: {last_err}")
+    return None
+
+
+def _chromium_host_resolver_rule(hostname: str) -> str | None:
+    """
+    Fuerza MAP host->IP para Chromium. Sin esta regla, Chromium hace DNS propio
+    y en Lambda suele coincidir con fallos intermitentes (ERR_NAME_NOT_RESOLVED).
+    """
+    forced = os.environ.get("ANMAT_FORCED_RESOLVER_IP", "").strip()
+    if forced:
+        mapped = _format_ip_for_chromium_map(forced)
+        rule = f"MAP {hostname} {mapped}"
+        print(f"Chromium host-resolver-rules: {rule} (ANMAT_FORCED_RESOLVER_IP)")
+        return rule
+
+    ip = _resolve_ip_for_host(hostname)
+    if not ip:
+        ipv4_only = os.environ.get("ANMAT_RESOLVER_IPV4_ONLY", "true").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        if ipv4_only:
+            # Reintento sólo AAAA con literal bien formado (sitios sólo-IPv6)
+            ip = _resolve_ip_for_host_v6_only(hostname)
+    if not ip:
+        print(
+            f"ADVERTENCIA: no se pudo resolver {hostname}; Chromium usará DNS interno "
+            "(mayor riesgo de ERR_NAME_NOT_RESOLVED)."
+        )
+        return None
+    mapped = _format_ip_for_chromium_map(ip)
+    rule = f"MAP {hostname} {mapped}"
+    print(f"Chromium host-resolver-rules: {rule}")
+    return rule
+
+
+def _merge_resolver_arg(chromium_args: list, origin: str) -> list:
+    host = urlparse(origin).hostname
+    if not host:
+        return chromium_args
+    rule = _chromium_host_resolver_rule(host)
+    if not rule:
+        return chromium_args
+    out = list(chromium_args)
+    out.append(f"--host-resolver-rules={rule}")
+    return out
+
 
 def extraer_fecha_url(url, year, meses):
     """
@@ -69,6 +209,8 @@ def scrape_anmat(year, page_start=1, page_end=None):
         )
 
     local_fallback_args = [
+        "--disable-features=AsyncDns",
+        "--dns-prefetch-disable",
         "--no-sandbox",
         "--disable-setuid-sandbox",
         "--disable-dev-shm-usage",
@@ -77,22 +219,44 @@ def scrape_anmat(year, page_start=1, page_end=None):
 
     with sync_playwright() as p:
         launch_kw = {}
+        origin = _anmat_origin()
         if exec_path and sparticuz_args:
             # Sparticuz chrome-headless-shell: args ya incluyen --headless=shell
             launch_kw["executable_path"] = exec_path
-            launch_kw["args"] = sparticuz_args
+            launch_kw["args"] = _merge_resolver_arg(sparticuz_args, origin)
             launch_kw["headless"] = False
         else:
             launch_kw["headless"] = True
-            launch_kw["args"] = local_fallback_args
+            launch_kw["args"] = _merge_resolver_arg(local_fallback_args, origin)
 
         browser = p.chromium.launch(**launch_kw)
         context = browser.new_context()
         page = context.new_page()
-        
+
+        wait_until = os.environ.get("PLAYWRIGHT_GOTO_WAIT_UNTIL", "domcontentloaded")
+        goto_timeout_ms = int(os.environ.get("PLAYWRIGHT_GOTO_TIMEOUT_MS", "120000"))
+
         # 1. Navegamos a la página
         print("Cargando sitio web...")
-        page.goto("https://buscadispo.anmat.gob.ar/", wait_until="networkidle")
+        entry_url = f"{origin}/"
+        for attempt in range(3):
+            try:
+                page.goto(
+                    entry_url,
+                    wait_until=wait_until,
+                    timeout=goto_timeout_ms,
+                )
+                break
+            except Exception as e:
+                if attempt < 2 and "ERR_NAME_NOT_RESOLVED" in str(e):
+                    wait_s = 2**attempt
+                    print(
+                        f"Reintento {attempt + 1} tras ERR_NAME_NOT_RESOLVED "
+                        f"(espera {wait_s}s)..."
+                    )
+                    time.sleep(wait_s)
+                else:
+                    raise
         
         # 2. Llenamos el año en el input correspondiente
         page.fill("id=ctl00_MainContent_txtAnioDispo", str(year), timeout=60000)
@@ -175,11 +339,11 @@ def scrape_anmat(year, page_start=1, page_end=None):
                     if clean_href.startswith("//"):
                         full_url = "https:" + clean_href
                     elif clean_href.startswith("/"):
-                        full_url = "https://buscadispo.anmat.gob.ar" + clean_href
+                        full_url = origin + clean_href
                     elif clean_href.startswith("http"):
                         full_url = clean_href
                     else:
-                        full_url = "https://buscadispo.anmat.gob.ar/" + clean_href
+                        full_url = f"{origin}/" + clean_href
                     
                     pdf_links.add(full_url)
                     
@@ -212,33 +376,68 @@ def scrape_anmat(year, page_start=1, page_end=None):
         
     return pdf_links_dict, total_pages_approx, total_records, has_more
 
+
+def _parse_event_body(event: dict) -> dict:
+    """Body de API Gateway (string JSON) o invocación directa con dict."""
+    raw = event.get("body")
+    if raw is None:
+        return {}
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw.strip():
+        return json.loads(raw)
+    return {}
+
+
+def _pick_param(event: dict, body: dict, key: str, default=None):
+    """Misma precedencia que year: queryStringParameters → raíz del evento → body."""
+    qsp = event.get("queryStringParameters") or {}
+    if qsp.get(key) is not None:
+        return qsp[key]
+    if key in event:
+        return event[key]
+    return body.get(key, default)
+
+
 def handler(event, context):
     try:
-        # Extraemos el año del evento (puede venir de body, queryStringParameters, o directamente)
-        # Ajusta esto dependiendo de cómo expongas tu Lambda (API Gateway, llamado directo, etc)
-        year = None
-        
-        if event.get('queryStringParameters') and 'year' in event['queryStringParameters']:
-            year = event['queryStringParameters']['year']
-        elif 'year' in event:
-            year = event['year']
-        elif event.get('body'):
-            body = json.loads(event['body'])
-            year = body.get('year')
-            
+        body = _parse_event_body(event)
+
+        if event.get("queryStringParameters") and "year" in event["queryStringParameters"]:
+            year = event["queryStringParameters"]["year"]
+        elif "year" in event:
+            year = event["year"]
+        elif body.get("year"):
+            year = body["year"]
+        else:
+            year = None
+
         if not year:
             return {
-                'statusCode': 400,
-                'body': json.dumps({'error': 'Parámetro "year" es requerido.'})
+                "statusCode": 400,
+                "body": json.dumps({"error": 'Parámetro "year" es requerido.'}),
             }
-            
-        # Extraer parámetros de paginación
-        page_start = event.get('page_start', 1)
-        page_end = event.get('page_end', None)
+
+        ps = _pick_param(event, body, "page_start", 1)
+        pe = _pick_param(event, body, "page_end", None)
+        page_start = int(ps) if ps not in (None, "") else 1
+        page_end = None if pe in (None, "") else int(pe)
         
-        # Ejecutamos el scraper
-        links, total_pages, total_records, has_more = scrape_anmat(year, page_start, page_end)
-        
+        # Scraper: un reintento completo si Playwright sigue sin resolver (suele alinearse con
+        # resolución intermitente en el mismo invocación, no solo "DNS secundario").
+        try:
+            links, total_pages, total_records, has_more = scrape_anmat(
+                year, page_start, page_end
+            )
+        except Exception as first:
+            if "ERR_NAME_NOT_RESOLVED" not in str(first):
+                raise
+            print("Reintento del scrape tras ERR_NAME_NOT_RESOLVED (espera 3s)...")
+            time.sleep(3)
+            links, total_pages, total_records, has_more = scrape_anmat(
+                year, page_start, page_end
+            )
+
         return {
             'statusCode': 200,
             'headers': {
