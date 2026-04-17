@@ -9,6 +9,9 @@ def test_parse_none_and_empty():
     assert parse_created_at_day(None) is None
     assert parse_created_at_day("") is None
     assert parse_created_at_day("   ") is None
+    assert parse_created_at_day("null") is None
+    assert parse_created_at_day("NULL") is None
+    assert parse_created_at_day("none") is None
 
 
 def test_parse_date_only():

@@ -13,6 +13,11 @@ variable "anmat_function_name" {
   type        = string
 }
 
+variable "anmat_reset_function_arn" {
+  description = "ARN of rag_lmbd_anmatlinks reset Lambda"
+  type        = string
+}
+
 variable "alert_queue_url" {
   description = "SQS queue URL for rag_lmbd_s3writer (alert-s3writer-*)"
   type        = string

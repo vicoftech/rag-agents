@@ -41,6 +41,39 @@ DOWNLOAD_HEADERS = {
     'Pragma': 'no-cache'
 }
 
+
+def resolve_batch_date_yyyymmdd(
+    bolinks_output: Dict,
+    uploaded_files: List[Dict],
+    pdf_links: List[Dict],
+) -> str:
+    """
+    Fecha de corrida en YYYYMMDD para DynamoDB (GSI EntityDateIndex).
+    Prioriza received_params.date del bolinks, luego metadata de uploads.
+    """
+    rp = bolinks_output.get("received_params") or {}
+    raw = rp.get("date")
+    if raw:
+        s = str(raw).strip()
+        if len(s) == 10 and s[4] == "-" and s[7] == "-":
+            try:
+                return datetime.strptime(s, "%Y-%m-%d").strftime("%Y%m%d")
+            except ValueError:
+                pass
+        if len(s) == 8 and s.isdigit():
+            return s
+    if uploaded_files:
+        md = uploaded_files[0].get("metadata") or {}
+        d2 = md.get("date")
+        if d2:
+            return str(d2)
+    if pdf_links:
+        d3 = pdf_links[0].get("date")
+        if d3:
+            return str(d3)
+    return ""
+
+
 def generate_site_id(url: str) -> str:
     """
     Genera un site_id a partir de la URL (dominio normalizado)
@@ -342,7 +375,7 @@ def process_bolinks_output(bolinks_output: Dict, tenant_id: str, agent_id: str) 
             }
         
         # Generar metadata
-        site_id = f'tenant_{tenant_id}/{agent_id}/documents'
+        site_id = f"{tenant_id}/{agent_id}/documents"
         
         uploaded_files = []
         processed_count = 0
@@ -378,9 +411,12 @@ def process_bolinks_output(bolinks_output: Dict, tenant_id: str, agent_id: str) 
             # Subir a S3
             s3_key = f"{site_id}/{date_str}/{section}/{filename}"
             if upload_to_s3(pdf_content, S3_BUCKET, s3_key):
+                s3_uri = f"s3://{S3_BUCKET}/{s3_key}" if S3_BUCKET else ""
                 uploaded_files.append({
                     'url': pdf["url"],
+                    'original_url': pdf["url"],
                     's3_key': s3_key,
+                    's3_uri': s3_uri,
                     'filename': filename,
                     'size': len(pdf_content),
                     'metadata': {
@@ -396,12 +432,15 @@ def process_bolinks_output(bolinks_output: Dict, tenant_id: str, agent_id: str) 
                 failed_count += 1
         
         print(f"Processing complete: {processed_count} successful, {failed_count} failed")
-        
+
+        batch_date = resolve_batch_date_yyyymmdd(
+            bolinks_output, uploaded_files, pdf_links
+        )
+
         return {
             'success': True,
             'site_id': site_id,
-            #'date': date_str,
-            #'section': section,
+            'date': batch_date,
             'processed_count': processed_count,
             'failed_count': failed_count,
             'total_found': len(pdf_links),
@@ -425,7 +464,7 @@ def process_single_pdf(pdf: Dict, tenant_id: str, agent_id: str) -> Dict:
     try:
         if not pdf.get('url'):
             return {'success': False, 'error': 'missing url'}
-        site_id = f'tenant_{tenant_id}/{agent_id}/documents'
+        site_id = f"{tenant_id}/{agent_id}/documents"
         date_str = pdf.get('date') or ''
         section = pdf.get('section') or 'default'
         print(f"single_pdf: {pdf['url']}")
@@ -444,9 +483,12 @@ def process_single_pdf(pdf: Dict, tenant_id: str, agent_id: str) -> Dict:
                 'error': 's3 upload failed',
                 'url': pdf.get('url'),
             }
+        s3_uri = f"s3://{S3_BUCKET}/{s3_key}" if S3_BUCKET else ""
         uploaded = [{
             'url': pdf['url'],
+            'original_url': pdf['url'],
             's3_key': s3_key,
+            's3_uri': s3_uri,
             'filename': filename,
             'size': len(pdf_content),
             'metadata': {
@@ -458,6 +500,7 @@ def process_single_pdf(pdf: Dict, tenant_id: str, agent_id: str) -> Dict:
         return {
             'success': True,
             'site_id': site_id,
+            'date': date_str or '',
             'processed_count': 1,
             'failed_count': 0,
             'uploaded_files': uploaded,

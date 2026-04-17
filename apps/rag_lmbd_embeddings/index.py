@@ -97,9 +97,14 @@ def parse_s3_rag_key(key: str) -> tuple:
     """
     Formato canónico (recomendado):
 
-        {tenant_schema}/{agent_uuid}/documents/[<fecha>/[<carpeta>/]]<archivo>
+        {tenant_id_o_schema}/{agent_uuid}/documents/[<fecha>/[<carpeta>/]]<archivo>
+
+    El primer segmento puede ser el slug de API (``anmat``, ``boletin``) o ya
+    ``tenant_*``; en ambos casos el esquema Postgres se normaliza como en la
+    Lambda ``rag_lmbd_query`` (p. ej. ``anmat`` → ``tenant_anmat``).
 
     Ejemplos:
+        anmat/<uuid>/documents/20250101/default/aviso_....pdf
         tenant_boletin/<uuid>/documents/informe.pdf
         tenant_boletin/<uuid>/documents/20260310/primera/aviso_....pdf
 
@@ -120,7 +125,13 @@ def parse_s3_rag_key(key: str) -> tuple:
         and parts[2] == "documents"
         and UUID_RE.match(parts[1])
     ):
-        tenant_schema = parts[0]
+        # Alinear con rag_lmbd_query (resolve_schema_name): el key S3 usa el tenant_id de API
+        # (p. ej. anmat, boletin) pero Postgres usa tenant_anmat / tenant_boletin.
+        raw_tenant = parts[0].strip()
+        if raw_tenant.startswith("tenant_"):
+            tenant_schema = raw_tenant
+        else:
+            tenant_schema = f"tenant_{raw_tenant}"
         agent_id = parts[1]
         assert_valid_schema_name(tenant_schema)
         under_documents = parts[3:]

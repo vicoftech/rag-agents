@@ -526,6 +526,7 @@ module "anmat_s3_stepfunction" {
   state_machine_name   = "rag-anmat-to-s3writer-${var.environment}"
   anmat_function_arn   = module.lambda_anmatlinks.function_arn
   anmat_function_name  = module.lambda_anmatlinks.function_name
+  anmat_reset_function_arn = module.lambda_anmatlinks_reset.function_arn
   alert_queue_url     = aws_sqs_queue.alert_s3writer.url
   alert_queue_arn     = aws_sqs_queue.alert_s3writer.arn
   tags                = local.common_tags
@@ -719,7 +720,7 @@ module "lambda_anmatlinks" {
   handler                = "index.handler"
   runtime                = "python3.12"
   timeout                = 900
-  memory_size            = 1024
+  memory_size            = 3072
   ephemeral_storage_size = 2048
 
   source_path = local.lambda_anmatlinks_path
@@ -729,10 +730,45 @@ module "lambda_anmatlinks" {
 
   environment_variables = {
     CHROMIUM_PACK_PATH = "/opt/nodejs/node_modules/@sparticuz/chromium/bin"
+    ANMAT_FORCED_RESOLVER_IP = "190.210.84.134"
   }
 
   use_s3_deployment = true
   s3_bucket_name    = module.s3_documents.bucket_name
+
+  tags = local.common_tags
+}
+
+module "lambda_anmatlinks_reset" {
+  source = "./modules/lambda"
+
+  function_name          = "rag_lmbd_anmatlinks_reset-${var.environment}"
+  description            = "Resets rag_lmbd_anmatlinks environment to force cold starts periodically"
+  handler                = "index.handler"
+  runtime                = "python3.12"
+  timeout                = 60
+  memory_size            = 256
+  ephemeral_storage_size = 512
+
+  source_path = "${path.module}/../apps/rag_lmbd_anmatlinks_reset"
+  environment = var.environment
+
+  environment_variables = {
+    TARGET_FUNCTION_NAME = module.lambda_anmatlinks.function_name
+  }
+
+  attach_policy_statements = [
+    {
+      effect = "Allow"
+      actions = [
+        "lambda:GetFunctionConfiguration",
+        "lambda:UpdateFunctionConfiguration"
+      ]
+      resources = [
+        module.lambda_anmatlinks.function_arn
+      ]
+    }
+  ]
 
   tags = local.common_tags
 }

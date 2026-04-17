@@ -1,5 +1,7 @@
 import os
 import json
+import random
+from time import sleep
 import urllib.parse
 from datetime import date, datetime, time, timedelta, timezone
 import boto3
@@ -49,9 +51,25 @@ FALLBACK_LLM_MODEL = os.getenv("FALLBACK_LLM_MODEL", "openai.gpt-oss-20b-1:0")
 EMBEDDINGS_MODEL = os.getenv("EMBEDDINGS_MODEL", "cohere.embed-v4:0")
 OUTPUT_TOKENS = os.getenv("OUTPUT_TOKENS", "2048")
 MAX_EMBED_TEXT_LENGTH = 20000
+BEDROCK_EMBED_MAX_ATTEMPTS = int(os.getenv("BEDROCK_EMBED_MAX_ATTEMPTS", "8"))
+BEDROCK_EMBED_RETRY_BASE_SEC = float(os.getenv("BEDROCK_EMBED_RETRY_BASE_SEC", "2.0"))
+BEDROCK_EMBED_RETRY_MAX_SEC = float(os.getenv("BEDROCK_EMBED_RETRY_MAX_SEC", "45.0"))
 COHERE_TRUNCATE = os.getenv("COHERE_TRUNCATE", "RIGHT")
 EXPECTED_EMBEDDING_DIM = int(os.getenv("EXPECTED_EMBEDDING_DIM", "1536"))
-MAX_SEMANTIC_DISTANCE = float(os.getenv("MAX_SEMANTIC_DISTANCE", "0.45"))
+# Cantidad de chunks vecinos a traer (solo búsqueda semántica kNN).
+SEMANTIC_TOP_K = max(1, min(50, int(os.getenv("SEMANTIC_TOP_K", "10"))))
+# Opcional: si MAX_SEMANTIC_DISTANCE está definido y > 0, filtrar vecinos por distancia coseno (<=).
+# Sin variable o valor 0/off/none → no se filtra: se devuelven los SEMANTIC_TOP_K más cercanos.
+_MAX_SEM_DIST_RAW = os.getenv("MAX_SEMANTIC_DISTANCE", "").strip().lower()
+if _MAX_SEM_DIST_RAW in ("", "0", "none", "off", "false"):
+    MAX_SEMANTIC_DISTANCE = None
+else:
+    try:
+        MAX_SEMANTIC_DISTANCE = float(_MAX_SEM_DIST_RAW)
+    except ValueError:
+        MAX_SEMANTIC_DISTANCE = None
+    if MAX_SEMANTIC_DISTANCE is not None and MAX_SEMANTIC_DISTANCE <= 0:
+        MAX_SEMANTIC_DISTANCE = None
 
 DOCUMENTS_S3_BUCKET = os.getenv("DOCUMENTS_S3_BUCKET", "")
 PRESIGNED_URL_EXPIRES_SECONDS = int(os.getenv("PRESIGNED_URL_EXPIRES_SECONDS", "3600"))
@@ -143,14 +161,20 @@ def _cohere_embed_extras():
 def parse_created_at_day(raw):
     """
     Opcional: filtra chunks por día de created_at en BD.
-    None / vacío → sin filtro (búsqueda general).
+
+    Sin fecha efectiva (None, vacío, JSON null ya viene como None, o strings
+    sentinela como 'null'/'none') → **no** se aplica filtro por día: la búsqueda
+    vectorial usa toda la historia disponible para el resto de filtros
+    (tenant, agent_id, document_name, etc.). No hay default al día anterior.
     Acepta 'YYYY-MM-DD' o ISO datetime (se usa solo el día civil en UTC).
     """
     if raw is None:
         return None
-    if isinstance(raw, str) and not raw.strip():
-        return None
     s = str(raw).strip()
+    if not s:
+        return None
+    if s.lower() in ("null", "none"):
+        return None
     try:
         if len(s) == 10 and s[4] == "-" and s[7] == "-":
             return date.fromisoformat(s)
@@ -181,6 +205,7 @@ def get_connection():
     register_vector(conn)
     return conn
 
+
 def normalize(v):
     v = np.array(v, dtype=np.float32).squeeze()
     n = np.linalg.norm(v)
@@ -189,23 +214,47 @@ def normalize(v):
 def to_pgvector(vec):
     return "(" + ",".join(str(v) for v in vec) + ")"
 
+
+def _is_bedrock_throttle(exc: BaseException) -> bool:
+    if not isinstance(exc, ClientError):
+        return False
+    code = (exc.response.get("Error") or {}).get("Code", "")
+    return code in ("ThrottlingException", "TooManyRequestsException")
+
+
 def embed(text: str, input_type: str = "search_query"):
     """Consultas de búsqueda deben usar search_query (Cohere v4 / asimétrico)."""
     if len(text) > MAX_EMBED_TEXT_LENGTH:
         text = text[:MAX_EMBED_TEXT_LENGTH]
 
     payload = {"texts": [text], "input_type": input_type, **_cohere_embed_extras()}
+    body = json.dumps(payload)
 
-    response = bedrock.invoke_model(
-        modelId=EMBEDDINGS_MODEL,
-        body=json.dumps(payload),
-        contentType="application/json",
-        accept="application/json",
-    )
+    last_exc = None
+    for attempt in range(BEDROCK_EMBED_MAX_ATTEMPTS):
+        try:
+            response = bedrock.invoke_model(
+                modelId=EMBEDDINGS_MODEL,
+                body=body,
+                contentType="application/json",
+                accept="application/json",
+            )
+            result = json.loads(response["body"].read())
+            vec = parse_embedding_vector(result, 0)
+            return normalize(vec).tolist()
+        except ClientError as e:
+            last_exc = e
+            if not _is_bedrock_throttle(e) or attempt >= BEDROCK_EMBED_MAX_ATTEMPTS - 1:
+                raise
+            delay = min(
+                BEDROCK_EMBED_RETRY_BASE_SEC * (2**attempt) + random.uniform(0, 0.75),
+                BEDROCK_EMBED_RETRY_MAX_SEC,
+            )
+            sleep(delay)
 
-    result = json.loads(response["body"].read())
-    vec = parse_embedding_vector(result, 0)
-    return normalize(vec).tolist()
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("embed: reintentos agotados sin excepción registrada")
 
 
 
@@ -218,8 +267,11 @@ def semantic_search(
     agent_id=None,
     chunk_text=None,
     created_at_day=None,
-    k=50,
+    k=None,
 ):
+    """kNN semántico; ``k`` por defecto = SEMANTIC_TOP_K (env). created_at_day None → sin filtro por día."""
+    if k is None:
+        k = SEMANTIC_TOP_K
     q_emb = embed(query, input_type="search_query")
 
     if not isinstance(q_emb, list):
@@ -284,11 +336,11 @@ def semantic_search(
     cur.close()
     conn.close()
 
-    # Filtra vecinos semánticos por umbral de distancia.
-    # Con cosine distance (<=>), valores más bajos son más similares.
-    matched_rows = [row for row in rows if row[2] is not None and row[2] <= MAX_SEMANTIC_DISTANCE]
+    # Vecinos por distancia coseno (<=>); más bajo = más similar. Sin embedding → se omite.
+    matched_rows = [row for row in rows if row[2] is not None]
+    if MAX_SEMANTIC_DISTANCE is not None:
+        matched_rows = [row for row in matched_rows if row[2] <= MAX_SEMANTIC_DISTANCE]
 
-    # Extraer chunks y documentos únicos solo de matches válidos
     chunks = [row[0] for row in matched_rows]
     documents = sorted(set(row[1] for row in matched_rows))
 
@@ -466,8 +518,10 @@ def handler(event, context):
             }
         return resp
 
-    # Obtener chunks relevantes
-    chunks, documents = semantic_search(query, tenant_id, document_name, agent_id, chunk_text)
+    # created_at_day None → sin ventana de fecha (no se limita al día anterior ni al actual).
+    chunks, documents = semantic_search(
+        query, tenant_id, document_name, agent_id, chunk_text, created_at_day
+    )
     context_text = "\n\n".join(chunks)
 
     # Obtener prompt del agente

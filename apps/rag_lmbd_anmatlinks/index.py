@@ -181,7 +181,17 @@ def extraer_fecha_url(url, year, meses):
     
     return fecha_aviso
 
-def scrape_anmat(year, page_start=1, page_end=None):
+
+def _pagination_ceiling(total_pages_cap, total_pages_approx):
+    """Tope de páginas: parámetro explícito gana sobre el cálculo desde el sitio."""
+    if isinstance(total_pages_cap, int) and total_pages_cap > 0:
+        return total_pages_cap
+    if isinstance(total_pages_approx, int):
+        return total_pages_approx
+    return None
+
+
+def scrape_anmat(year, page_start=1, page_end=None, total_pages_cap=None):
     """
     Extrae PDFs de ANMAT para un año específico.
     
@@ -189,6 +199,8 @@ def scrape_anmat(year, page_start=1, page_end=None):
         year (int): Año a buscar
         page_start (int): Página de inicio (default: 1)
         page_end (int): Página final (None para sin límite)
+        total_pages_cap (int|None): Tope máximo de páginas (p. ej. desde Step Function).
+            Si se informa, acota has_more y evita seguir más allá aunque el sitio calcule otro total.
     """
     print(f"Iniciando scraping para el año {year}...")
     
@@ -291,11 +303,24 @@ def scrape_anmat(year, page_start=1, page_end=None):
         else:
             max_paginas = None  # Sin límite, procesar hasta la última página disponible
             print("Procesando hasta la última página disponible")
+
+        if isinstance(total_pages_cap, int) and total_pages_cap > 0:
+            if max_paginas is not None:
+                max_paginas = min(max_paginas, total_pages_cap)
+            print(f"Tope explícito total_pages (parámetro): {total_pages_cap}")
         
         pdf_links = set()
         pdf_links_dict = []
         page_num = page_start
         has_more = True
+
+        if isinstance(total_pages_cap, int) and total_pages_cap > 0 and page_start > total_pages_cap:
+            print(
+                f"page_start ({page_start}) supera total_pages ({total_pages_cap}); "
+                "no hay páginas que procesar."
+            )
+            browser.close()
+            return [], total_pages_approx, total_records, False
         
         # Navegar a la página de inicio si no es la primera
         if page_num > 1:
@@ -322,7 +347,16 @@ def scrape_anmat(year, page_start=1, page_end=None):
         while True:
             if max_paginas is not None and page_num > max_paginas:
                 print(f"Límite de {max_paginas} páginas alcanzado. Deteniendo scraping.")
-                has_more = max_paginas < total_pages_approx
+                ceiling = _pagination_ceiling(total_pages_cap, total_pages_approx)
+                has_more = ceiling is not None and max_paginas < ceiling
+                break
+
+            if (
+                isinstance(total_pages_cap, int)
+                and total_pages_cap > 0
+                and page_num > total_pages_cap
+            ):
+                has_more = False
                 break
                 
             print(f"Procesando página {page_num}...")
@@ -350,6 +384,11 @@ def scrape_anmat(year, page_start=1, page_end=None):
                     # Extraer fecha de la URL usando la función auxiliar
                     fecha_aviso = extraer_fecha_url(full_url, year, meses)
                     pdf_links_dict.append({"url": full_url, "date": fecha_aviso, "section": "default"})
+
+            ceiling = _pagination_ceiling(total_pages_cap, total_pages_approx)
+            if ceiling is not None and page_num >= ceiling:
+                has_more = False
+                break
                     
             # Buscamos el elemento span dentro del bloque de paginación que nos dice la pagina actual
             next_page_str = str(page_num + 1)
@@ -370,6 +409,8 @@ def scrape_anmat(year, page_start=1, page_end=None):
                     page_num += 1 
                 else:
                     # No hay ni mas números ni puntos suspensivos avanzando
+                    # Fin real de paginación: no quedan más páginas para este año.
+                    has_more = False
                     break
                 
         browser.close()
@@ -422,12 +463,23 @@ def handler(event, context):
         pe = _pick_param(event, body, "page_end", None)
         page_start = int(ps) if ps not in (None, "") else 1
         page_end = None if pe in (None, "") else int(pe)
+
+        ptp = _pick_param(event, body, "total_pages", None)
+        if ptp in (None, ""):
+            total_pages_cap = None
+        else:
+            try:
+                total_pages_cap = int(ptp)
+            except (TypeError, ValueError):
+                total_pages_cap = None
+        if total_pages_cap is not None and total_pages_cap <= 0:
+            total_pages_cap = None
         
         # Scraper: un reintento completo si Playwright sigue sin resolver (suele alinearse con
         # resolución intermitente en el mismo invocación, no solo "DNS secundario").
         try:
             links, total_pages, total_records, has_more = scrape_anmat(
-                year, page_start, page_end
+                year, page_start, page_end, total_pages_cap
             )
         except Exception as first:
             if "ERR_NAME_NOT_RESOLVED" not in str(first):
@@ -435,7 +487,7 @@ def handler(event, context):
             print("Reintento del scrape tras ERR_NAME_NOT_RESOLVED (espera 3s)...")
             time.sleep(3)
             links, total_pages, total_records, has_more = scrape_anmat(
-                year, page_start, page_end
+                year, page_start, page_end, total_pages_cap
             )
 
         return {
@@ -451,7 +503,8 @@ def handler(event, context):
                     'date': f"{year}0101",  # Formato YYYYMMDD (1/1/year)
                     'section': 'default',
                     'page_start': page_start,
-                    'page_end': page_end
+                    'page_end': page_end,
+                    'total_pages': total_pages_cap,
                 },
                 'total_records': total_records,
                 'total_pages_approx': total_pages,

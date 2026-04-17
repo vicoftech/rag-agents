@@ -20,6 +20,29 @@ BOLETIN_BASE_URL = os.getenv('BOLETIN_BASE_URL', 'https://www.boletinoficial.gob
 DEFAULT_SECTION = os.getenv('DEFAULT_SECTION', 'primera')
 REQUEST_TIMEOUT = int(os.getenv('REQUEST_TIMEOUT', '30'))
 
+
+def normalize_date_to_yyyymmdd(date_str: str | None) -> tuple[str | None, str | None]:
+    """
+    Devuelve (YYYYMMDD, None) o (None, mensaje de error).
+    Acepta YYYYMMDD o YYYY-MM-DD (como envía la Step Function / el invoker).
+    """
+    if not date_str:
+        yesterday = datetime.now() - timedelta(days=1)
+        return yesterday.strftime("%Y%m%d"), None
+    s = str(date_str).strip()
+    if len(s) == 8 and s.isdigit():
+        return s, None
+    if len(s) == 10 and s[4] == "-" and s[7] == "-":
+        try:
+            return datetime.strptime(s, "%Y-%m-%d").strftime("%Y%m%d"), None
+        except ValueError:
+            return None, f"Fecha inválida: {date_str!r}"
+    return None, (
+        f"Formato de fecha no soportado: {date_str!r}. "
+        "Usá YYYYMMDD o YYYY-MM-DD."
+    )
+
+
 # Headers para simular un navegador real
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
@@ -69,45 +92,56 @@ def get_pdf_links(target_date: str, seccion: str = 'primera'):
     base_pdf_url = "https://www.boletinoficial.gob.ar/pdf/aviso/"
     
     for link in links:
-        href = link['href']
-        if f'/detalleAviso/{seccion}/' in href:
-            parts = href.strip('/').split('/')
-            if len(parts) >= 4:
-                seccion = parts[1]
-                id_aviso = parts[2]
-                fecha_aviso = parts[3]
-                
-                pdf_url = f"{base_pdf_url}{seccion}/{id_aviso}/{fecha_aviso}"
-                if pdf_url not in pdf_links:
-                    # Verificar si el link realmente contiene un PDF con timeout reducido
+        href = link["href"]
+        if "/detalleAviso/" not in href:
+            continue
+        if f"/detalleAviso/{seccion}/" not in href and f"detalleAviso/{seccion}/" not in href:
+            continue
+        parts = [p for p in href.strip("/").split("/") if p]
+        try:
+            idx = parts.index("detalleAviso")
+        except ValueError:
+            continue
+        if len(parts) < idx + 4:
+            continue
+        sec_link = parts[idx + 1]
+        id_aviso = parts[idx + 2]
+        fecha_aviso = parts[idx + 3]
 
-                    try:
-                        response = requests.head(pdf_url, headers={
-                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                        }, timeout=3)  # Reducir timeout a 3 segundos
-                        
-                        # Verificar si el contenido es un PDF
-                        content_type = response.headers.get('content-type', '').lower()
-                        if 'application/pdf' in content_type:
-                            pdf_links.append(pdf_url)
-                            pdf_links_dict.append({"url": pdf_url, "section": seccion, "date": fecha_aviso})
-                            print(f"Added valid PDF: {pdf_url}")
-                        else:
-                            print(f"Skipping non-PDF link: {pdf_url} (Content-Type: {content_type})")
-                    except requests.RequestException as e:
-                        print(f"Error checking PDF link {pdf_url}: {e}")
-                        # Omitir el link si hay error al verificar
-                        continue
+        pdf_url = f"{base_pdf_url}{sec_link}/{id_aviso}/{fecha_aviso}"
+        if pdf_url not in pdf_links:
+            try:
+                response = requests.head(
+                    pdf_url,
+                    headers={
+                        "User-Agent": (
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                            "AppleWebKit/537.36"
+                        )
+                    },
+                    timeout=3,
+                )
+                content_type = response.headers.get("content-type", "").lower()
+                if "application/pdf" in content_type:
+                    pdf_links.append(pdf_url)
+                    pdf_links_dict.append(
+                        {"url": pdf_url, "section": sec_link, "date": fecha_aviso}
+                    )
+                    print(f"Added valid PDF: {pdf_url}")
+                else:
+                    print(
+                        f"Skipping non-PDF link: {pdf_url} "
+                        f"(Content-Type: {content_type})"
+                    )
+            except requests.RequestException as e:
+                print(f"Error checking PDF link {pdf_url}: {e}")
+                continue
 
     print(f"Found {len(pdf_links)} valid PDF links in section '{seccion}'")
     return pdf_links_dict
 
 def handler(event, context):
-    """
-    Lambda handler para rag_lmbd_bolinks
-    
-    TODO: Agregar aquí la lógica específica para procesar enlaces del Boletín Oficial
-    """
+    """Lambda handler: extrae enlaces PDF del Boletín Oficial por fecha y sección."""
     # CORS headers
     CORS_HEADERS = {
         "Access-Control-Allow-Origin": "*",
@@ -134,68 +168,74 @@ def handler(event, context):
             # Invocación directa
             body = event
         
-        # TODO: Implementar aquí la lógica específica de rag_lmbd_bolinks
-        # Por ahora, retornar una respuesta básica
-        date_str = body.get('date')
-        section = body.get('section', 'primera')
-        
-        # Si no se proporcionó fecha, usar la fecha anterior al día de hoy
-        if not date_str:
-            yesterday = datetime.now() - timedelta(days=1)
-            date_str = yesterday.strftime('%Y%m%d')
-            print(f"No date provided, using yesterday's date: {date_str}")
-        
-        # Validar formato de fecha y verificar si es fin de semana
-        if date_str and len(date_str) == 8 and date_str.isdigit():
-            try:
-                # Convertir YYYYMMDD a datetime
-                date_obj = datetime.strptime(date_str, '%Y%m%d')
-                
-                # Verificar si es sábado (5) o domingo (6)
-                if date_obj.weekday() in [5, 6]:  # 5 = sábado, 6 = domingo
-                    print(f"Date {date_str} is weekend ({date_obj.strftime('%A')}), returning empty PDF links")
-                    pdf_links = []
-                    result = {
-                        'success': True,
-                        'message': f'No PDF links available for weekend date: {date_str} ({date_obj.strftime("%A")})',
-                        'timestamp': datetime.now().isoformat(),
-                        'received_params': body,
-                        'pdf_links': pdf_links,
-                        'is_weekend': True,
-                        'day_of_week': date_obj.strftime('%A')
+        section = body.get("section", "primera")
+        date_raw = body.get("date")
+        date_str, date_err = normalize_date_to_yyyymmdd(date_raw)
+        if date_err:
+            return {
+                "statusCode": 400,
+                "headers": {"Content-Type": "application/json", **CORS_HEADERS},
+                "body": json.dumps(
+                    {
+                        "success": False,
+                        "message": date_err,
+                        "received_params": body,
+                        "pdf_links": [],
                     }
-                else:
-                    print(f"Date {date_str} is weekday ({date_obj.strftime('%A')}), proceeding with PDF extraction")
-                    pdf_links = get_pdf_links(date_str, section)
-                    result = {
-                        'success': True,
-                        'message': 'rag_lmbd_bolinks Lambda is ready for implementation',
-                        'timestamp': datetime.now().isoformat(),
-                        'received_params': body,
-                        'pdf_links': pdf_links,
-                        'is_weekend': False,
-                        'day_of_week': date_obj.strftime('%A')
+                ),
+            }
+
+        try:
+            date_obj = datetime.strptime(date_str, "%Y%m%d")
+        except ValueError as e:
+            return {
+                "statusCode": 400,
+                "headers": {"Content-Type": "application/json", **CORS_HEADERS},
+                "body": json.dumps(
+                    {
+                        "success": False,
+                        "message": f"Fecha inválida: {date_str}",
+                        "received_params": body,
+                        "pdf_links": [],
+                        "error": str(e),
                     }
-            except ValueError as e:
-                print(f"Invalid date format: {date_str}, error: {e}")
-                pdf_links = []
-                result = {
-                    'success': False,
-                    'message': f'Invalid date format: {date_str}. Expected format: YYYYMMDD',
-                    'timestamp': datetime.now().isoformat(),
-                    'received_params': body,
-                    'pdf_links': pdf_links,
-                    'error': str(e)
-                }
+                ),
+            }
+
+        if date_obj.weekday() in (5, 6):
+            print(
+                f"Date {date_str} is weekend ({date_obj.strftime('%A')}), "
+                "returning empty PDF links"
+            )
+            pdf_links = []
+            result = {
+                "success": True,
+                "message": (
+                    f"No hay boletín (fin de semana): {date_str} "
+                    f"({date_obj.strftime('%A')})"
+                ),
+                "timestamp": datetime.now().isoformat(),
+                "received_params": body,
+                "pdf_links": pdf_links,
+                "is_weekend": True,
+                "day_of_week": date_obj.strftime("%A"),
+                "date_normalized": date_str,
+            }
         else:
-            # Fecha no proporcionada o formato inválido, proceder con extracción normal
+            print(
+                f"Date {date_str} is weekday ({date_obj.strftime('%A')}), "
+                "extracting PDF links"
+            )
             pdf_links = get_pdf_links(date_str, section)
             result = {
-                'success': True,
-                'message': 'rag_lmbd_bolinks Lambda is ready for implementation',
-                'timestamp': datetime.now().isoformat(),
-                'received_params': body,
-                'pdf_links': pdf_links
+                "success": True,
+                "message": f"Extraídos {len(pdf_links)} enlaces PDF",
+                "timestamp": datetime.now().isoformat(),
+                "received_params": body,
+                "pdf_links": pdf_links,
+                "is_weekend": False,
+                "day_of_week": date_obj.strftime("%A"),
+                "date_normalized": date_str,
             }
         
         # Preparar respuesta

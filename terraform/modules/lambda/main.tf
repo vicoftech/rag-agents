@@ -102,8 +102,14 @@ resource "aws_security_group" "lambda" {
 # Lambda Function
 # ==============================================================================
 
+locals {
+  is_windows = can(regex("^[A-Za-z]:", abspath(path.root)))
+}
+
 # Build Lambda with dependencies if requirements.txt exists
-resource "null_resource" "build_lambda" {
+resource "null_resource" "build_lambda_unix" {
+  count = local.is_windows ? 0 : 1
+
   triggers = {
     requirements   = fileexists("${var.source_path}/requirements.txt") ? filemd5("${var.source_path}/requirements.txt") : "no-requirements"
     source_hash    = sha256(join("", [for f in fileset(var.source_path, "**/*.py") : filesha256("${var.source_path}/${f}")]))
@@ -140,12 +146,51 @@ resource "null_resource" "build_lambda" {
   }
 }
 
+resource "null_resource" "build_lambda_windows" {
+  count = local.is_windows ? 1 : 0
+
+  triggers = {
+    requirements   = fileexists("${var.source_path}/requirements.txt") ? filemd5("${var.source_path}/requirements.txt") : "no-requirements"
+    source_hash    = sha256(join("", [for f in fileset(var.source_path, "**/*.py") : filesha256("${var.source_path}/${f}")]))
+    build_platform = "manylinux2014_x86_64"
+    build_version  = "11"
+  }
+
+  provisioner "local-exec" {
+    interpreter = ["PowerShell", "-Command"]
+    command     = <<-EOT
+      $ErrorActionPreference = 'Stop'
+      $buildDir = "${path.module}/.builds/${var.function_name}"
+      $sourceDir = "${var.source_path}"
+      if (Test-Path $buildDir) { Remove-Item -Recurse -Force $buildDir }
+      New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
+      $requirements = Join-Path $sourceDir "requirements.txt"
+      if (Test-Path $requirements) {
+        Write-Host "Installing Python dependencies for Linux/Lambda..."
+        $py = if (Get-Command python3 -ErrorAction SilentlyContinue) { "python3" } else { "python" }
+        & $py -m pip install -r $requirements -t $buildDir --platform manylinux2014_x86_64 --implementation cp --python-version 3.12 --abi cp312 --only-binary=:all: --upgrade --quiet
+      }
+      Get-ChildItem -Path $sourceDir -Filter *.py -File | ForEach-Object {
+        Copy-Item $_.FullName -Destination $buildDir -Force
+      }
+      $libDir = Join-Path $sourceDir "lib"
+      if (Test-Path $libDir) {
+        $targetLibDir = Join-Path $buildDir "lib"
+        New-Item -ItemType Directory -Force -Path $targetLibDir | Out-Null
+        Get-ChildItem -Path $libDir -Filter *.py -File | ForEach-Object {
+          Copy-Item $_.FullName -Destination $targetLibDir -Force
+        }
+      }
+    EOT
+  }
+}
+
 data "archive_file" "lambda" {
   type        = "zip"
   source_dir  = "${path.module}/.builds/${var.function_name}"
   output_path = "${path.module}/.builds/${var.function_name}.zip"
 
-  depends_on = [null_resource.build_lambda]
+  depends_on = [null_resource.build_lambda_unix, null_resource.build_lambda_windows]
 }
 
 # Upload to S3 if enabled

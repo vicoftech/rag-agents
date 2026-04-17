@@ -64,7 +64,7 @@ def create_document_item(s3writer_output: Dict, file_info: Dict) -> Dict:
         'site_id': s3writer_output.get('site_id', ''),
         'date': s3writer_output.get('date', ''),
         'filename': file_info.get('filename', ''),
-        'original_url': file_info.get('original_url', ''),
+        'original_url': file_info.get('original_url') or file_info.get('url', ''),
         's3_key': file_info.get('s3_key', ''),
         's3_uri': file_info.get('s3_uri', ''),
         'file_size': file_info.get('size', 0),
@@ -153,6 +153,15 @@ def process_s3writer_output(s3writer_output: Dict) -> Dict:
     Procesa el output del s3writer y guarda en DynamoDB
     """
     try:
+        s3writer_output = dict(s3writer_output)
+        if not str(s3writer_output.get('date', '') or '').strip():
+            for f in s3writer_output.get('uploaded_files') or []:
+                meta = f.get('metadata') or {}
+                d = meta.get('date')
+                if d:
+                    s3writer_output['date'] = str(d)
+                    break
+
         # Validar que el s3writer tuvo éxito
         if not s3writer_output.get('success', False):
             return {
