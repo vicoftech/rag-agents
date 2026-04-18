@@ -25,8 +25,8 @@ STEP_FUNCTION_ARN = (
 TENANT_ID = "boletin"
 AGENT_ID = "7c9aa113-ecf2-4449-a955-d91c76e7ee27"
 
-START_DATE = datetime(2025, 12, 31)
-END_DATE = datetime(2025, 12, 1)
+START_DATE = datetime(2025, 11, 30)
+END_DATE = datetime(2025, 11, 1)
 
 SECTIONS = ["primera", "segunda", "tercera", "cuarta"]
 

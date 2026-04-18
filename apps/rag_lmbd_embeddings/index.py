@@ -13,6 +13,7 @@ import numpy as np
 from urllib.parse import unquote_plus
 
 from lib.bedrock_embeddings import parse_embedding_vector, parse_embedding_vectors
+from s3_rag_key import parse_s3_rag_key
 
 # AWS Session Setup (for local testing)
 AWS_REGION = os.getenv('AWS_REGION', 'us-east-1')
@@ -55,116 +56,6 @@ def _cohere_embed_extras():
         return {"truncate": COHERE_TRUNCATE, "embedding_types": ["float"]}
     return {}
 
-
-UUID_RE = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-    re.IGNORECASE,
-)
-# Carpeta de fecha YYYYMMDD bajo el prefijo S3 (formato legado sin /documents/).
-DATE8_RE = re.compile(r"^\d{8}$")
-SCHEMA_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]{0,62}$")
-
-
-def assert_valid_schema_name(name: str) -> None:
-    if not name or not SCHEMA_NAME_RE.match(name):
-        raise ValueError(f"Nombre de esquema tenant inválido: {name!r}")
-
-
-def _schema_for_s3_prefix(prefix: str) -> str:
-    """Resuelve prefijo S3 → nombre de esquema PostgreSQL (env RAG_S3_PREFIX_SCHEMA_MAP JSON)."""
-    raw = os.getenv("RAG_S3_PREFIX_SCHEMA_MAP", "").strip()
-    if raw:
-        try:
-            m = json.loads(raw)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"RAG_S3_PREFIX_SCHEMA_MAP no es JSON válido: {e}") from e
-        if not isinstance(m, dict):
-            raise ValueError("RAG_S3_PREFIX_SCHEMA_MAP debe ser un objeto JSON")
-        mapped = m.get(prefix)
-        if mapped:
-            assert_valid_schema_name(mapped)
-            return mapped
-    if prefix.startswith("tenant_"):
-        assert_valid_schema_name(prefix)
-        return prefix
-    raise ValueError(
-        f"Key S3: prefijo {prefix!r} sin mapeo. Defina RAG_S3_PREFIX_SCHEMA_MAP "
-        '(JSON, ej. {"boletin_oficial":"tenant_boletin"}) o use esquema tenant_* en S3.'
-    )
-
-
-def parse_s3_rag_key(key: str) -> tuple:
-    """
-    Formato canónico (recomendado):
-
-        {tenant_id_o_schema}/{agent_uuid}/documents/[<fecha>/[<carpeta>/]]<archivo>
-
-    El primer segmento puede ser el slug de API (``anmat``, ``boletin``) o ya
-    ``tenant_*``; en ambos casos el esquema Postgres se normaliza como en la
-    Lambda ``rag_lmbd_query`` (p. ej. ``anmat`` → ``tenant_anmat``).
-
-    Ejemplos:
-        anmat/<uuid>/documents/20250101/default/aviso_....pdf
-        tenant_boletin/<uuid>/documents/informe.pdf
-        tenant_boletin/<uuid>/documents/20260310/primera/aviso_....pdf
-
-    Formato legado (cargas tipo boletín; requiere env):
-
-        {prefijo}/{YYYYMMDD}/[<carpeta>/]<archivo>
-
-    Requiere ``RAG_S3_DEFAULT_AGENT_ID`` (UUID) y, si ``prefijo`` no es ``tenant_*``,
-    ``RAG_S3_PREFIX_SCHEMA_MAP`` JSON, p. ej. ``{{\"boletin_oficial\":\"tenant_boletin\"}}``.
-
-    Retorno: (tenant_schema, agent_id, document_name relativo para deduplicar en BD).
-    """
-    parts = [p for p in key.split("/") if p]
-
-    # --- Canónico: .../<uuid>/documents/.../archivo ---
-    if (
-        len(parts) >= 4
-        and parts[2] == "documents"
-        and UUID_RE.match(parts[1])
-    ):
-        # Alinear con rag_lmbd_query (resolve_schema_name): el key S3 usa el tenant_id de API
-        # (p. ej. anmat, boletin) pero Postgres usa tenant_anmat / tenant_boletin.
-        raw_tenant = parts[0].strip()
-        if raw_tenant.startswith("tenant_"):
-            tenant_schema = raw_tenant
-        else:
-            tenant_schema = f"tenant_{raw_tenant}"
-        agent_id = parts[1]
-        assert_valid_schema_name(tenant_schema)
-        under_documents = parts[3:]
-        if not under_documents:
-            raise ValueError("Key S3 inválida: falta ruta bajo documents/ (al menos el archivo)")
-        basename = under_documents[-1]
-        if not basename or basename.endswith("/"):
-            raise ValueError("Key S3 inválida: falta nombre de archivo (último segmento)")
-        document_name = "/".join(under_documents)
-        return tenant_schema, agent_id, document_name
-
-    # --- Legado: prefijo/YYYYMMDD/.../archivo ---
-    if len(parts) >= 3 and DATE8_RE.match(parts[1]):
-        tenant_schema = _schema_for_s3_prefix(parts[0])
-        agent_id = os.getenv("RAG_S3_DEFAULT_AGENT_ID", "").strip()
-        if not agent_id or not UUID_RE.match(agent_id):
-            raise ValueError(
-                "Key S3 en formato legado (prefijo/YYYYMMDD/...): defina la variable de entorno "
-                "RAG_S3_DEFAULT_AGENT_ID con el UUID del agente Bedrock/RAG."
-            )
-        under = parts[2:]
-        basename = under[-1]
-        if not basename or basename.endswith("/"):
-            raise ValueError("Key S3 inválida: falta nombre de archivo (último segmento)")
-        document_name = "/".join(under)
-        return tenant_schema, agent_id, document_name
-
-    raise ValueError(
-        "Key S3 inválida: use "
-        "{tenant_schema}/{agent_uuid}/documents/<archivo> "
-        "o {prefijo}/{YYYYMMDD}/[<carpetas>/]<archivo> con RAG_S3_DEFAULT_AGENT_ID "
-        "(y RAG_S3_PREFIX_SCHEMA_MAP si hace falta)."
-    )
 
 def get_connection():
     return psycopg2.connect(
@@ -745,10 +636,12 @@ def handler(event, context):
     print(f"[INFO] Key decoded: {key}")
 
     try:
-        tenant_id, agent_id, document_name = parse_s3_rag_key(key)
+        tenant_id, agent_id, document_name, created_at_partition = parse_s3_rag_key(key)
     except ValueError as e:
         print(f"[ERROR] {e}")
         return {"statusCode": 400, "body": json.dumps({"error": str(e)})}
+
+    print(f"[INFO] created_at desde partición S3: {created_at_partition or 'NOW() (sin YYYYMMDD en ruta)'}")
 
     document_id = str(uuid.uuid4())
 
@@ -794,11 +687,19 @@ def handler(event, context):
                 document_id,
                 document_name,
                 chunk_text,
-                embedding
+                embedding,
+                created_at
             )
-            VALUES (%s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, COALESCE(%s::timestamp, NOW()))
             """,
-            (agent_id, document_id, document_name, chunk, to_pgvector(embedding)),
+            (
+                agent_id,
+                document_id,
+                document_name,
+                chunk,
+                to_pgvector(embedding),
+                created_at_partition,
+            ),
         )
 
     conn.commit()
