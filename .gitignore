@@ -1,10 +1,16 @@
 /venv
+scripts/venv
 **.terraform*
 .env
 .vscode
 **dist
 **__pycache__
 postman/rag_environment.json
+terraform/**/tfplan*
+terraform/**/.last-apply*.log
+**/.DS_Store
+# Credenciales / overrides locales
+terraform/environments/prod.tfvars
 
 # Terraform state and local plugins (never commit)
 *.tfstate

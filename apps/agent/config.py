@@ -37,7 +37,7 @@ Puede responder preguntas basándose en documentos indexados por tenant y agente
 """
 
 # Lambda Configuration
-LAMBDA_EMBEDDINGS = os.getenv("LAMBDA_EMBEDDINGS", "rag_lmbd_embeddings")
+LAMBDA_EMBEDDINGS = os.getenv("LAMBDA_EMBEDDINGS", "rag_lmbd_embeddings-async")
 LAMBDA_QUERY = os.getenv("LAMBDA_QUERY", "rag_lmbd_query")
 
 # MCP Server Configuration

@@ -4,10 +4,19 @@
 
 set -e
 
+# $1: carpeta bajo apps/ (código), p. ej. rag_lmbd_embeddings
 LAMBDA_NAME="${1:-rag_lmbd_embeddings}"
 ENV="${2:-dev}"
 PROFILE="${3:-asap_main}"
 REGION="${4:-us-east-1}"
+# Nombre de la Lambda en AWS (sin -env). Por defecto rag_lmbd_embeddings-async para el código de embeddings.
+if [ -n "${LAMBDA_FUNCTION_BASE:-}" ]; then
+  :
+elif [ "$LAMBDA_NAME" = "rag_lmbd_embeddings" ]; then
+  LAMBDA_FUNCTION_BASE="rag_lmbd_embeddings-async"
+else
+  LAMBDA_FUNCTION_BASE="$LAMBDA_NAME"
+fi
 
 # Obtener el Account ID para construir el nombre del bucket
 ACCOUNT_ID=$(aws sts get-caller-identity --profile "${PROFILE}" --query Account --output text)
@@ -20,7 +29,7 @@ BUILD_DIR="/tmp/${LAMBDA_NAME}-build"
 ZIP_FILE="/tmp/${LAMBDA_NAME}.zip"
 
 echo "============================================================"
-echo "🚀 Deploying Lambda: ${LAMBDA_NAME}-${ENV}"
+echo "🚀 Deploying Lambda: ${LAMBDA_FUNCTION_BASE}-${ENV} (código: apps/${LAMBDA_NAME})"
 echo "============================================================"
 echo "Region:  ${REGION}"
 echo "Profile: ${PROFILE}"
@@ -109,7 +118,7 @@ if [ "${ZIP_SIZE_BYTES}" -gt "${MAX_DIRECT_SIZE}" ]; then
     
     echo "🔄 Actualizando función Lambda desde S3..."
     aws lambda update-function-code \
-        --function-name "${LAMBDA_NAME}-${ENV}" \
+        --function-name "${LAMBDA_FUNCTION_BASE}-${ENV}" \
         --s3-bucket "${S3_BUCKET}" \
         --s3-key "${S3_KEY}" \
         --profile "${PROFILE}" \
@@ -122,7 +131,7 @@ if [ "${ZIP_SIZE_BYTES}" -gt "${MAX_DIRECT_SIZE}" ]; then
 else
     echo "🔄 Actualizando función Lambda directamente..."
     aws lambda update-function-code \
-        --function-name "${LAMBDA_NAME}-${ENV}" \
+        --function-name "${LAMBDA_FUNCTION_BASE}-${ENV}" \
         --zip-file "fileb://${ZIP_FILE}" \
         --profile "${PROFILE}" \
         --region "${REGION}"
@@ -135,12 +144,12 @@ rm -f "${ZIP_FILE}"
 
 echo ""
 echo "============================================================"
-echo "✅ Deploy completado: ${LAMBDA_NAME}-${ENV}"
+echo "✅ Deploy completado: ${LAMBDA_FUNCTION_BASE}-${ENV}"
 echo "============================================================"
 
 # Mostrar info de la función
 aws lambda get-function \
-    --function-name "${LAMBDA_NAME}-${ENV}" \
+    --function-name "${LAMBDA_FUNCTION_BASE}-${ENV}" \
     --profile "${PROFILE}" \
     --region "${REGION}" \
     --query 'Configuration.{LastModified:LastModified,CodeSize:CodeSize,MemorySize:MemorySize,Timeout:Timeout}' \

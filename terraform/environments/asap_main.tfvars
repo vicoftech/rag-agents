@@ -36,8 +36,8 @@ lambda_embeddings_config = {
 lambda_embeddings_env_vars = {
   EMBEDDINGS_MODEL = "cohere.embed-v4:0"
   # Claves S3 tipo boletin_oficial/YYYYMMDD/.../archivo.pdf (sin /documents/<uuid>/)
-  RAG_S3_DEFAULT_AGENT_ID   = "25abefca-8e5c-4c6e-973d-2fad3af8b469"
-  RAG_S3_PREFIX_SCHEMA_MAP  = "{\"boletin_oficial\":\"tenant_boletin\"}"
+  RAG_S3_DEFAULT_AGENT_ID  = "25abefca-8e5c-4c6e-973d-2fad3af8b469"
+  RAG_S3_PREFIX_SCHEMA_MAP = "{\"boletin_oficial\":\"tenant_boletin\"}"
   # Agrega más variables de entorno aquí según necesites
   # LOG_LEVEL = "INFO"
   DB_NAME               = "postgres"

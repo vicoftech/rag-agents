@@ -4,27 +4,32 @@
 
 output "aurora_cluster_endpoint" {
   description = "Hostname writer (lectura/escritura). En Aurora, cluster.endpoint ES el host writer (-h en psql)."
-  value       = module.aurora.cluster_endpoint
+  value       = var.create_aurora_cluster ? module.aurora[0].cluster_endpoint : var.existing_db_host
 }
 
 output "aurora_writer_host" {
   description = "Igual que aurora_cluster_endpoint (writer)."
-  value       = module.aurora.writer_endpoint
+  value       = var.create_aurora_cluster ? module.aurora[0].writer_endpoint : var.existing_db_host
 }
 
 output "aurora_reader_endpoint" {
   description = "Hostname reader (solo lectura)."
-  value       = module.aurora.reader_endpoint
+  value       = var.create_aurora_cluster ? module.aurora[0].reader_endpoint : null
 }
 
 output "aurora_reader_host" {
   description = "Alias de aurora_reader_endpoint."
-  value       = module.aurora.reader_endpoint
+  value       = var.create_aurora_cluster ? module.aurora[0].reader_endpoint : null
 }
 
 output "aurora_security_group_id" {
   description = "Aurora security group ID"
-  value       = module.aurora.security_group_id
+  value       = var.create_aurora_cluster ? module.aurora[0].security_group_id : var.existing_db_security_group_id
+}
+
+output "rag_lambda_security_group_id" {
+  description = "Security group for VPC Lambdas (embeddings, query, agent): egress a S3/APIs; no usar el SG de RDS en Lambdas"
+  value       = aws_security_group.rag_lambda.id
 }
 
 # ==============================================================================
@@ -46,13 +51,13 @@ output "s3_documents_bucket_arn" {
 # ==============================================================================
 
 output "lambda_embeddings_function_name" {
-  description = "Embeddings Lambda function name"
-  value       = module.lambda_embeddings.function_name
+  description = "Embeddings Lambda function name (rag_lmbd_embeddings-async)"
+  value       = module.lambda_embeddings_async.function_name
 }
 
 output "lambda_embeddings_arn" {
   description = "Embeddings Lambda ARN"
-  value       = module.lambda_embeddings.function_arn
+  value       = module.lambda_embeddings_async.function_arn
 }
 
 output "lambda_query_function_name" {

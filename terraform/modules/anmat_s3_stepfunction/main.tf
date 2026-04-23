@@ -29,10 +29,7 @@ resource "aws_iam_role_policy" "sfn" {
         Action = [
           "lambda:InvokeFunction"
         ]
-        Resource = [
-          var.anmat_function_arn,
-          var.anmat_reset_function_arn
-        ]
+        Resource = var.anmat_function_arn
       },
       {
         Effect = "Allow"
@@ -52,57 +49,17 @@ resource "aws_sfn_state_machine" "anmat_to_s3" {
 
   definition = jsonencode({
     Comment = "ANMAT: anmatlinks → Map(pdf_links) → 1 mensaje SQS por PDF → s3writer"
-    StartAt = "EnsureTotalPagesParam"
+    StartAt = "RunAnmatlinks"
     States = {
-      EnsureTotalPagesParam = {
-        Type = "Choice"
-        Choices = [
-          {
-            Variable     = "$.total_pages"
-            IsPresent    = true
-            Next         = "ResetAnmatlinksIfNeeded"
-          }
-        ]
-        Default = "DefaultTotalPagesNull"
-      }
-      DefaultTotalPagesNull = {
-        Type = "Pass"
-        Parameters = {
-          "year.$"            = "$.year"
-          "page_start.$"      = "$.page_start"
-          "page_end.$"        = "$.page_end"
-          "agent_id.$"        = "$.agent_id"
-          "tenant_id.$"       = "$.tenant_id"
-          "pagesSinceReset.$" = "$.pagesSinceReset"
-          "total_pages"       = null
-        }
-        Next = "ResetAnmatlinksIfNeeded"
-      }
-      ResetAnmatlinksIfNeeded = {
-        Type     = "Task"
-        Resource = "arn:aws:states:::lambda:invoke"
-        Parameters = {
-          FunctionName = var.anmat_reset_function_arn
-          Payload = {
-            "pagesSinceReset.$"    = "$.pagesSinceReset"
-            "maxPagesBeforeReset"  = 3
-          }
-        }
-        ResultPath = "$.reset"
-        Next       = "RunAnmatlinks"
-      }
       RunAnmatlinks = {
         Type     = "Task"
         Resource = "arn:aws:states:::lambda:invoke"
         Parameters = {
           FunctionName = var.anmat_function_arn
           Payload = {
-            "year.$"        = "$.year"
-            "page_start.$"  = "$.page_start"
-            "page_end.$"    = "$.page_end"
-            "total_pages.$" = "$.total_pages"
-            "agent_id.$"    = "$.agent_id"
-            "tenant_id.$"   = "$.tenant_id"
+            "year.$"       = "$.year"
+            "page_start.$" = "$.page_start"
+            "page_end.$"   = "$.page_end"
           }
         }
         ResultPath = "$.anmatInvoke"
@@ -152,12 +109,11 @@ resource "aws_sfn_state_machine" "anmat_to_s3" {
       BuildCtxForFanOut = {
         Type = "Pass"
         Parameters = {
-          "tenant_id.$"        = "$.tenant_id"
-          "agent_id.$"         = "$.agent_id"
-          "year.$"             = "$.year"
-          "pdf_links.$"        = "$.anmatResponse.data.pdf_links"
-          "pdfs_collected.$"   = "$.anmatResponse.data.pdfs_collected"
-          "pagesSinceReset.$"  = "$.reset.Payload.pagesSinceReset"
+          "tenant_id.$"      = "$.tenant_id"
+          "agent_id.$"       = "$.agent_id"
+          "year.$"           = "$.year"
+          "pdf_links.$"      = "$.anmatResponse.data.pdf_links"
+          "pdfs_collected.$" = "$.anmatResponse.data.pdfs_collected"
         }
         ResultPath = "$.ctx"
         Next       = "HasPdfs"
@@ -166,9 +122,9 @@ resource "aws_sfn_state_machine" "anmat_to_s3" {
         Type = "Choice"
         Choices = [
           {
-            Variable             = "$.ctx.pdfs_collected"
-            NumericGreaterThan   = 0
-            Next                 = "FanOutPdfs"
+            Variable           = "$.ctx.pdfs_collected"
+            NumericGreaterThan = 0
+            Next               = "FanOutPdfs"
           }
         ]
         Default = "NoPdfsDone"
@@ -180,8 +136,8 @@ resource "aws_sfn_state_machine" "anmat_to_s3" {
         ItemSelector = {
           "tenant_id.$" = "$.ctx.tenant_id"
           "agent_id.$"  = "$.ctx.agent_id"
-          "pdf.$"        = "$$.Map.Item.Value"
-          "mode"         = "single_pdf"
+          "pdf.$"       = "$$.Map.Item.Value"
+          "mode"        = "single_pdf"
         }
         Iterator = {
           StartAt = "SendPdfToQueue"
@@ -190,7 +146,7 @@ resource "aws_sfn_state_machine" "anmat_to_s3" {
               Type     = "Task"
               Resource = "arn:aws:states:::sqs:sendMessage"
               Parameters = {
-                QueueUrl       = var.alert_queue_url
+                QueueUrl        = var.alert_queue_url
                 "MessageBody.$" = "States.JsonToString($)"
               }
               End = true

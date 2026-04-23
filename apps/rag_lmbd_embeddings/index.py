@@ -34,13 +34,16 @@ s3 = boto3.client('s3', endpoint_url=endpoint_url, **session_args)
 
 bedrock = boto3.client("bedrock-runtime", **session_args)
 textract = boto3.client('textract',  **session_args)
+secretsmanager = boto3.client("secretsmanager", **session_args)
 
 # 🔐 Se deben pasar estas variables al Lambda (ENV VARS)
-DB_NAME = os.getenv("DB_NAME","postgres")
-DB_USER = os.getenv("DB_USER","postgres")
-DB_PASSWORD = os.getenv("DB_PASSWORD","postgres")
-DB_HOST = os.getenv("DB_HOST","localhost")
+DB_NAME = os.getenv("DB_NAME", "postgres")
+DB_USER = os.getenv("DB_USER", "postgres")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres")
+DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = os.getenv("DB_PORT", "5432")
+DB_SECRET_ID = os.getenv("DB_SECRET_ID", "")
+_DB_SECRET_CACHE = None
 #EMBEDDINGS_MODEL = os.getenv("EMBEDDINGS_MODEL", "amazon.titan-embed-text-v2:0")
 EMBEDDINGS_MODEL = os.getenv("EMBEDDINGS_MODEL", "cohere.embed-v4:0")
 # Truncado en el modelo Cohere (Bedrock); alineado con chunks por caracteres.
@@ -57,11 +60,30 @@ def _cohere_embed_extras():
     return {}
 
 
+def _resolve_db_credentials():
+    global _DB_SECRET_CACHE
+    if DB_SECRET_ID:
+        if _DB_SECRET_CACHE is None:
+            resp = secretsmanager.get_secret_value(SecretId=DB_SECRET_ID)
+            raw = resp.get("SecretString", "{}")
+            payload = json.loads(raw)
+            user = payload.get("username") or payload.get("user")
+            password = payload.get("password") or payload.get("pass")
+            if not user or not password:
+                raise ValueError("Secret must include username/user and password/pass")
+            _DB_SECRET_CACHE = (user, password)
+        return _DB_SECRET_CACHE
+    if not (DB_PASSWORD or "").strip():
+        raise ValueError("DB_PASSWORD vacío: defina master_password o DB_SECRET_ID")
+    return DB_USER, DB_PASSWORD
+
+
 def get_connection():
+    user, password = _resolve_db_credentials()
     return psycopg2.connect(
         dbname=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD,
+        user=user,
+        password=password,
         host=DB_HOST,
         port=DB_PORT,
     )
@@ -595,9 +617,45 @@ def generate_semantic_chunks(bucket, key, local_path=None):
 def to_pgvector(vec):
     return "[" + ",".join(str(x) for x in vec) + "]"
 
+
+def _unwrap_sqs_to_s3_event(event: dict) -> dict:
+    """
+    Evento SQS estándar: Records[].body = JSON con {"Records": [ <evento S3> ]}
+    (enviado por rag_lmbd_embeddings_enqueue).
+    """
+    merged: list = []
+    for r in event.get("Records", []):
+        if r.get("eventSource") != "aws:sqs":
+            continue
+        body = r.get("body", "")
+        try:
+            inner = json.loads(body)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"body SQS no es JSON válido: {e}") from e
+        if isinstance(inner, dict) and "Records" in inner:
+            merged.extend(inner["Records"])
+        elif isinstance(inner, dict) and inner.get("s3"):
+            merged.append(inner)
+    if not merged:
+        raise ValueError("SQS: body sin records S3")
+    return {"Records": merged}
+
+
 def handler(event, context):
     print(f"Event received: {event}")
     start_time = time.time()
+
+    from_sqs = bool(
+        event.get("Records")
+        and event["Records"]
+        and event["Records"][0].get("eventSource") == "aws:sqs"
+    )
+    if from_sqs:
+        try:
+            event = _unwrap_sqs_to_s3_event(event)
+        except Exception as e:
+            print(f"[ERROR] desenrollar SQS: {e}")
+            raise
 
     # Invocación directa (agente): payload con "text"; opcional "input_type" (default search_document).
     if not event.get("Records"):
@@ -651,6 +709,8 @@ def handler(event, context):
         print("HEAD OK")
     except ClientError as e:
         print("HEAD ERROR:", e.response)
+        if from_sqs:
+            raise
         return {"statusCode": 500, "body": json.dumps({"error": "No se pudo descargar el PDF"})}
 
     chunks = generate_semantic_chunks(bucket, key, local_path)

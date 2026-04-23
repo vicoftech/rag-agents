@@ -1,7 +1,7 @@
 terraform {
   required_providers {
     aws = {
-      source  = "hashicorp/aws"
+      source = "hashicorp/aws"
       # El estado remoto (p. ej. QA) puede exigir un 6.x más reciente que el lock viejo (6.28);
       # subir el mínimo y ejecutar: terraform init -upgrade
       version = ">= 6.35.0"
@@ -60,7 +60,8 @@ provider "random" {}
 provider "time" {}
 
 locals {
-  env = terraform.workspace
+  env             = terraform.workspace
+  use_existing_db = var.create_aurora_cluster == false
 
   common_tags = {
     Environment = var.environment
@@ -69,25 +70,32 @@ locals {
   }
 
   # Lambda source paths (relative to terraform directory)
-  lambda_embeddings_path   = "${path.module}/../apps/rag_lmbd_embeddings"
-  lambda_query_path        = "${path.module}/../apps/rag_lmbd_query"
-  lambda_fetcher_path      = "${path.module}/../apps/rag_lmbd_fetcher"
-  lambda_bolinks_path      = "${path.module}/../apps/rag_lmbd_bolinks"
-  lambda_anmatlinks_path   = "${path.module}/../apps/rag_lmbd_anmatlinks"
-  lambda_parser_path       = "${path.module}/../apps/rag_lmbd_parser"
-  lambda_s3writer_path     = "${path.module}/../apps/rag_lmbd_s3writer"
-  lambda_dbwriter_path     = "${path.module}/../apps/rag_lmbd_dbwriter"
-  lambda_notifier_path     = "${path.module}/../apps/rag_lmbd_notifier"
-  lambda_stepfunction_path = "${path.module}/../apps/rag_lmbd_stepfunction"
-  lambda_agent_path        = "${path.module}/../apps/agent"
+  lambda_embeddings_path         = "${path.module}/../apps/rag_lmbd_embeddings"
+  lambda_embeddings_enqueue_path = "${path.module}/../apps/rag_lmbd_embeddings_enqueue"
+  lambda_query_path              = "${path.module}/../apps/rag_lmbd_query"
+  lambda_fetcher_path            = "${path.module}/../apps/rag_lmbd_fetcher"
+  lambda_bolinks_path            = "${path.module}/../apps/rag_lmbd_bolinks"
+  lambda_anmatlinks_path         = "${path.module}/../apps/rag_lmbd_anmatlinks"
+  lambda_parser_path             = "${path.module}/../apps/rag_lmbd_parser"
+  lambda_s3writer_path           = "${path.module}/../apps/rag_lmbd_s3writer"
+  lambda_dbwriter_path           = "${path.module}/../apps/rag_lmbd_dbwriter"
+  lambda_notifier_path           = "${path.module}/../apps/rag_lmbd_notifier"
+  lambda_stepfunction_path       = "${path.module}/../apps/rag_lmbd_stepfunction"
+  lambda_agent_path              = "${path.module}/../apps/agent"
 
   # Base environment variables (computed from other resources)
+  db_host              = local.use_existing_db ? var.existing_db_host : module.aurora[0].cluster_endpoint
+  db_port              = local.use_existing_db ? tostring(var.existing_db_port) : "5432"
+  db_name              = local.use_existing_db ? var.existing_db_name : "ragdb_${var.environment}"
+  db_security_group_id = local.use_existing_db ? var.existing_db_security_group_id : module.aurora[0].security_group_id
+
   base_db_env_vars = {
-    DB_HOST     = module.aurora.cluster_endpoint
-    DB_PORT     = "5432"
-    DB_NAME     = "ragdb_${var.environment}"
-    DB_USER     = var.master_username
-    DB_PASSWORD = var.master_password
+    DB_HOST      = local.db_host
+    DB_PORT      = local.db_port
+    DB_NAME      = local.db_name
+    DB_USER      = var.master_username
+    DB_PASSWORD  = var.master_password
+    DB_SECRET_ID = var.db_secret_id
   }
 
   # Merged environment variables for each lambda
@@ -125,6 +133,16 @@ locals {
       resources = ["*"]
     },
   ]
+
+  lambda_db_secret_policy = var.db_secret_id != "" ? [
+    {
+      effect = "Allow"
+      actions = [
+        "secretsmanager:GetSecretValue",
+      ]
+      resources = [var.db_secret_id]
+    }
+  ] : []
 }
 
 # ==============================================================================
@@ -142,6 +160,7 @@ module "s3_documents" {
   source = "./modules/s3_documents"
 
   bucket_name          = "rag-documents-${var.environment}-${data.aws_caller_identity.current.account_id}"
+  force_destroy        = var.s3_bucket_force_destroy
   enable_lifecycle     = true
   enable_cors          = var.enable_s3_cors
   cors_allowed_origins = var.cors_allowed_origins
@@ -198,6 +217,17 @@ resource "aws_vpc_endpoint" "s3" {
   })
 }
 
+# Si el Gateway VPCE S3 ya existe en la VPC (create_vpc_endpoint_s3=false), asociar las tablas de
+# rutas de var.subnets al endpoint cuando falte alguna (p. ej. subnet nueva sin ruta al prefijo S3).
+module "s3_vpce_subnet_route_table_associations" {
+  count  = var.create_vpc_endpoint_s3 ? 0 : 1
+  source = "./modules/s3_vpce_route_table_associations"
+
+  vpc_id     = var.vpc_id
+  aws_region = var.aws_region
+  subnet_ids = var.subnets
+}
+
 # Security Group para VPC Endpoints de tipo Interface (Bedrock)
 resource "aws_security_group" "vpc_endpoints" {
   count       = var.create_vpc_endpoint_bedrock ? 1 : 0
@@ -240,11 +270,98 @@ resource "aws_vpc_endpoint" "bedrock" {
   })
 }
 
+# Security group dedicado para Lambdas en VPC (S3/Bedrock/Secrets/Textract/etc.).
+# No reutilizar el SG de Aurora en las Lambdas: suele carecer de egress y rompe GetObject a S3.
+resource "aws_security_group" "rag_lambda" {
+  name        = "rag-lambda-${var.environment}-sg"
+  description = "RAG Lambdas en VPC: egress a APIs AWS (S3 gateway, Bedrock, Secrets, Textract)"
+  vpc_id      = var.vpc_id
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "Egreso a Internet / endpoints (HTTPS)"
+  }
+
+  tags = merge(local.common_tags, {
+    Name = "rag-lambda-${var.environment}-sg"
+  })
+}
+
+# Secrets Manager + Textract: APIs regionales por HTTPS; sin NAT solo alcanzables vía Interface VPCE
+# (la Lambda cuelga al leer el secreto de DB o al usar Textract en PDFs grandes).
+resource "aws_security_group" "rag_interface_endpoints" {
+  count       = var.create_vpc_endpoint_secrets_textract ? 1 : 0
+  name        = "rag-vpce-if-${var.environment}-sg"
+  description = "HTTPS 443 desde Lambdas RAG hacia Interface VPC endpoints (Secrets, Textract)"
+  vpc_id      = var.vpc_id
+
+  ingress {
+    description     = "HTTPS desde Lambdas RAG"
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
+    security_groups = [aws_security_group.rag_lambda.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "Respuesta desde el servicio AWS"
+  }
+
+  tags = merge(local.common_tags, {
+    Name = "rag-vpce-if-${var.environment}"
+  })
+}
+
+resource "aws_vpc_endpoint" "secretsmanager" {
+  count               = var.create_vpc_endpoint_secrets_textract ? 1 : 0
+  vpc_id              = var.vpc_id
+  service_name        = "com.amazonaws.${var.aws_region}.secretsmanager"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = var.subnets
+  security_group_ids  = [aws_security_group.rag_interface_endpoints[0].id]
+  private_dns_enabled = true
+
+  tags = merge(local.common_tags, {
+    Name = "secretsmanager-endpoint-${var.environment}"
+  })
+}
+
+resource "aws_vpc_endpoint" "textract" {
+  count               = var.create_vpc_endpoint_secrets_textract ? 1 : 0
+  vpc_id              = var.vpc_id
+  service_name        = "com.amazonaws.${var.aws_region}.textract"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = var.subnets
+  security_group_ids  = [aws_security_group.rag_interface_endpoints[0].id]
+  private_dns_enabled = true
+
+  tags = merge(local.common_tags, {
+    Name = "textract-endpoint-${var.environment}"
+  })
+}
+
+resource "aws_vpc_security_group_ingress_rule" "rds_from_rag_lambda" {
+  security_group_id            = local.db_security_group_id
+  referenced_security_group_id = aws_security_group.rag_lambda.id
+  ip_protocol                  = "tcp"
+  from_port                    = 5432
+  to_port                      = 5432
+  description                  = "PostgreSQL desde Lambdas RAG"
+}
+
 # ==============================================================================
 # Aurora PostgreSQL (existing module)
 # ==============================================================================
 
 module "aurora" {
+  count  = var.create_aurora_cluster ? 1 : 0
   source = "./modules/aurora_postgres"
 
   vpc_id      = var.vpc_id
@@ -262,14 +379,15 @@ module "aurora" {
 }
 
 # ==============================================================================
-# Lambda: RAG Embeddings (triggered by S3)
+# Lambda: RAG Embeddings (rag_lmbd_embeddings-async, consume SQS)
+# Ver: module.lambda_embeddings_enqueue, aws_s3_bucket_notification documents_to_embeddings_queue
 # ==============================================================================
 
-module "lambda_embeddings" {
+module "lambda_embeddings_async" {
   source = "./modules/lambda"
 
-  function_name          = "rag_lmbd_embeddings-${var.environment}"
-  description            = "Processes PDF documents, generates embeddings and stores in PostgreSQL"
+  function_name          = "rag_lmbd_embeddings-async-${var.environment}"
+  description            = "Processes PDF documents, generates embeddings and stores in PostgreSQL (async queue consumer)"
   handler                = "index.handler"
   runtime                = "python3.12"
   timeout                = var.lambda_embeddings_config.timeout
@@ -282,19 +400,23 @@ module "lambda_embeddings" {
   # VPC Configuration for RDS access
   vpc_id             = var.vpc_id
   subnet_ids         = var.subnets
-  security_group_ids = [module.aurora.security_group_id]
+  security_group_ids = [aws_security_group.rag_lambda.id]
 
   environment_variables = local.lambda_embeddings_env
 
   # Use S3 for large deployment packages
   use_s3_deployment = true
+  s3_bucket_name    = module.s3_documents.bucket_name
 
-  # S3 Trigger
-  s3_trigger_enabled = true
-  s3_bucket_name     = module.s3_documents.bucket_name
-  s3_bucket_arn      = module.s3_documents.bucket_arn
-  s3_events          = ["s3:ObjectCreated:*"]
-  s3_filter_suffix   = ".pdf"
+  s3_trigger_enabled = false
+
+  # SQS: un PDF por invocación; concurrencia acotada en el mapeo (backpressure)
+  sqs_trigger_enabled     = true
+  sqs_queue_arn           = aws_sqs_queue.embeddings_ingest.arn
+  sqs_batch_size          = 1
+  sqs_maximum_concurrency = 10
+
+  reserved_concurrent_executions = 10
 
   # IAM Permissions
   attach_policy_statements = concat(
@@ -311,6 +433,7 @@ module "lambda_embeddings" {
         ]
       },
     ],
+    local.lambda_db_secret_policy,
     local.lambda_bedrock_with_marketplace,
     [
       {
@@ -348,7 +471,7 @@ module "lambda_query" {
   # VPC Configuration for RDS access
   vpc_id             = var.vpc_id
   subnet_ids         = var.subnets
-  security_group_ids = [module.aurora.security_group_id]
+  security_group_ids = [aws_security_group.rag_lambda.id]
 
   # Use S3 for large deployment packages
   use_s3_deployment = true
@@ -361,6 +484,7 @@ module "lambda_query" {
   # IAM Permissions - Bedrock + Marketplace + S3 presigned URLs for documents bucket
   attach_policy_statements = concat(
     local.lambda_bedrock_with_marketplace,
+    local.lambda_db_secret_policy,
     [
       {
         effect = "Allow"
@@ -523,13 +647,13 @@ resource "aws_sqs_queue" "alert_s3writer" {
 module "anmat_s3_stepfunction" {
   source = "./modules/anmat_s3_stepfunction"
 
-  state_machine_name   = "rag-anmat-to-s3writer-${var.environment}"
-  anmat_function_arn   = module.lambda_anmatlinks.function_arn
-  anmat_function_name  = module.lambda_anmatlinks.function_name
-  anmat_reset_function_arn = module.lambda_anmatlinks_reset.function_arn
-  alert_queue_url     = aws_sqs_queue.alert_s3writer.url
-  alert_queue_arn     = aws_sqs_queue.alert_s3writer.arn
-  tags                = local.common_tags
+  state_machine_name       = "rag-anmat-to-s3writer-${var.environment}"
+  anmat_function_arn       = module.lambda_anmatlinks.function_arn
+  anmat_function_name      = module.lambda_anmatlinks.function_name
+  anmat_reset_function_arn = module.lambda_anmatlinks.function_arn
+  alert_queue_url          = aws_sqs_queue.alert_s3writer.url
+  alert_queue_arn          = aws_sqs_queue.alert_s3writer.arn
+  tags                     = local.common_tags
 }
 
 module "lambda_s3writer" {
@@ -547,11 +671,11 @@ module "lambda_s3writer" {
   environment = var.environment
 
   environment_variables = {
-    S3_BUCKET_NAME      = module.s3_documents.bucket_name
-    REQUEST_TIMEOUT      = "60"
-    MAX_FILE_SIZE        = "52428800"  # 50MB
-    TENANT_ID           = "7c9aa113-ecf2-4449-a955-d91c76e7ee27"
-    SITE_NAME           = "boletin"
+    S3_BUCKET_NAME  = module.s3_documents.bucket_name
+    REQUEST_TIMEOUT = "60"
+    MAX_FILE_SIZE   = "52428800" # 50MB
+    TENANT_ID       = "7c9aa113-ecf2-4449-a955-d91c76e7ee27"
+    SITE_NAME       = "boletin"
   }
 
   # IAM Permissions
@@ -568,11 +692,11 @@ module "lambda_s3writer" {
     }
   ]
 
-  sqs_trigger_enabled       = true
-  sqs_queue_arn             = aws_sqs_queue.alert_s3writer.arn
-  sqs_batch_size            = 1 # 1 PDF por mensaje SQS
+  sqs_trigger_enabled            = true
+  sqs_queue_arn                  = aws_sqs_queue.alert_s3writer.arn
+  sqs_batch_size                 = 1 # 1 PDF por mensaje SQS
   sqs_maximum_concurrency        = 20
-  reserved_concurrent_executions   = 20
+  reserved_concurrent_executions = 20
 
   tags = local.common_tags
 }
@@ -708,6 +832,24 @@ module "lambda_bolinks" {
   tags = local.common_tags
 }
 
+# Step Function: Boletín (bolinks → s3writer → dbwriter) con JSONata. Nombre
+# `Alerts-BoletinOficialSyncronizer-${var.environment}` (p. ej. -prod) para no
+# reemplazar el state machine heredado sin sufijo creado fuera de Terraform.
+module "boletin_oficial_sfn" {
+  source = "./modules/boletin_oficial_sfn"
+
+  state_machine_name = "Alerts-BoletinOficialSyncronizer-${var.environment}"
+
+  bolinks_function_arn   = module.lambda_bolinks.function_arn
+  s3writer_function_arn  = module.lambda_s3writer.function_arn
+  dbwriter_function_arn  = module.lambda_dbwriter.function_arn
+  bolinks_function_name  = module.lambda_bolinks.function_name
+  s3writer_function_name = module.lambda_s3writer.function_name
+  dbwriter_function_name = module.lambda_dbwriter.function_name
+
+  tags = local.common_tags
+}
+
 # ==============================================================================
 # Lambda: RAG Anmatlinks (ANMAT BuscaDispo PDF link scraper)
 # ==============================================================================
@@ -720,7 +862,7 @@ module "lambda_anmatlinks" {
   handler                = "index.handler"
   runtime                = "python3.12"
   timeout                = 900
-  memory_size            = 3072
+  memory_size            = 1024
   ephemeral_storage_size = 2048
 
   source_path = local.lambda_anmatlinks_path
@@ -730,45 +872,10 @@ module "lambda_anmatlinks" {
 
   environment_variables = {
     CHROMIUM_PACK_PATH = "/opt/nodejs/node_modules/@sparticuz/chromium/bin"
-    ANMAT_FORCED_RESOLVER_IP = "190.210.84.134"
   }
 
   use_s3_deployment = true
   s3_bucket_name    = module.s3_documents.bucket_name
-
-  tags = local.common_tags
-}
-
-module "lambda_anmatlinks_reset" {
-  source = "./modules/lambda"
-
-  function_name          = "rag_lmbd_anmatlinks_reset-${var.environment}"
-  description            = "Resets rag_lmbd_anmatlinks environment to force cold starts periodically"
-  handler                = "index.handler"
-  runtime                = "python3.12"
-  timeout                = 60
-  memory_size            = 256
-  ephemeral_storage_size = 512
-
-  source_path = "${path.module}/../apps/rag_lmbd_anmatlinks_reset"
-  environment = var.environment
-
-  environment_variables = {
-    TARGET_FUNCTION_NAME = module.lambda_anmatlinks.function_name
-  }
-
-  attach_policy_statements = [
-    {
-      effect = "Allow"
-      actions = [
-        "lambda:GetFunctionConfiguration",
-        "lambda:UpdateFunctionConfiguration"
-      ]
-      resources = [
-        module.lambda_anmatlinks.function_arn
-      ]
-    }
-  ]
 
   tags = local.common_tags
 }
@@ -845,14 +952,14 @@ module "bedrock_agent" {
   # VPC Configuration (optional, same as other lambdas)
   vpc_id             = var.vpc_id
   subnet_ids         = var.subnets
-  security_group_ids = length(var.subnets) > 0 ? [module.aurora.security_group_id] : []
+  security_group_ids = length(var.subnets) > 0 ? [aws_security_group.rag_lambda.id] : []
 
   environment_variables = merge(
     {
       AGENT_MODEL_ID    = var.agent_model_id
       AGENT_NAME        = var.agent_name
       LAMBDA_QUERY      = module.lambda_query.function_name
-      LAMBDA_EMBEDDINGS = module.lambda_embeddings.function_name
+      LAMBDA_EMBEDDINGS = module.lambda_embeddings_async.function_name
     },
     var.agent_environment_variables
   )
@@ -929,14 +1036,14 @@ module "agentcore" {
   runtime_description        = var.agentcore_runtime_description
   runtime_network_mode       = var.agentcore_runtime_network_mode
   runtime_subnet_ids         = var.agentcore_runtime_network_mode == "VPC" ? var.subnets : []
-  runtime_security_group_ids = var.agentcore_runtime_network_mode == "VPC" ? [module.aurora.security_group_id] : []
+  runtime_security_group_ids = var.agentcore_runtime_network_mode == "VPC" ? [aws_security_group.rag_lambda.id] : []
   runtime_protocol           = var.agentcore_runtime_protocol
   runtime_idle_timeout       = var.agentcore_runtime_idle_timeout
   runtime_max_lifetime       = var.agentcore_runtime_max_lifetime
   runtime_environment_variables = merge(
     {
       LAMBDA_QUERY      = module.lambda_query.function_name
-      LAMBDA_EMBEDDINGS = module.lambda_embeddings.function_name
+      LAMBDA_EMBEDDINGS = module.lambda_embeddings_async.function_name
       AGENT_NAME        = var.agent_name
       AGENT_MODEL_ID    = var.agent_model_id
     },
@@ -944,7 +1051,7 @@ module "agentcore" {
   )
   lambda_function_arns = [
     module.lambda_query.function_arn,
-    module.lambda_embeddings.function_arn
+    module.lambda_embeddings_async.function_arn
   ]
 
   # Runtime Endpoint
@@ -1056,6 +1163,16 @@ output "anmat_s3writer_state_machine_arn" {
 output "anmat_s3writer_state_machine_name" {
   description = "Name of the anmat → s3writer pipeline state machine"
   value       = module.anmat_s3_stepfunction.state_machine_name
+}
+
+output "boletin_oficial_state_machine_arn" {
+  description = "Step Function Boletín (JSONata): bolinks → s3writer → dbwriter"
+  value       = module.boletin_oficial_sfn.state_machine_arn
+}
+
+output "boletin_oficial_state_machine_name" {
+  description = "Nombre del state machine (Alerts-BoletinOficialSyncronizer-<env>)"
+  value       = module.boletin_oficial_sfn.state_machine_name
 }
 
 output "alert_s3writer_dlq_url" {

@@ -13,12 +13,12 @@ import argparse
 # Configuración
 AWS_REGION = "us-east-1"
 AWS_PROFILE = "asap_main"
-STEP_FUNCTION_ARN = "arn:aws:states:us-east-1:913123310997:stateMachine:rag-anmat-to-s3writer-qa"
-
+STEP_FUNCTION_ARN_QA = "arn:aws:states:us-east-1:913123310997:stateMachine:rag-anmat-to-s3writer-qa"
+STEP_FUNCTION_ARN = "arn:aws:states:us-east-1:913123310997:stateMachine:rag-anmat-to-s3writer-prod"
 # Rango de años (descendente)
-START_YEAR = 2010
-END_YEAR = 2010
-AGENT_ID = "7c9aa113-ecf2-4449-a955-d91c76e7ee27"
+START_YEAR = 2024
+END_YEAR = 2024
+AGENT_ID = "51d1efe8-448e-4c58-8e3d-f74df1301e81"
 TENANT_ID = "anmat"
 MAX_RETRIES_PER_PAGE = 3
 # Tope de páginas para el año en curso (None = usar solo lo que calcule el sitio / el scraper)

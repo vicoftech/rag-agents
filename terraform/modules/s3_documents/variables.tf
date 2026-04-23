@@ -3,6 +3,12 @@ variable "bucket_name" {
   type        = string
 }
 
+variable "force_destroy" {
+  description = "Permitir borrar el bucket aunque tenga objetos (necesario para terraform destroy en buckets con datos)"
+  type        = bool
+  default     = false
+}
+
 variable "enable_lifecycle" {
   description = "Enable lifecycle rules for cost optimization"
   type        = bool

@@ -59,7 +59,7 @@ export AWS_ACCESS_KEY_ID_DEV=tu-access-key
 export AWS_SECRET_ACCESS_KEY_DEV=tu-secret-key
 
 # Lambdas RAG
-export LAMBDA_EMBEDDINGS=rag_lmbd_embeddings
+export LAMBDA_EMBEDDINGS=rag_lmbd_embeddings-async
 export LAMBDA_QUERY=rag_lmbd_query
 
 # Modelos
@@ -332,6 +332,6 @@ web_result = web_search(
 Este agente invoca las siguientes Lambdas:
 
 - **`rag_lmbd_query`**: Realiza búsqueda semántica y genera respuesta con LLM
-- **`rag_lmbd_embeddings`**: Genera embeddings para textos
+- **`rag_lmbd_embeddings-async`**: Genera embeddings para textos
 
 La Lambda `rag_lmbd_query` ya procesa la información y devuelve una respuesta sintetizada por el LLM, no chunks crudos.

@@ -11,12 +11,17 @@ environment = "prod"
 vpc_id  = "vpc-xxxxxxxx"
 subnets = ["subnet-xxxxxxxx", "subnet-yyyyyyyy"]
 
-# Aurora PostgreSQL - Use strong credentials and Secrets Manager in production
-master_username = "prod_admin"
-master_password = "USE_SECRETS_MANAGER_IN_PRODUCTION"
-engine_version  = "14.11"
-aurora_min_capacity = 2
-aurora_max_capacity = 16
+# Existing PostgreSQL (do not create Aurora in prod)
+create_aurora_cluster      = false
+existing_db_host           = "postgres-aurora-prod.cluster-ch7yo6tzxi4l.us-east-1.rds.amazonaws.com"
+existing_db_name           = "postgres"
+existing_db_port           = 5432
+existing_db_security_group_id = "sg-xxxxxxxx"
+
+# Lambda DB credentials (prefer runtime secret resolution)
+master_username = "alert_db"
+master_password = ""
+db_secret_id    = "arn:aws:secretsmanager:us-east-1:123456789012:secret:rag-agents/prod/postgres-xxxxx"
 
 # S3
 enable_s3_cors       = false

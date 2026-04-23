@@ -51,6 +51,12 @@ variable "create_vpc_endpoint_bedrock" {
   default     = true
 }
 
+variable "create_vpc_endpoint_secrets_textract" {
+  description = "Interface VPCE para Secrets Manager y Textract. En subredes privadas sin NAT, sin esto las llamadas HTTPS a esas APIs cuelgan hasta timeout (S3 va por Gateway; Bedrock suele tener VPCE aparte)."
+  type        = bool
+  default     = false
+}
+
 # ==============================================================================
 # Aurora PostgreSQL Configuration
 # ==============================================================================
@@ -64,6 +70,7 @@ variable "master_password" {
   description = "Master password for Aurora"
   type        = string
   sensitive   = true
+  default     = ""
 }
 
 variable "engine_version" {
@@ -84,6 +91,42 @@ variable "aurora_max_capacity" {
   default     = 4
 }
 
+variable "create_aurora_cluster" {
+  description = "Whether to create Aurora cluster resources"
+  type        = bool
+  default     = true
+}
+
+variable "existing_db_host" {
+  description = "Existing PostgreSQL writer endpoint (used when create_aurora_cluster=false)"
+  type        = string
+  default     = ""
+}
+
+variable "existing_db_name" {
+  description = "Existing PostgreSQL database name (used when create_aurora_cluster=false)"
+  type        = string
+  default     = "postgres"
+}
+
+variable "existing_db_port" {
+  description = "Existing PostgreSQL port (used when create_aurora_cluster=false)"
+  type        = number
+  default     = 5432
+}
+
+variable "existing_db_security_group_id" {
+  description = "Security group ID of existing PostgreSQL cluster (used when create_aurora_cluster=false)"
+  type        = string
+  default     = ""
+}
+
+variable "db_secret_id" {
+  description = "Secrets Manager secret ID/ARN with DB credentials (username/password)"
+  type        = string
+  default     = ""
+}
+
 # ==============================================================================
 # S3 Configuration
 # ==============================================================================
@@ -98,6 +141,12 @@ variable "cors_allowed_origins" {
   description = "Allowed origins for CORS"
   type        = list(string)
   default     = ["*"]
+}
+
+variable "s3_bucket_force_destroy" {
+  description = "Si true, el bucket de documentos se puede borrar con objetos (usar solo para terraform destroy / reset)"
+  type        = bool
+  default     = false
 }
 
 # ==============================================================================

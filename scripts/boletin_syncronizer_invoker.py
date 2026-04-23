@@ -2,6 +2,8 @@
 """
 Invoca la Step Function de Boletín por fecha (descendente) y secciones.
 Soporta paralelizar días (--parallel-days) y, opcionalmente, secciones (--parallel-sections).
+
+Por defecto: producción (cuenta 913, profile asap_main). Usá --env qa para el state machine -qa.
 """
 
 import argparse
@@ -18,17 +20,24 @@ import boto3
 # Configuración por defecto
 AWS_REGION = "us-east-1"
 AWS_PROFILE = "asap_main"
-STEP_FUNCTION_ARN = (
-    "arn:aws:states:us-east-1:913123310997:stateMachine:"
-    "Alerts-BoletinOficialSyncronizer-qa"
+# Cuenta 913: prod gestionado en Terraform: Alerts-BoletinOficialSyncronizer-prod (JSONata, Lambdas -prod)
+STEP_FUNCTION_ARN_PROD = (
+    "arn:aws:states:us-east-1:913123310997:stateMachine:Alerts-BoletinOficialSyncronizer-prod"
 )
-TENANT_ID = "boletin"
-AGENT_ID = "7c9aa113-ecf2-4449-a955-d91c76e7ee27"
+STEP_FUNCTION_ARN_QA = (
+    "arn:aws:states:us-east-1:913123310997:stateMachine:Alerts-BoletinOficialSyncronizer-qa"
+)
+STEP_FUNCTION_ARN = STEP_FUNCTION_ARN_PROD
 
-START_DATE = datetime(2025, 11, 30)
-END_DATE = datetime(2025, 11, 1)
+TENANT_ID = "boletin"
+# Agente RAG "boletin" en prod (ajustar --agent-id para QA u otros)
+AGENT_ID = "05032266-f6e1-48cb-9248-bc116652c7c7"
+
+START_DATE = datetime(2026, 4, 21)
+END_DATE = datetime(2025, 4, 1)
 
 SECTIONS = ["primera", "segunda", "tercera", "cuarta"]
+MAX_PARALLEL_DAYS = 10
 
 _print_lock = threading.Lock()
 
@@ -289,6 +298,18 @@ def main():
     )
     parser.add_argument("--profile", default=AWS_PROFILE)
     parser.add_argument("--region", default=AWS_REGION)
+    parser.add_argument(
+        "--env",
+        choices=("qa", "prod"),
+        default="prod",
+        help="State Machine: prod=Alerts-BoletinOficialSyncronizer, qa=...-qa (default: prod).",
+    )
+    parser.add_argument(
+        "--sfn-arn",
+        default=None,
+        metavar="ARN",
+        help="Override: ARN de la Step Function (tiene prioridad sobre --env).",
+    )
     parser.add_argument("--tenant-id", default=TENANT_ID)
     parser.add_argument("--agent-id", default=AGENT_ID)
     parser.add_argument(
@@ -296,7 +317,7 @@ def main():
         type=int,
         default=10,
         metavar="N",
-        help="Cantidad de días a procesar en paralelo (default: 10). Aumentá con cuidado por límites de cuenta.",
+        help="Cantidad de días a procesar en paralelo (default: 10, máx: 10).",
     )
     parser.add_argument(
         "--parallel-sections",
@@ -330,11 +351,26 @@ def main():
     )
     args = parser.parse_args()
 
-    parallel_days = max(1, args.parallel_days)
+    global STEP_FUNCTION_ARN
+    if args.sfn_arn and str(args.sfn_arn).strip():
+        STEP_FUNCTION_ARN = str(args.sfn_arn).strip()
+    elif args.env == "qa":
+        STEP_FUNCTION_ARN = STEP_FUNCTION_ARN_QA
+    else:
+        STEP_FUNCTION_ARN = STEP_FUNCTION_ARN_PROD
+
+    requested_parallel_days = max(1, args.parallel_days)
+    parallel_days = min(requested_parallel_days, MAX_PARALLEL_DAYS)
+    if requested_parallel_days > MAX_PARALLEL_DAYS:
+        print(
+            f"[WARN] --parallel-days={requested_parallel_days} excede el máximo "
+            f"permitido ({MAX_PARALLEL_DAYS}); se usará {parallel_days}."
+        )
     quiet = parallel_days > 1 and not args.verbose
 
     print("Invocando Step Functions (Boletín)")
-    print(f"Región: {args.region} | Perfil: {args.profile}")
+    print(f"Región: {args.region} | Perfil: {args.profile} | entorno: {args.env}")
+    print(f"State machine: {STEP_FUNCTION_ARN}")
     print(f"Rango: {START_DATE.strftime('%Y-%m-%d')} → {END_DATE.strftime('%Y-%m-%d')}")
     print(f"Secciones: {', '.join(SECTIONS)}")
     print(f"Tenant: {args.tenant_id} | Agent: {args.agent_id}")

@@ -30,6 +30,19 @@ S3WRITER_SQS_MAX_RETRIES = int(os.getenv('S3WRITER_SQS_MAX_RETRIES', '3'))
 MAX_FILE_SIZE = int(os.getenv('MAX_FILE_SIZE', str(50 * 1024 * 1024)))  # 50MB
 # Pausa entre descargas (serie); reduce presión al origen (no es paralelo).
 S3WRITER_PDF_DOWNLOAD_DELAY_SEC = float(os.getenv('S3WRITER_PDF_DOWNLOAD_DELAY_SEC', '0.25'))
+ANMAT_HOSTNAME = "buscadispo.anmat.gob.ar"
+ANMAT_HOST_IPV4 = "190.210.84.134"
+
+
+def _normalize_tenant_prefix(tenant_id: str) -> str:
+    """
+    Asegura el prefijo canónico esperado por el pipeline de embeddings:
+    tenant_<slug>/<agent_id>/documents
+    """
+    tenant = str(tenant_id or "").strip()
+    if not tenant:
+        return tenant
+    return tenant if tenant.startswith("tenant_") else f"tenant_{tenant}"
 
 # Headers para descargar archivos
 DOWNLOAD_HEADERS = {
@@ -185,6 +198,8 @@ def generate_filename(pdf_info: Dict, index: int) -> str:
 
 
 def _resolve_ipv4(host: str, port: int) -> str:
+    if host == ANMAT_HOSTNAME:
+        return ANMAT_HOST_IPV4
     infos = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
     if not infos:
         raise OSError(f"no IPv4 address for {host}")
@@ -374,8 +389,9 @@ def process_bolinks_output(bolinks_output: Dict, tenant_id: str, agent_id: str) 
                 'uploaded_files': []
             }
         
-        # Generar metadata
-        site_id = f"{tenant_id}/{agent_id}/documents"
+        # Generar metadata (prefijo S3 canónico para RAG)
+        tenant_prefix = _normalize_tenant_prefix(tenant_id)
+        site_id = f"{tenant_prefix}/{agent_id}/documents"
         
         uploaded_files = []
         processed_count = 0
@@ -464,7 +480,8 @@ def process_single_pdf(pdf: Dict, tenant_id: str, agent_id: str) -> Dict:
     try:
         if not pdf.get('url'):
             return {'success': False, 'error': 'missing url'}
-        site_id = f"{tenant_id}/{agent_id}/documents"
+        tenant_prefix = _normalize_tenant_prefix(tenant_id)
+        site_id = f"{tenant_prefix}/{agent_id}/documents"
         date_str = pdf.get('date') or ''
         section = pdf.get('section') or 'default'
         print(f"single_pdf: {pdf['url']}")
@@ -643,7 +660,14 @@ def handler(event, context):
             bolinks_output = event.get("bolinks_output")
             tenant_id = event.get("tenant_id")
             agent_id = event.get("agent_id")
-        
+            # Algunas SFN solo envían bolinks_output; tenant/agent vienen en received_params.
+            if isinstance(bolinks_output, dict):
+                rp = bolinks_output.get("received_params") or {}
+                if not tenant_id:
+                    tenant_id = rp.get("tenant_id")
+                if not agent_id:
+                    agent_id = rp.get("agent_id")
+
         # Validar parámetro bolinks_output
         if not bolinks_output:
             return {

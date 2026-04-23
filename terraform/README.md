@@ -97,7 +97,7 @@ terraform apply -var-file=environments/asap_main.tfvars
 
 | Lambda | Descripción | Trigger |
 |--------|-------------|---------|
-| `rag_lmbd_embeddings` | Procesa PDFs, genera embeddings y guarda en PostgreSQL | S3 (*.pdf) |
+| `rag_lmbd_embeddings-async` | Procesa PDFs (consume SQS), genera embeddings y guarda en PostgreSQL | SQS (ingesta desde S3 vía encolador) |
 | `rag_lmbd_query` | Búsqueda semántica + respuesta LLM | Invocación directa |
 
 ### Otros Recursos
@@ -180,7 +180,7 @@ terraform apply -var-file=environments/asap_main.tfvars
 │  │                                                                  │   │
 │  │  ┌──────────────────────┐      ┌──────────────────────┐        │   │
 │  │  │  Lambda              │      │  Lambda              │        │   │
-│  │  │  rag_lmbd_embeddings │      │  rag_lmbd_query      │        │   │
+│  │  │ rag_lmbd_embeddings-async   │  rag_lmbd_query     │        │   │
 │  │  │                      │      │                      │        │   │
 │  │  │  • PDF Processing    │      │  • Semantic Search   │        │   │
 │  │  │  • Embeddings Gen    │      │  • LLM Response      │        │   │
@@ -229,7 +229,7 @@ cat response.json
 
 ```bash
 # Logs de embeddings
-aws logs tail /aws/lambda/rag_lmbd_embeddings-dev --follow
+aws logs tail /aws/lambda/rag_lmbd_embeddings-async-dev --follow
 
 # Logs de query
 aws logs tail /aws/lambda/rag_lmbd_query-dev --follow

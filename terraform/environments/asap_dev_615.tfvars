@@ -53,13 +53,13 @@ create_agentcore = false
 
 agentcore_name_prefix = "rag_agent"
 
-agentcore_create_runtime              = false
-agentcore_runtime_container_uri       = "615216531593.dkr.ecr.us-east-1.amazonaws.com/rag-agent:latest"
-agentcore_runtime_description         = "RAG Agent Runtime"
-agentcore_runtime_network_mode        = "PUBLIC"
-agentcore_runtime_protocol            = "HTTP"
-agentcore_runtime_idle_timeout        = 3600
-agentcore_runtime_max_lifetime        = 28800
+agentcore_create_runtime        = false
+agentcore_runtime_container_uri = "615216531593.dkr.ecr.us-east-1.amazonaws.com/rag-agent:latest"
+agentcore_runtime_description   = "RAG Agent Runtime"
+agentcore_runtime_network_mode  = "PUBLIC"
+agentcore_runtime_protocol      = "HTTP"
+agentcore_runtime_idle_timeout  = 3600
+agentcore_runtime_max_lifetime  = 28800
 agentcore_runtime_environment_variables = {
   LOG_LEVEL   = "INFO"
   ENVIRONMENT = "dev"

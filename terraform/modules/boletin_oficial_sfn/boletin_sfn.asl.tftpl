@@ -1,0 +1,132 @@
+{
+  "Comment": "Boletín Oficial: bolinks → s3writer → dbwriter (JSONata)",
+  "StartAt": "Boletin Oficial - Get links",
+  "QueryLanguage": "JSONata",
+  "States": {
+    "Boletin Oficial - Get links": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Output": "{% $states.result.Payload %}",
+      "Arguments": {
+        "FunctionName": "${bolinks_qualified}",
+        "Payload": "{% $states.input %}"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 3,
+          "BackoffRate": 2,
+          "JitterStrategy": "FULL"
+        }
+      ],
+      "Next": "Elección"
+    },
+    "Elección": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Next": "Error",
+          "Condition": "{% $states.input.statusCode != 200 %}"
+        }
+      ],
+      "Default": "ParseLinksResponse"
+    },
+    "Error": {
+      "Type": "Fail",
+      "Error": "Fallo en extraer links"
+    },
+    "ParseLinksResponse": {
+      "Type": "Pass",
+      "Next": "Descarga Pdf a S3",
+      "Output": "{% {\n  \"bolinks_output\": $parse($states.input.body)\n} %}"
+    },
+    "Descarga Pdf a S3": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Output": "{% $states.result.Payload %}",
+      "Arguments": {
+        "FunctionName": "${s3writer_qualified}",
+        "Payload": "{% $states.input %}"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 3,
+          "BackoffRate": 2,
+          "JitterStrategy": "FULL"
+        }
+      ],
+      "Next": "Elección (1)"
+    },
+    "Elección (1)": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Next": "Error al descargar en S3",
+          "Condition": "{% $states.input.statusCode != 200 %}"
+        }
+      ],
+      "Default": "Transferir"
+    },
+    "Error al descargar en S3": {
+      "Type": "Fail"
+    },
+    "Transferir": {
+      "Type": "Pass",
+      "Next": "Escribir en BD",
+      "Output": "{% {\n  \"s3writer_output\": $parse($states.input.body)\n} %}"
+    },
+    "Escribir en BD": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Output": "{% $states.result.Payload %}",
+      "Arguments": {
+        "FunctionName": "${dbwriter_qualified}",
+        "Payload": "{% $states.input %}"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 3,
+          "BackoffRate": 2,
+          "JitterStrategy": "FULL"
+        }
+      ],
+      "Next": "Elección (2)"
+    },
+    "Elección (2)": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Next": "Error al escribir en BD",
+          "Condition": "{% $states.input.statusCode != 200 %}"
+        }
+      ],
+      "Default": "Realizado correctamente"
+    },
+    "Error al escribir en BD": {
+      "Type": "Fail"
+    },
+    "Realizado correctamente": {
+      "Type": "Succeed"
+    }
+  }
+}

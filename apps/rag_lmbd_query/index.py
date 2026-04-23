@@ -1,8 +1,5 @@
 import os
 import json
-import math
-import random
-from time import sleep
 import urllib.parse
 from datetime import date, datetime, time, timedelta, timezone
 import boto3
@@ -39,6 +36,7 @@ endpoint_url = f"https://s3.{AWS_REGION}.amazonaws.com"
 s3 = boto3.client('s3', endpoint_url=endpoint_url, **session_args)
 
 bedrock = boto3.client("bedrock-runtime", **session_args)
+secretsmanager = boto3.client("secretsmanager", **session_args)
 
 # 🔐 Se deben pasar estas variables al Lambda (ENV VARS)
 DB_NAME = os.getenv("DB_NAME","postgres")
@@ -46,34 +44,20 @@ DB_USER = os.getenv("DB_USER","postgres")
 DB_PASSWORD = os.getenv("DB_PASSWORD","postgres")
 DB_HOST = os.getenv("DB_HOST","localhost")
 DB_PORT = os.getenv("DB_PORT", "5432")
+DB_SECRET_ID = os.getenv("DB_SECRET_ID", "")
 MAIN_LLM_MODEL = os.getenv("MAIN_LLM_MODEL", "openai.gpt-oss-120b-1:0")
 FALLBACK_LLM_MODEL = os.getenv("FALLBACK_LLM_MODEL", "openai.gpt-oss-20b-1:0")
 #EMBEDDINGS_MODEL = os.getenv("EMBEDDINGS_MODEL", "amazon.titan-embed-text-v2:0")
 EMBEDDINGS_MODEL = os.getenv("EMBEDDINGS_MODEL", "cohere.embed-v4:0")
 OUTPUT_TOKENS = os.getenv("OUTPUT_TOKENS", "2048")
 MAX_EMBED_TEXT_LENGTH = 20000
-BEDROCK_EMBED_MAX_ATTEMPTS = int(os.getenv("BEDROCK_EMBED_MAX_ATTEMPTS", "8"))
-BEDROCK_EMBED_RETRY_BASE_SEC = float(os.getenv("BEDROCK_EMBED_RETRY_BASE_SEC", "2.0"))
-BEDROCK_EMBED_RETRY_MAX_SEC = float(os.getenv("BEDROCK_EMBED_RETRY_MAX_SEC", "45.0"))
 COHERE_TRUNCATE = os.getenv("COHERE_TRUNCATE", "RIGHT")
 EXPECTED_EMBEDDING_DIM = int(os.getenv("EXPECTED_EMBEDDING_DIM", "1536"))
-# Tamaño de página por defecto (chunks por página) y tope máximo.
-DEFAULT_PAGE_SIZE = max(1, min(100, int(os.getenv("DEFAULT_PAGE_SIZE", "20"))))
-MAX_PAGE_SIZE = max(1, min(500, int(os.getenv("MAX_PAGE_SIZE", "100"))))
-# Retrocompat: si no se envía page_size, la búsqueda semántica usa SEMANTIC_TOP_K como fallback.
-SEMANTIC_TOP_K = max(1, min(50, int(os.getenv("SEMANTIC_TOP_K", str(DEFAULT_PAGE_SIZE)))))
-# Opcional: si MAX_SEMANTIC_DISTANCE está definido y > 0, filtrar vecinos por distancia coseno (<=).
-# Sin variable o valor 0/off/none → no se filtra: se devuelven los SEMANTIC_TOP_K más cercanos.
-_MAX_SEM_DIST_RAW = os.getenv("MAX_SEMANTIC_DISTANCE", "").strip().lower()
-if _MAX_SEM_DIST_RAW in ("", "0", "none", "off", "false"):
-    MAX_SEMANTIC_DISTANCE = None
-else:
-    try:
-        MAX_SEMANTIC_DISTANCE = float(_MAX_SEM_DIST_RAW)
-    except ValueError:
-        MAX_SEMANTIC_DISTANCE = None
-    if MAX_SEMANTIC_DISTANCE is not None and MAX_SEMANTIC_DISTANCE <= 0:
-        MAX_SEMANTIC_DISTANCE = None
+MAX_SEMANTIC_DISTANCE = float(os.getenv("MAX_SEMANTIC_DISTANCE", "0.45"))
+# Si el umbral descarta todo, aún devolver al menos 1 (el mejor) si la SQL devolvió filas.
+# N=0 en env se trata como 1 (nunca dejar contexto vacío cuando hay al menos 1 fila de vector search).
+SEMANTIC_FALLBACK_TOP_N = int(os.getenv("SEMANTIC_FALLBACK_TOP_N", "5"))
+_DB_SECRET_CACHE = None
 
 DOCUMENTS_S3_BUCKET = os.getenv("DOCUMENTS_S3_BUCKET", "")
 PRESIGNED_URL_EXPIRES_SECONDS = int(os.getenv("PRESIGNED_URL_EXPIRES_SECONDS", "3600"))
@@ -165,20 +149,14 @@ def _cohere_embed_extras():
 def parse_created_at_day(raw):
     """
     Opcional: filtra chunks por día de created_at en BD.
-
-    Sin fecha efectiva (None, vacío, JSON null ya viene como None, o strings
-    sentinela como 'null'/'none') → **no** se aplica filtro por día: la búsqueda
-    vectorial usa toda la historia disponible para el resto de filtros
-    (tenant, agent_id, document_name, etc.). No hay default al día anterior.
+    None / vacío → sin filtro (búsqueda general).
     Acepta 'YYYY-MM-DD' o ISO datetime (se usa solo el día civil en UTC).
     """
     if raw is None:
         return None
+    if isinstance(raw, str) and not raw.strip():
+        return None
     s = str(raw).strip()
-    if not s:
-        return None
-    if s.lower() in ("null", "none"):
-        return None
     try:
         if len(s) == 10 and s[4] == "-" and s[7] == "-":
             return date.fromisoformat(s)
@@ -196,116 +174,35 @@ def parse_created_at_day(raw):
         ) from e
 
 
-def resolve_created_at_bounds(created_at_raw, from_raw, to_raw):
-    """
-    Devuelve (inicio_utc_naive, fin_exclusivo_utc_naive) para filtrar created_at,
-    o (None, None) si no hay filtro de fechas.
 
-    - ``created_at_from`` / ``created_at_to`` (o ``fecha_desde`` / ``fecha_hasta`` en el body):
-      rango inclusive de días civiles en UTC [from, to].
-    - ``created_at`` solo: un día (compatibilidad).
-    Si hay from o to, tienen prioridad sobre ``created_at`` solo.
-    """
-    d_from = parse_created_at_day(from_raw)
-    d_to = parse_created_at_day(to_raw)
-    if d_from is not None or d_to is not None:
-        if d_from is not None and d_to is not None:
-            if d_from > d_to:
-                raise ValueError("created_at_from no puede ser posterior a created_at_to")
-            start = datetime.combine(d_from, time.min, tzinfo=timezone.utc).replace(tzinfo=None)
-            end = datetime.combine(d_to + timedelta(days=1), time.min, tzinfo=timezone.utc).replace(
-                tzinfo=None
-            )
-            return start, end
-        if d_from is not None:
-            start = datetime.combine(d_from, time.min, tzinfo=timezone.utc).replace(tzinfo=None)
-            return start, None
-        end = datetime.combine(d_to + timedelta(days=1), time.min, tzinfo=timezone.utc).replace(
-            tzinfo=None
-        )
-        return None, end
-
-    d_single = parse_created_at_day(created_at_raw)
-    if d_single is not None:
-        start = datetime.combine(d_single, time.min, tzinfo=timezone.utc).replace(tzinfo=None)
-        end = datetime.combine(d_single + timedelta(days=1), time.min, tzinfo=timezone.utc).replace(
-            tzinfo=None
-        )
-        return start, end
-    return None, None
-
-
-def normalize_page(page) -> int:
-    try:
-        p = int(page)
-    except (TypeError, ValueError):
-        p = 1
-    return max(1, p)
-
-
-def normalize_page_size(page_size) -> int:
-    try:
-        s = int(page_size)
-    except (TypeError, ValueError):
-        s = DEFAULT_PAGE_SIZE
-    if s < 1:
-        s = DEFAULT_PAGE_SIZE
-    return min(MAX_PAGE_SIZE, s)
-
-
-def pagination_meta(total_count: int, page: int, page_size: int) -> dict:
-    total_pages = math.ceil(total_count / page_size) if page_size > 0 else 0
-    return {
-        "page": page,
-        "page_size": page_size,
-        "total_count": total_count,
-        "total_pages": total_pages,
-        "has_next": page < total_pages,
-        "has_previous": page > 1,
-    }
-
-
-def _documents_where_filters(document_name, agent_id, chunk_text, date_start, date_end):
-    filters = []
-    params = []
-    if document_name:
-        filters.append("document_name = %s")
-        params.append(document_name)
-    if agent_id:
-        filters.append("agent_id = %s")
-        params.append(agent_id)
-    if chunk_text:
-        filters.append("chunk_text = %s")
-        params.append(chunk_text)
-    if date_start is not None:
-        filters.append("created_at >= %s")
-        params.append(date_start)
-    if date_end is not None:
-        filters.append("created_at < %s")
-        params.append(date_end)
-    return filters, params
-
-
-def _keyword_ilike_pattern(text: str) -> str:
-    t = str(text).strip()
-    if len(t) < 1:
-        raise ValueError("La query no puede estar vacía para búsqueda por palabra clave")
-    t = t.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    return f"%{t}%"
+def _resolve_db_credentials():
+    global _DB_SECRET_CACHE
+    if DB_SECRET_ID:
+        if _DB_SECRET_CACHE is None:
+            resp = secretsmanager.get_secret_value(SecretId=DB_SECRET_ID)
+            raw = resp.get("SecretString", "{}")
+            payload = json.loads(raw)
+            user = payload.get("username") or payload.get("user")
+            password = payload.get("password") or payload.get("pass")
+            if not user or not password:
+                raise ValueError("Secret must include username/user and password/pass")
+            _DB_SECRET_CACHE = (user, password)
+        return _DB_SECRET_CACHE
+    return DB_USER, DB_PASSWORD
 
 
 # --- Database connection helper ---
 def get_connection():
+    user, password = _resolve_db_credentials()
     conn = psycopg2.connect(
         dbname=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD,
+        user=user,
+        password=password,
         host=DB_HOST,
         port=DB_PORT,
     )
     register_vector(conn)
     return conn
-
 
 def normalize(v):
     v = np.array(v, dtype=np.float32).squeeze()
@@ -315,47 +212,23 @@ def normalize(v):
 def to_pgvector(vec):
     return "(" + ",".join(str(v) for v in vec) + ")"
 
-
-def _is_bedrock_throttle(exc: BaseException) -> bool:
-    if not isinstance(exc, ClientError):
-        return False
-    code = (exc.response.get("Error") or {}).get("Code", "")
-    return code in ("ThrottlingException", "TooManyRequestsException")
-
-
 def embed(text: str, input_type: str = "search_query"):
     """Consultas de búsqueda deben usar search_query (Cohere v4 / asimétrico)."""
     if len(text) > MAX_EMBED_TEXT_LENGTH:
         text = text[:MAX_EMBED_TEXT_LENGTH]
 
     payload = {"texts": [text], "input_type": input_type, **_cohere_embed_extras()}
-    body = json.dumps(payload)
 
-    last_exc = None
-    for attempt in range(BEDROCK_EMBED_MAX_ATTEMPTS):
-        try:
-            response = bedrock.invoke_model(
-                modelId=EMBEDDINGS_MODEL,
-                body=body,
-                contentType="application/json",
-                accept="application/json",
-            )
-            result = json.loads(response["body"].read())
-            vec = parse_embedding_vector(result, 0)
-            return normalize(vec).tolist()
-        except ClientError as e:
-            last_exc = e
-            if not _is_bedrock_throttle(e) or attempt >= BEDROCK_EMBED_MAX_ATTEMPTS - 1:
-                raise
-            delay = min(
-                BEDROCK_EMBED_RETRY_BASE_SEC * (2**attempt) + random.uniform(0, 0.75),
-                BEDROCK_EMBED_RETRY_MAX_SEC,
-            )
-            sleep(delay)
+    response = bedrock.invoke_model(
+        modelId=EMBEDDINGS_MODEL,
+        body=json.dumps(payload),
+        contentType="application/json",
+        accept="application/json",
+    )
 
-    if last_exc:
-        raise last_exc
-    raise RuntimeError("embed: reintentos agotados sin excepción registrada")
+    result = json.loads(response["body"].read())
+    vec = parse_embedding_vector(result, 0)
+    return normalize(vec).tolist()
 
 
 
@@ -367,23 +240,9 @@ def semantic_search(
     document_name=None,
     agent_id=None,
     chunk_text=None,
-    date_start=None,
-    date_end=None,
-    page=1,
-    page_size=None,
+    created_at_day=None,
+    k=50,
 ):
-    """
-    kNN semántico con conteo total y paginación.
-
-    ``date_start`` / ``date_end``: límites en TIMESTAMP naive UTC (fin exclusivo).
-    ``page`` 1-based; ``page_size`` por defecto DEFAULT_PAGE_SIZE o SEMANTIC_TOP_K si se pasa None.
-    """
-    page = normalize_page(page)
-    if page_size is None:
-        page_size = SEMANTIC_TOP_K
-    page_size = normalize_page_size(page_size)
-    offset = (page - 1) * page_size
-
     q_emb = embed(query, input_type="search_query")
 
     if not isinstance(q_emb, list):
@@ -397,94 +256,80 @@ def semantic_search(
     q_emb_str = "[" + ",".join(str(float(x)) for x in q_emb) + "]"
 
     schema = resolve_schema_name(tenant_id)
-    filters, fp = _documents_where_filters(
-        document_name, agent_id, chunk_text, date_start, date_end
-    )
-    filters.append("embedding IS NOT NULL")
-    where_sql = " AND ".join(filters)
-
     conn = get_connection()
     cur = conn.cursor()
 
-    count_sql = f"SELECT COUNT(*) FROM {schema}.documents WHERE {where_sql}"
-    cur.execute(count_sql, fp)
-    total_count = int(cur.fetchone()[0])
-
-    select_sql = f"""
-        SELECT
+    # Base query
+    sql = f"""
+        SELECT 
             chunk_text,
             document_name,
             embedding <=> %s::vector AS distance
         FROM {schema}.documents
-        WHERE {where_sql}
-        ORDER BY embedding <=> %s::vector
-        LIMIT %s OFFSET %s
     """
-    cur.execute(select_sql, [q_emb_str] + fp + [q_emb_str, page_size, offset])
+
+    params = [q_emb_str]
+
+    # Filtros opcionales
+    filters = []
+    if document_name:
+        filters.append("document_name = %s")
+        params.append(document_name)
+
+    if agent_id:
+        filters.append("agent_id = %s")
+        params.append(agent_id)
+
+    if chunk_text:
+        filters.append("chunk_text = %s")
+        params.append(chunk_text)
+
+    if created_at_day is not None:
+        # Día civil UTC; created_at es timestamp sin TZ guardado como instante UTC (NOW() en Lambda).
+        # Rango [start, end) usa índice btree en created_at (AT TIME ZONE no es IMMUTABLE → no indexable).
+        start_utc = datetime.combine(created_at_day, time.min, tzinfo=timezone.utc)
+        end_utc = start_utc + timedelta(days=1)
+        filters.append("created_at >= %s AND created_at < %s")
+        params.append(start_utc.replace(tzinfo=None))
+        params.append(end_utc.replace(tzinfo=None))
+
+    if filters:
+        sql += " WHERE " + " AND ".join(filters)
+
+    sql += " ORDER BY embedding <=> %s::vector LIMIT %s"
+
+    params.append(q_emb_str)
+    params.append(k)
+
+    cur.execute(sql, params)
     rows = cur.fetchall()
+    print(f"[retrieval] vector search returned {len(rows)} rows (k={k}, schema={schema})")
+
     cur.close()
     conn.close()
 
-    matched_rows = [row for row in rows if row[2] is not None]
-    if MAX_SEMANTIC_DISTANCE is not None:
-        matched_rows = [row for row in matched_rows if row[2] <= MAX_SEMANTIC_DISTANCE]
+    # Filtra vecinos semánticos por umbral de distancia.
+    # Con cosine distance (<=>), valores más bajos son más similares.
+    matched_rows = [row for row in rows if row[2] is not None and row[2] <= MAX_SEMANTIC_DISTANCE]
 
+    if not matched_rows and rows:
+        # Mínimo 1 chunk: el vecino semánticamente más cercano (aunque supere el umbral).
+        n_cap = max(1, SEMANTIC_FALLBACK_TOP_N)
+        n = min(n_cap, len(rows))
+        matched_rows = rows[:n]
+        dists = [round(float(r[2]), 4) for r in matched_rows if r[2] is not None]
+        print(
+            f"[retrieval] no chunk under MAX_SEMANTIC_DISTANCE={MAX_SEMANTIC_DISTANCE}; "
+            f"using best {n} neighbor(s) as context, distances={dists}"
+        )
+    elif not rows:
+        print("[retrieval] 0 SQL rows: revisá tenant_id, agent_id, document_name/chunk_text/created_at o datos en BD")
+
+    # Extraer chunks y documentos únicos solo de matches válidos
     chunks = [row[0] for row in matched_rows]
     documents = sorted(set(row[1] for row in matched_rows))
 
-    return chunks, documents, total_count
-
-
-def keyword_search(
-    query,
-    tenant_id,
-    document_name=None,
-    agent_id=None,
-    chunk_text=None,
-    date_start=None,
-    date_end=None,
-    page=1,
-    page_size=None,
-):
-    """
-    Búsqueda por palabra clave en chunk_text (ILIKE case-insensitive).
-    Cuenta todas las coincidencias con los mismos filtros y pagina (ORDER BY created_at DESC).
-    """
-    page = normalize_page(page)
-    if page_size is None:
-        page_size = DEFAULT_PAGE_SIZE
-    page_size = normalize_page_size(page_size)
-    offset = (page - 1) * page_size
-
-    pattern = _keyword_ilike_pattern(query)
-    schema = resolve_schema_name(tenant_id)
-    filters, fp = _documents_where_filters(
-        document_name, agent_id, chunk_text, date_start, date_end
-    )
-    filters.insert(0, "chunk_text ILIKE %s ESCAPE '\\'")
-    fp_kw = [pattern] + fp
-    where_sql = " AND ".join(filters)
-
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute(f"SELECT COUNT(*) FROM {schema}.documents WHERE {where_sql}", fp_kw)
-    total_count = int(cur.fetchone()[0])
-
-    select_sql = f"""
-        SELECT chunk_text, document_name, NULL::double precision
-        FROM {schema}.documents
-        WHERE {where_sql}
-        ORDER BY created_at DESC NULLS LAST, id DESC
-        LIMIT %s OFFSET %s
-    """
-    cur.execute(select_sql, fp_kw + [page_size, offset])
-    rows = cur.fetchall()
-    cur.close()
-    conn.close()
-
-    chunks = [row[0] for row in rows]
-    documents = sorted(set(row[1] for row in rows))
-    return chunks, documents, total_count
+    return chunks, documents
 
 
 
@@ -598,23 +443,24 @@ def handler(event, context):
                     },
                     "body": json.dumps({"error": "Invalid JSON body"}),
                 }
-        src = body
-    else:
-        src = event
 
-    tenant_id = src.get("tenant_id")
-    agent_id = src.get("agent_id")
-    query = src.get("query")
-    document_name = src.get("document_name")
-    chunk_text = src.get("chunk_text")
-    created_at_raw = src.get("created_at")
-    if created_at_raw is None:
-        created_at_raw = src.get("create_at")
-    created_from = src.get("created_at_from") or src.get("fecha_desde")
-    created_to = src.get("created_at_to") or src.get("fecha_hasta")
-    search_type = str(src.get("search_type") or "semantic").strip().lower()
-    page = src.get("page", 1)
-    raw_page_size = src.get("page_size")
+        tenant_id = body.get("tenant_id")
+        agent_id = body.get("agent_id")
+        query = body.get("query")
+        document_name = body.get("document_name")
+        chunk_text = body.get("chunk_text")
+        created_at_raw = body.get("created_at")
+        if created_at_raw is None:
+            created_at_raw = body.get("create_at")
+    else:
+        tenant_id = event.get("tenant_id")
+        agent_id = event.get("agent_id")
+        query = event.get("query")
+        document_name = event.get("document_name")  # opcional
+        chunk_text = event.get("chunk_text")  # opcional
+        created_at_raw = event.get("created_at")
+        if created_at_raw is None:
+            created_at_raw = event.get("create_at")
 
     if not tenant_id or not agent_id or not query:
         resp = {
@@ -642,26 +488,9 @@ def handler(event, context):
             }
         return resp
 
-    if search_type not in ("semantic", "keyword"):
-        resp = {
-            "statusCode": 400,
-            "body": json.dumps(
-                {
-                    "error": "search_type inválido: use 'semantic' o 'keyword'",
-                }
-            ),
-        }
-        if is_http_event:
-            resp["headers"] = {
-                "Content-Type": "application/json",
-                **CORS_HEADERS,
-            }
-        return resp
-
+    created_at_day = None
     try:
-        date_start, date_end = resolve_created_at_bounds(
-            created_at_raw, created_from, created_to
-        )
+        created_at_day = parse_created_at_day(created_at_raw)
     except ValueError as e:
         resp = {
             "statusCode": 400,
@@ -674,50 +503,8 @@ def handler(event, context):
             }
         return resp
 
-    page = normalize_page(page)
-    if raw_page_size is None:
-        page_size = DEFAULT_PAGE_SIZE
-    else:
-        page_size = normalize_page_size(raw_page_size)
-
-    try:
-        if search_type == "keyword":
-            chunks, documents, total_count = keyword_search(
-                query,
-                tenant_id,
-                document_name,
-                agent_id,
-                chunk_text,
-                date_start,
-                date_end,
-                page=page,
-                page_size=page_size,
-            )
-        else:
-            chunks, documents, total_count = semantic_search(
-                query,
-                tenant_id,
-                document_name,
-                agent_id,
-                chunk_text,
-                date_start,
-                date_end,
-                page=page,
-                page_size=page_size,
-            )
-    except ValueError as e:
-        resp = {
-            "statusCode": 400,
-            "body": json.dumps({"error": str(e)}),
-        }
-        if is_http_event:
-            resp["headers"] = {
-                "Content-Type": "application/json",
-                **CORS_HEADERS,
-            }
-        return resp
-
-    pagination = pagination_meta(total_count, page, page_size)
+    # Obtener chunks relevantes
+    chunks, documents = semantic_search(query, tenant_id, document_name, agent_id, chunk_text)
     context_text = "\n\n".join(chunks)
 
     # Obtener prompt del agente
@@ -736,17 +523,11 @@ def handler(event, context):
     print(response)
     resp = {
         "statusCode": 200,
-        "body": json.dumps(
-            {
-                "response": response,
-                "contexts": chunks,
-                "documents": documents,
-                "total_ocurrencias": total_count,
-                "total_paginas": pagination["total_pages"],
-                "pagination": pagination,
-                "search_type": search_type,
-            }
-        ),
+        "body": json.dumps({
+            "response": response,
+            "contexts": chunks,
+            "documents": documents
+        }),
     }
     if is_http_event:
         resp["headers"] = {

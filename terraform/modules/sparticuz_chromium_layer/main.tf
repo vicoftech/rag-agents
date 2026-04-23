@@ -7,14 +7,14 @@ resource "null_resource" "download_chromium_layer_zip" {
   }
 
   provisioner "local-exec" {
-    interpreter = ["PowerShell", "-Command"]
+    interpreter = ["/bin/bash", "-lc"]
     command     = <<-EOT
-      $ErrorActionPreference = 'Stop'
-      $OutDir = "${path.module}/.builds"
-      if (-not (Test-Path $OutDir)) { New-Item -ItemType Directory -Force -Path $OutDir | Out-Null }
-      $OutFile = Join-Path $OutDir "sparticuz-chromium-layer.zip"
-      Write-Host "Downloading Sparticuz Chromium layer from ${var.layer_zip_url}..."
-      Invoke-WebRequest -Uri "${var.layer_zip_url}" -OutFile $OutFile -UseBasicParsing
+      set -euo pipefail
+      OUT_DIR="${path.module}/.builds"
+      OUT_FILE="${path.module}/.builds/sparticuz-chromium-layer.zip"
+      mkdir -p "$OUT_DIR"
+      echo "Downloading Sparticuz Chromium layer from ${var.layer_zip_url}..."
+      curl -L --fail --silent --show-error "${var.layer_zip_url}" -o "$OUT_FILE"
     EOT
   }
 }
@@ -30,9 +30,9 @@ resource "aws_s3_object" "layer_zip" {
 
 resource "aws_lambda_layer_version" "this" {
   layer_name               = "rag-sparticuz-chromium-${var.environment}"
-  s3_bucket           = var.s3_bucket_name
-  s3_key              = aws_s3_object.layer_zip.key
-  compatible_runtimes = ["python3.12", "python3.11", "python3.13", "nodejs20.x", "nodejs22.x"]
+  s3_bucket                = var.s3_bucket_name
+  s3_key                   = aws_s3_object.layer_zip.key
+  compatible_runtimes      = ["python3.12", "python3.11", "python3.13", "nodejs20.x", "nodejs22.x"]
   compatible_architectures = ["x86_64"]
 
   description = "Sparticuz Chromium headless shell for Playwright (CHROMIUM_PACK_PATH=/opt/chromium)"
