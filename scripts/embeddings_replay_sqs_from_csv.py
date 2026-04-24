@@ -6,7 +6,11 @@ body, para reprocesar sin copiar objetos en S3.
 
 Uso (prod):
   cd scripts && python embeddings_replay_sqs_from_csv.py --profile asap_main --dry-run
+  # Por defecto: solo filas con prefix=tenant_boletin (el CSV mezcla tenant_anmat + tenant_boletin)
   cd scripts && python embeddings_replay_sqs_from_csv.py --profile asap_main
+  # Enviar todos los prefix del CSV, o filtrar solo ANMAT:
+  cd scripts && python embeddings_replay_sqs_from_csv.py --profile asap_main --all-prefixes
+  cd scripts && python embeddings_replay_sqs_from_csv.py --profile asap_main --only-prefix tenant_anmat
 """
 
 from __future__ import annotations
@@ -92,7 +96,9 @@ def _row_key_size(row: dict[str, str]) -> tuple[str | None, int]:
     return k, sz
 
 
-def iter_csv_keys(path: str, *, pdf_only: bool) -> Iterator[tuple[str, int]]:
+def iter_csv_keys(
+    path: str, *, pdf_only: bool, only_prefix: str | None
+) -> Iterator[tuple[str, int]]:
     with open(path, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         fn = [x.strip() for x in (reader.fieldnames or []) if x]
@@ -100,7 +106,14 @@ def iter_csv_keys(path: str, *, pdf_only: bool) -> Iterator[tuple[str, int]]:
             raise SystemExit("CSV vacío o sin cabecera")
         if "key" not in fn and "s3_uri" not in fn:
             raise SystemExit("El CSV debe incluir columna 'key' o 's3_uri'")
+        if only_prefix is not None and "prefix" not in fn:
+            raise SystemExit(
+                "Filtro --only-prefix requiere columna 'prefix' en el CSV (o use --all-prefixes)"
+            )
         for row in reader:
+            if only_prefix is not None:
+                if row.get("prefix", "").strip() != only_prefix:
+                    continue
             key, sz = _row_key_size(row)
             if not key:
                 continue
@@ -143,9 +156,31 @@ def main() -> int:
         action="store_true",
         help="También encolar claves que no terminen en .pdf",
     )
+    p.add_argument(
+        "--only-prefix",
+        default="tenant_boletin",
+        metavar="NAME",
+        help=(
+            "Solo filas donde la columna 'prefix' coincide (p. ej. tenant_boletin). "
+            "Por defecto: tenant_boletin. Vacío: sin filtrar."
+        ),
+    )
+    p.add_argument(
+        "--all-prefixes",
+        action="store_true",
+        help="Incluir todas las filas; ignora --only-prefix.",
+    )
     args = p.parse_args()
 
-    rows = list(iter_csv_keys(args.csv, pdf_only=not args.include_non_pdf))
+    if args.all_prefixes:
+        only_prefix: str | None = None
+    else:
+        op = (args.only_prefix or "").strip()
+        only_prefix = op if op else None
+
+    rows = list(
+        iter_csv_keys(args.csv, pdf_only=not args.include_non_pdf, only_prefix=only_prefix)
+    )
     if args.limit and args.limit > 0:
         rows = rows[: args.limit]
     n = len(rows)
