@@ -26,7 +26,7 @@ enable_s3_cors       = false
 cors_allowed_origins = ["*"]
 
 lambda_embeddings_config = {
-  timeout                = 10
+  timeout                = 30
   memory_size            = 1024
   ephemeral_storage_size = 1024
 }
