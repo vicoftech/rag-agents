@@ -410,13 +410,13 @@ module "lambda_embeddings_async" {
 
   s3_trigger_enabled = false
 
-  # SQS: un PDF por invocación; concurrencia acotada en el mapeo (backpressure)
+  # SQS: un PDF por invocación; concurrencia vía var (backpressure; subir con cuidado: Bedrock/Textract/DB)
   sqs_trigger_enabled     = true
   sqs_queue_arn           = aws_sqs_queue.embeddings_ingest.arn
   sqs_batch_size          = 1
-  sqs_maximum_concurrency = 10
+  sqs_maximum_concurrency = var.lambda_embeddings_sqs_concurrency
 
-  reserved_concurrent_executions = 10
+  reserved_concurrent_executions = var.lambda_embeddings_reserved_concurrency
 
   # IAM Permissions
   attach_policy_statements = concat(

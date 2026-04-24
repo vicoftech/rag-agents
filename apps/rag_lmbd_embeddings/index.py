@@ -4,6 +4,7 @@ import re
 import boto3
 import pdfplumber
 import psycopg2
+from psycopg2.extras import execute_values
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from botocore.exceptions import ClientError
 import uuid
@@ -44,6 +45,8 @@ DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = os.getenv("DB_PORT", "5432")
 DB_SECRET_ID = os.getenv("DB_SECRET_ID", "")
 _DB_SECRET_CACHE = None
+# Por contenedor: evita round-trips a DB en cargas masivas (mismo tenant/agente)
+_TENANT_SCHEMA_READY: set[tuple[str, str]] = set()
 #EMBEDDINGS_MODEL = os.getenv("EMBEDDINGS_MODEL", "amazon.titan-embed-text-v2:0")
 EMBEDDINGS_MODEL = os.getenv("EMBEDDINGS_MODEL", "cohere.embed-v4:0")
 # Truncado en el modelo Cohere (Bedrock); alineado con chunks por caracteres.
@@ -98,6 +101,8 @@ def ensure_tenant_schema_exists(tenant_id: str, agent_id: str):
         tenant_id: Identificador del tenant (se usará como nombre del esquema)
         agent_id: Identificador del agente para crear el registro por defecto
     """
+    if (tenant_id, agent_id) in _TENANT_SCHEMA_READY:
+        return
     conn = get_connection()
     cur = conn.cursor()
     
@@ -280,6 +285,8 @@ Responde con precisión y sin inventar información que no esté en el contexto.
                 ON {tenant_id}.documents (created_at)
             """)
             conn.commit()
+
+        _TENANT_SCHEMA_READY.add((tenant_id, agent_id))
             
     except Exception as e:
         conn.rollback()
@@ -527,10 +534,16 @@ def _build_separators(custom_title_seps: list) -> list:
     
     return sorted_titles + base_separators
 
-def _get_page_count(bucket: str, key: str) -> int:
+def _get_page_count(bucket: str, key: str, local_path: str | None = None) -> int:
     """
-    Obtiene el número de páginas del PDF.
+    Obtiene el número de páginas del PDF. Prefiere /tmp (ya bajado por el handler) para no leer otra vez desde S3.
     """
+    if local_path and os.path.isfile(local_path):
+        try:
+            with pdfplumber.open(local_path) as pdf:
+                return len(pdf.pages)
+        except Exception as e:
+            print(f"[WARN] Páginas desde disco falló ({e}), leyendo desde S3")
     pdf_obj = s3.get_object(Bucket=bucket, Key=key)
     pdf_bytes = pdf_obj["Body"].read()
     
@@ -563,8 +576,8 @@ def generate_semantic_chunks(bucket, key, local_path=None):
     Prioridad 1: Tamaño del archivo → determina configuración de chunks
     Prioridad 2: Títulos y subtítulos → puntos de corte semánticos preferidos
     """
-    # 1️⃣ Obtener número de páginas y configuración óptima
-    num_pages = _get_page_count(bucket, key)
+    # 1️⃣ Obtener número de páginas y configuración óptima (reusa archivo local si existe)
+    num_pages = _get_page_count(bucket, key, local_path=local_path)
     config = _get_chunk_config(num_pages)
     
     print(f"[INFO] PDF con {num_pages} páginas → chunk_size={config['chunk_size']}, use_textract={config['use_textract']}")
@@ -739,28 +752,28 @@ def handler(event, context):
     texts_for_embed = [f"[{document_name}]\n{c}" for c in chunks]
     embeddings = embed_texts_batch(texts_for_embed, input_type="search_document")
 
-    for chunk, embedding in zip(chunks, embeddings):
-        cur.execute(
-            f"""
-            INSERT INTO {tenant_id}.documents (
-                agent_id,
-                document_id,
-                document_name,
-                chunk_text,
-                embedding,
-                created_at
-            )
-            VALUES (%s, %s, %s, %s, %s, COALESCE(%s::timestamp, NOW()))
-            """,
-            (
-                agent_id,
-                document_id,
-                document_name,
-                chunk,
-                to_pgvector(embedding),
-                created_at_partition,
-            ),
+    rows = [
+        (
+            agent_id,
+            document_id,
+            document_name,
+            chunk,
+            to_pgvector(embedding),
+            created_at_partition,
         )
+        for chunk, embedding in zip(chunks, embeddings)
+    ]
+    execute_values(
+        cur,
+        f"""
+        INSERT INTO {tenant_id}.documents (
+            agent_id, document_id, document_name, chunk_text, embedding, created_at
+        ) VALUES %s
+        """,
+        rows,
+        template="""(%s::uuid, %s::uuid, %s, %s, %s::vector, COALESCE(%s::timestamp, NOW()))""",
+        page_size=len(rows) if rows else 1,
+    )
 
     conn.commit()
     cur.close()

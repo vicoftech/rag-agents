@@ -179,6 +179,18 @@ variable "lambda_embeddings_config" {
   }
 }
 
+variable "lambda_embeddings_sqs_concurrency" {
+  description = "Límite de concurrencia del evento SQS → Lambda embeddings (más = más PDFs en paralelo; coordinar con Bedrock/Textract/Aurora)"
+  type        = number
+  default     = 30
+}
+
+variable "lambda_embeddings_reserved_concurrency" {
+  description = "Reserved concurrent executions de la Lambda embeddings (debe ser >= lambda_embeddings_sqs_concurrency; -1 = sin reserva = cuenta límite de región)"
+  type        = number
+  default     = 30
+}
+
 variable "lambda_query_config" {
   description = "Configuration for query Lambda"
   type = object({
