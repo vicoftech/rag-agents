@@ -9,7 +9,8 @@ resource "aws_sqs_queue" "embeddings_ingest_dlq" {
 resource "aws_sqs_queue" "embeddings_ingest" {
   name = "rag-embeddings-ingest-${var.environment}"
 
-  visibility_timeout_seconds = 960 # > timeout Lambda embeddings (p. ej. 900s)
+  # >= 6× timeout Lambda (guía AWS para S→Lambda). Si timeout es 10s, 60s; fallas rápido y reintentos sin bloque 15 min.
+  visibility_timeout_seconds = max(30, 6 * var.lambda_embeddings_config.timeout)
   message_retention_seconds  = 1209600
   redrive_policy = jsonencode({
     deadLetterTargetArn = aws_sqs_queue.embeddings_ingest_dlq.arn

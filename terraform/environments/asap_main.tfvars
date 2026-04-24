@@ -28,7 +28,7 @@ cors_allowed_origins = ["*"]
 # ==============================================================================
 
 lambda_embeddings_config = {
-  timeout                = 900 # 15 minutes for large PDFs
+  timeout                = 10
   memory_size            = 1024
   ephemeral_storage_size = 1024
 }

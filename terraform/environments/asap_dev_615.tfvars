@@ -24,7 +24,7 @@ cors_allowed_origins = ["*"]
 
 # Lambdas: no definir DB_* aquí; main.tf inyecta endpoint Aurora vía base_db_env_vars
 lambda_embeddings_config = {
-  timeout                = 900
+  timeout                = 10
   memory_size            = 1024
   ephemeral_storage_size = 1024
 }
