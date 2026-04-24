@@ -55,6 +55,8 @@ MAX_EMBED_TEXT_LENGTH = 20000
 EMBED_BATCH_SIZE = min(96, int(os.getenv("EMBED_BATCH_SIZE", "96")))
 # ivfflat por defecto (Aurora/pgvector antiguo). Si la instancia soporta HNSW: PGVECTOR_INDEX_TYPE=hnsw
 PGVECTOR_INDEX_TYPE = os.getenv("PGVECTOR_INDEX_TYPE", "ivfflat").lower()
+# Textract = API lenta (job async, minutos). Por defecto off; usar "true" si hay PDFs escaneados puros.
+USE_TEXTRACT = os.getenv("USE_TEXTRACT", "false").lower() in ("1", "true", "yes")
 
 
 def _cohere_embed_extras():
@@ -569,6 +571,34 @@ def _extract_text_with_structure(local_path: str) -> str:
     
     return "".join(full_text_parts)
 
+
+def _extract_text_pymupdf(local_path: str) -> str:
+    """PyMuPDF: rápido, sin llamadas AWS; vuelve texto por página. Malo en escaneos sin OCR."""
+    import fitz  # PyMuPDF
+
+    doc = fitz.open(local_path)
+    try:
+        parts: list[str] = []
+        for page in doc:
+            t = page.get_text() or ""
+            if t.strip():
+                parts.append(t)
+            parts.append("\n\n")
+        return "".join(parts)
+    finally:
+        doc.close()
+
+
+def _extract_text_local_preferred(local_path: str) -> str:
+    """Camino crítico local: PyMuPDF primero; si falla, pdfplumber (misma semántica que antes)."""
+    try:
+        text = _extract_text_pymupdf(local_path)
+        if text.strip():
+            return text
+    except Exception as e:
+        print(f"[WARN] PyMuPDF falló: {e}; reintento con pdfplumber")
+    return _extract_text_with_structure(local_path)
+
 def generate_semantic_chunks(bucket, key, local_path=None):
     """
     Devuelve chunks semánticos optimizados.
@@ -580,20 +610,22 @@ def generate_semantic_chunks(bucket, key, local_path=None):
     num_pages = _get_page_count(bucket, key, local_path=local_path)
     config = _get_chunk_config(num_pages)
     
-    print(f"[INFO] PDF con {num_pages} páginas → chunk_size={config['chunk_size']}, use_textract={config['use_textract']}")
+    use_aws_textract = config["use_textract"] and USE_TEXTRACT
+    print(
+        f"[INFO] PDF con {num_pages} páginas → chunk_size={config['chunk_size']}, "
+        f"use_textract_config={config['use_textract']}, use_aws_textract={use_aws_textract}"
+    )
     
     chunks = []
     
-    # 2️⃣ Extraer texto según configuración
-    if config["use_textract"]:
-        # PDFs grandes: usar Textract por página
+    # 2️⃣ Texto: Textract (AWS) solo si explícitamente USE_TEXTRACT=true; si no, todo local (PyMuPDF + fallback).
+    if use_aws_textract:
         page_texts = extract_pdf_pages(bucket, key)
         full_text = "\n\n".join([t for t in page_texts if t and t.strip()])
     else:
-        # PDFs pequeños/medianos: usar pdfplumber local
         if local_path is None:
-            raise Exception("local_path es obligatorio para PDFs pequeños/medianos.")
-        full_text = _extract_text_with_structure(local_path)
+            raise Exception("local_path es obligatorio para extracción local de PDFs.")
+        full_text = _extract_text_local_preferred(local_path)
     
     if not full_text.strip():
         return []
