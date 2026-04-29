@@ -165,6 +165,39 @@ variable "lambda_query_env_vars" {
   default     = {}
 }
 
+variable "lambda_obtener_alertas_env_vars" {
+  description = "Environment variables for the obtener_alertas Lambda (external DB/project)"
+  type        = map(string)
+  default     = {}
+}
+
+variable "lambda_obtener_alertas_db" {
+  description = "External DB config for rag_lmbd_obtener_alertas (agnostic, per environment tfvars)"
+  type = object({
+    host     = string
+    port     = number
+    user     = string
+    password = string
+    database = string
+    sslmode  = optional(string, "require")
+  })
+  default = {
+    host     = ""
+    port     = 5432
+    user     = ""
+    password = ""
+    database = ""
+    sslmode  = "require"
+  }
+  sensitive = true
+}
+
+variable "lambda_obtener_alertas_security_group_ids" {
+  description = "Security groups for rag_lmbd_obtener_alertas Lambda ENI(s). Must allow connectivity to target PostgreSQL."
+  type        = list(string)
+  default     = []
+}
+
 variable "lambda_embeddings_config" {
   description = "Configuration for embeddings Lambda"
   type = object({

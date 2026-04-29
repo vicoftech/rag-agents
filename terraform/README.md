@@ -99,6 +99,7 @@ terraform apply -var-file=environments/asap_main.tfvars
 |--------|-------------|---------|
 | `rag_lmbd_embeddings-async` | Procesa PDFs (consume SQS), genera embeddings y guarda en PostgreSQL | SQS (ingesta desde S3 vía encolador) |
 | `rag_lmbd_query` | Búsqueda semántica + respuesta LLM | Invocación directa |
+| `rag_lmbd_obtener_alertas` | Obtiene alertas activas desde PostgreSQL | Invocación directa / API |
 
 ### Otros Recursos
 

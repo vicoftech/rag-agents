@@ -3,11 +3,23 @@ import os
 import boto3
 from datetime import datetime
 import psycopg2
+from psycopg2.extras import RealDictCursor
 import logging
 
 # Configurar logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+
+def get_db_schema():
+    """
+    Obtener schema de BD según ambiente (fallback: public)
+    """
+    environment = os.environ.get('ENVIRONMENT', 'dev').upper()
+    schema = os.environ.get(f'DB_SCHEMA_{environment}', 'tenant_boletin')
+    # Evitar inyección al interpolar identificador de schema.
+    if not schema.replace('_', '').isalnum():
+        raise ValueError(f"DB schema inválido: {schema}")
+    return schema
 
 def get_db_config():
     """
@@ -73,7 +85,7 @@ def execute_query(connection, query, params=None):
     Ejecutar consulta SQL con parámetros
     """
     try:
-        with connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
+        with connection.cursor(cursor_factory=RealDictCursor) as cursor:
             if params:
                 cursor.execute(query, params)
             else:
@@ -88,20 +100,53 @@ def execute_query(connection, query, params=None):
         logger.error(f"Query: {query}")
         raise e
 
+def resolve_alertas_table(connection):
+    """
+    Descubrir nombre de tabla (schema.table) para alertas/busquedas.
+    """
+    preferred_schema = get_db_schema()
+    candidates = [
+        f"{preferred_schema}.busqueda",
+        f"{preferred_schema}.alertas",
+        f"{preferred_schema}.busquedas",
+        "tenant_boletin.busqueda",
+        "tenant_boletin.alertas",
+        "tenant_anmat.busqueda",
+        "tenant_anmat.alertas",
+        "public.busqueda",
+        "public.alertas",
+    ]
+    try:
+        with connection.cursor() as cursor:
+            for candidate in candidates:
+                cursor.execute("SELECT to_regclass(%s)", [candidate])
+                regclass = cursor.fetchone()[0]
+                if regclass:
+                    logger.info(f"Tabla de alertas detectada: {candidate}")
+                    return candidate
+    except Exception as e:
+        logger.error(f"Error resolviendo tabla de alertas: {str(e)}")
+        raise e
+
+    raise RuntimeError(
+        "No se encontró tabla de alertas (busqueda/alertas) en los esquemas esperados"
+    )
+
 def get_alertas(connection):
     """
     Obtener alertas de la base de datos con filtros opcionales
     """
     try:
         # Query base
-        query = """
+        table_name = resolve_alertas_table(connection)
+        query = f"""
         SELECT 
             id,
             destinatarios,
             fuente_de_informacion,
             nombre_busqueda,
             palabras_de_busqueda
-        FROM busqueda
+        FROM {table_name}
         WHERE activo=true
         AND eliminado=false
 
@@ -121,14 +166,15 @@ def get_alerta_by_id(connection, alerta_id):
     Obtener una alerta específica por ID
     """
     try:
-        query = """
+        table_name = resolve_alertas_table(connection)
+        query = f"""
         SELECT 
             id,
             destinatarios,
             fuente_de_informacion,
             nombre_busqueda,
             palabras_de_busqueda
-        FROM alertas
+        FROM {table_name}
         WHERE id = %s
         AND activo=true
         AND eliminado=false
@@ -146,7 +192,8 @@ def get_alertas_count(connection, fecha_desde=None, fecha_hasta=None):
     Obtener conteo total de alertas
     """
     try:
-        query = "SELECT COUNT(*) as total FROM busqueda WHERE activo=true AND eliminado=false"
+        table_name = resolve_alertas_table(connection)
+        query = f"SELECT COUNT(*) as total FROM {table_name} WHERE activo=true AND eliminado=false"
         params = []
         
         result = execute_query(connection, query, params)
@@ -187,8 +234,27 @@ def handler(event, context):
     try:
         logger.info("Iniciando handler de rag_lmbd_obtener_alertas")
         
-        # Extraer parámetros del evento
-        query_params = event.get('queryStringParameters', {})
+        # Extraer parámetros del evento (query string, path params o body JSON).
+        query_params = event.get('queryStringParameters') or {}
+        path_params = event.get('pathParameters') or {}
+        body_params = {}
+        body_raw = event.get('body')
+        if isinstance(body_raw, str) and body_raw.strip():
+            try:
+                body_params = json.loads(body_raw)
+            except json.JSONDecodeError:
+                body_params = {}
+        elif isinstance(body_raw, dict):
+            body_params = body_raw
+
+        alerta_id = (
+            query_params.get('alerta_id')
+            or query_params.get('id')
+            or path_params.get('alerta_id')
+            or path_params.get('id')
+            or body_params.get('alerta_id')
+            or body_params.get('id')
+        )
                 
         # Conectar a base de datos
         connection = get_db_connection()

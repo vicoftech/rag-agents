@@ -56,6 +56,19 @@ lambda_query_env_vars = {
   FALLBACK_LLM_MODEL    = "openai.gpt-oss-20b-1:0"
 }
 
+lambda_obtener_alertas_db = {
+  host     = "aurora-pg-qa.cluster-ch7yo6tzxi4l.us-east-1.rds.amazonaws.com"
+  port     = 5432
+  user     = "qa_master"
+  password = "CambiarEstaPasswordQA123!"
+  database = "ragdb_qa"
+  sslmode  = "require"
+}
+
+lambda_obtener_alertas_security_group_ids = [
+  "sg-0e73ff3f4dc8653d4"
+]
+
 create_agentcore = false
 
 agentcore_name_prefix = "rag_agent"
