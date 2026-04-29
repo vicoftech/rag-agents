@@ -1,6 +1,5 @@
 import json
 import os
-import boto3
 from datetime import datetime
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -15,7 +14,7 @@ def get_db_schema():
     Obtener schema de BD según ambiente (fallback: public)
     """
     environment = os.environ.get('ENVIRONMENT', 'dev').upper()
-    schema = os.environ.get(f'DB_SCHEMA_{environment}', 'tenant_boletin')
+    schema = os.environ.get(f'DB_SCHEMA_{environment}', 'public')
     # Evitar inyección al interpolar identificador de schema.
     if not schema.replace('_', '').isalnum():
         raise ValueError(f"DB schema inválido: {schema}")
@@ -102,19 +101,14 @@ def execute_query(connection, query, params=None):
 
 def resolve_alertas_table(connection):
     """
-    Descubrir nombre de tabla (schema.table) para alertas/busquedas.
+    Descubrir nombre de tabla (schema.table) de alertas.
+    Basado en DDL actual: public.busqueda; admite otros esquemas si existiera la migración.
     """
     preferred_schema = get_db_schema()
     candidates = [
         f"{preferred_schema}.busqueda",
-        f"{preferred_schema}.alertas",
-        f"{preferred_schema}.busquedas",
-        "tenant_boletin.busqueda",
-        "tenant_boletin.alertas",
-        "tenant_anmat.busqueda",
-        "tenant_anmat.alertas",
         "public.busqueda",
-        "public.alertas",
+        "busqueda",
     ]
     try:
         with connection.cursor() as cursor:
@@ -124,12 +118,36 @@ def resolve_alertas_table(connection):
                 if regclass:
                     logger.info(f"Tabla de alertas detectada: {candidate}")
                     return candidate
+
+            # Fallback: introspección cuando to_regclass no ve la tabla (search_path distinto, etc.).
+            cursor.execute(
+                """
+                SELECT table_schema, table_name
+                FROM information_schema.tables
+                WHERE table_type = 'BASE TABLE'
+                  AND table_schema NOT IN ('pg_catalog', 'information_schema')
+                  AND lower(table_name) IN ('busqueda', 'alertas', 'busquedas')
+                ORDER BY
+                  CASE WHEN table_schema = %s THEN 0 ELSE 1 END,
+                  CASE WHEN lower(table_name) = 'busqueda' THEN 0 ELSE 1 END,
+                  table_schema, table_name
+                LIMIT 1
+                """,
+                [preferred_schema],
+            )
+            row = cursor.fetchone()
+            if row:
+                schema, table = row[0], row[1]
+                fq = f'"{schema}"."{table}"'
+                logger.info(f"Tabla de alertas (information_schema): {fq}")
+                return fq
     except Exception as e:
         logger.error(f"Error resolviendo tabla de alertas: {str(e)}")
         raise e
 
     raise RuntimeError(
-        "No se encontró tabla de alertas (busqueda/alertas) en los esquemas esperados"
+        'No existe ninguna tabla activable (busqueda/alertas) en esta base; '
+        "aplique el DDL alerts-ddl.sql o defina DB_SCHEMA_<ENV>"
     )
 
 def get_alertas(connection):
