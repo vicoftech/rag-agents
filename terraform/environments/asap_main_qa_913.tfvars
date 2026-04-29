@@ -61,8 +61,14 @@ lambda_obtener_alertas_db = {
   port     = 5432
   user     = "qa_master"
   password = "CambiarEstaPasswordQA123!"
-  database = "ragdb_qa"
+  # Base real en el cluster QA (ragdb_qa no existe en este proyecto)
+  database = "postgres"
   sslmode  = "require"
+}
+
+# Esquema de tablas alertas/busqueda (DDL en public.busqueda)
+lambda_obtener_alertas_env_vars = {
+  DB_SCHEMA_QA = "public"
 }
 
 lambda_obtener_alertas_security_group_ids = [
