@@ -80,6 +80,7 @@ locals {
   lambda_s3writer_path           = "${path.module}/../apps/rag_lmbd_s3writer"
   lambda_dbwriter_path           = "${path.module}/../apps/rag_lmbd_dbwriter"
   lambda_notifier_path           = "${path.module}/../apps/rag_lmbd_notifier"
+  lambda_obtener_alertas_path    = "${path.module}/../apps/rag_lmbd_obtener_alertas"
   lambda_stepfunction_path       = "${path.module}/../apps/rag_lmbd_stepfunction"
   lambda_agent_path              = "${path.module}/../apps/agent"
 
@@ -502,6 +503,51 @@ module "lambda_query" {
 }
 
 # ==============================================================================
+# Lambda: Obtener Alertas (reads active searches from PostgreSQL)
+# ==============================================================================
+
+module "lambda_obtener_alertas" {
+  source = "./modules/lambda"
+
+  function_name          = "rag_lmbd_obtener_alertas-${var.environment}"
+  description            = "Obtiene alertas activas desde PostgreSQL"
+  handler                = "index.handler"
+  runtime                = "python3.12"
+  timeout                = 60
+  memory_size            = 512
+  ephemeral_storage_size = 512
+
+  source_path = local.lambda_obtener_alertas_path
+  environment = var.environment
+
+  # Debe vivir en la misma VPC que el PostgreSQL del ambiente.
+  vpc_id             = var.vpc_id
+  subnet_ids         = var.subnets
+  security_group_ids = var.lambda_obtener_alertas_security_group_ids
+
+  use_s3_deployment = true
+  s3_bucket_name    = module.s3_documents.bucket_name
+
+  # Esta Lambda apunta a una BD externa gestionada fuera de este proyecto Terraform.
+  # Se define de forma agnóstica en lambda_obtener_alertas_db y aquí se mapea al
+  # formato legacy esperado por la función (DB_HOST_QA/PROD/DEV, etc.).
+  environment_variables = merge(
+    {
+      ENVIRONMENT                               = var.environment
+      ("DB_HOST_${upper(var.environment)}")     = var.lambda_obtener_alertas_db.host
+      ("DB_PORT_${upper(var.environment)}")     = tostring(var.lambda_obtener_alertas_db.port)
+      ("DB_USER_${upper(var.environment)}")     = var.lambda_obtener_alertas_db.user
+      ("DB_PASSWORD_${upper(var.environment)}") = var.lambda_obtener_alertas_db.password
+      ("DB_NAME_${upper(var.environment)}")     = var.lambda_obtener_alertas_db.database
+      ("DB_SSLMODE_${upper(var.environment)}")  = try(var.lambda_obtener_alertas_db.sslmode, "require")
+    },
+    var.lambda_obtener_alertas_env_vars
+  )
+
+  tags = local.common_tags
+}
+
+# ==============================================================================
 # Cognito + API Gateway for RAG Query (/query)
 # ==============================================================================
 
@@ -871,7 +917,8 @@ module "lambda_anmatlinks" {
   layers = [module.sparticuz_chromium_layer.layer_arn]
 
   environment_variables = {
-    CHROMIUM_PACK_PATH = "/opt/nodejs/node_modules/@sparticuz/chromium/bin"
+    CHROMIUM_PACK_PATH       = "/opt/nodejs/node_modules/@sparticuz/chromium/bin"
+    ANMAT_FORCED_RESOLVER_IP = "190.210.84.134"
   }
 
   use_s3_deployment = true
@@ -1148,6 +1195,21 @@ output "lambda_anmatlinks_function_arn" {
 output "lambda_anmatlinks_invoke_arn" {
   description = "Invoke ARN of the anmatlinks Lambda"
   value       = module.lambda_anmatlinks.invoke_arn
+}
+
+output "lambda_obtener_alertas_function_name" {
+  description = "Name of the obtener_alertas Lambda"
+  value       = module.lambda_obtener_alertas.function_name
+}
+
+output "lambda_obtener_alertas_function_arn" {
+  description = "ARN of the obtener_alertas Lambda"
+  value       = module.lambda_obtener_alertas.function_arn
+}
+
+output "lambda_obtener_alertas_invoke_arn" {
+  description = "Invoke ARN of the obtener_alertas Lambda"
+  value       = module.lambda_obtener_alertas.invoke_arn
 }
 
 output "sparticuz_chromium_layer_arn" {

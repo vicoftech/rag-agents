@@ -72,6 +72,15 @@ lambda_query_env_vars = {
   MAX_EMBED_TEXT_LENGTH = "20000"
 }
 
+lambda_obtener_alertas_db = {
+  host     = "aurora-pg-dev.cluster-ch7yo6tzxi4l.us-east-1.rds.amazonaws.com"
+  port     = 5432
+  user     = "dev_master"
+  password = "DevPassword123!"
+  database = "ragdb_dev"
+  sslmode  = "require"
+}
+
 # ==============================================================================
 # Bedrock AgentCore Configuration
 # ==============================================================================

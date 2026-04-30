@@ -90,7 +90,7 @@ echo ""
 # Build Lambda packages
 echo -e "${YELLOW}Building Lambda packages...${NC}"
 
-for lambda_dir in "${APPS_DIR}/rag_lmbd_embeddings" "${APPS_DIR}/rag_lmbd_query"; do
+for lambda_dir in "${APPS_DIR}/rag_lmbd_embeddings" "${APPS_DIR}/rag_lmbd_query" "${APPS_DIR}/rag_lmbd_obtener_alertas"; do
     if [[ -d "$lambda_dir" ]]; then
         lambda_name=$(basename "$lambda_dir")
         echo "  Building ${lambda_name}..."

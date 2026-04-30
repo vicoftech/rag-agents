@@ -79,7 +79,7 @@ build_lambda() {
 }
 
 # Build each lambda
-for lambda_dir in "${APPS_DIR}/rag_lmbd_embeddings" "${APPS_DIR}/rag_lmbd_query"; do
+for lambda_dir in "${APPS_DIR}/rag_lmbd_embeddings" "${APPS_DIR}/rag_lmbd_query" "${APPS_DIR}/rag_lmbd_obtener_alertas"; do
     if [[ -d "$lambda_dir" ]]; then
         build_lambda "$lambda_dir"
     fi

@@ -1,13 +1,24 @@
 import json
 import os
-import boto3
 from datetime import datetime
 import psycopg2
+from psycopg2.extras import RealDictCursor
 import logging
 
 # Configurar logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+
+def get_db_schema():
+    """
+    Obtener schema de BD según ambiente (fallback: public)
+    """
+    environment = os.environ.get('ENVIRONMENT', 'dev').upper()
+    schema = os.environ.get(f'DB_SCHEMA_{environment}', 'public')
+    # Evitar inyección al interpolar identificador de schema.
+    if not schema.replace('_', '').isalnum():
+        raise ValueError(f"DB schema inválido: {schema}")
+    return schema
 
 def get_db_config():
     """
@@ -73,7 +84,7 @@ def execute_query(connection, query, params=None):
     Ejecutar consulta SQL con parámetros
     """
     try:
-        with connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
+        with connection.cursor(cursor_factory=RealDictCursor) as cursor:
             if params:
                 cursor.execute(query, params)
             else:
@@ -88,20 +99,72 @@ def execute_query(connection, query, params=None):
         logger.error(f"Query: {query}")
         raise e
 
+def resolve_alertas_table(connection):
+    """
+    Descubrir nombre de tabla (schema.table) de alertas.
+    Basado en DDL actual: public.busqueda; admite otros esquemas si existiera la migración.
+    """
+    preferred_schema = get_db_schema()
+    candidates = [
+        f"{preferred_schema}.busqueda",
+        "public.busqueda",
+        "busqueda",
+    ]
+    try:
+        with connection.cursor() as cursor:
+            for candidate in candidates:
+                cursor.execute("SELECT to_regclass(%s)", [candidate])
+                regclass = cursor.fetchone()[0]
+                if regclass:
+                    logger.info(f"Tabla de alertas detectada: {candidate}")
+                    return candidate
+
+            # Fallback: introspección cuando to_regclass no ve la tabla (search_path distinto, etc.).
+            cursor.execute(
+                """
+                SELECT table_schema, table_name
+                FROM information_schema.tables
+                WHERE table_type = 'BASE TABLE'
+                  AND table_schema NOT IN ('pg_catalog', 'information_schema')
+                  AND lower(table_name) IN ('busqueda', 'alertas', 'busquedas')
+                ORDER BY
+                  CASE WHEN table_schema = %s THEN 0 ELSE 1 END,
+                  CASE WHEN lower(table_name) = 'busqueda' THEN 0 ELSE 1 END,
+                  table_schema, table_name
+                LIMIT 1
+                """,
+                [preferred_schema],
+            )
+            row = cursor.fetchone()
+            if row:
+                schema, table = row[0], row[1]
+                fq = f'"{schema}"."{table}"'
+                logger.info(f"Tabla de alertas (information_schema): {fq}")
+                return fq
+    except Exception as e:
+        logger.error(f"Error resolviendo tabla de alertas: {str(e)}")
+        raise e
+
+    raise RuntimeError(
+        'No existe ninguna tabla activable (busqueda/alertas) en esta base; '
+        "aplique el DDL alerts-ddl.sql o defina DB_SCHEMA_<ENV>"
+    )
+
 def get_alertas(connection):
     """
     Obtener alertas de la base de datos con filtros opcionales
     """
     try:
         # Query base
-        query = """
+        table_name = resolve_alertas_table(connection)
+        query = f"""
         SELECT 
             id,
             destinatarios,
             fuente_de_informacion,
             nombre_busqueda,
             palabras_de_busqueda
-        FROM busqueda
+        FROM {table_name}
         WHERE activo=true
         AND eliminado=false
 
@@ -121,14 +184,15 @@ def get_alerta_by_id(connection, alerta_id):
     Obtener una alerta específica por ID
     """
     try:
-        query = """
+        table_name = resolve_alertas_table(connection)
+        query = f"""
         SELECT 
             id,
             destinatarios,
             fuente_de_informacion,
             nombre_busqueda,
             palabras_de_busqueda
-        FROM alertas
+        FROM {table_name}
         WHERE id = %s
         AND activo=true
         AND eliminado=false
@@ -146,7 +210,8 @@ def get_alertas_count(connection, fecha_desde=None, fecha_hasta=None):
     Obtener conteo total de alertas
     """
     try:
-        query = "SELECT COUNT(*) as total FROM busqueda WHERE activo=true AND eliminado=false"
+        table_name = resolve_alertas_table(connection)
+        query = f"SELECT COUNT(*) as total FROM {table_name} WHERE activo=true AND eliminado=false"
         params = []
         
         result = execute_query(connection, query, params)
@@ -187,8 +252,27 @@ def handler(event, context):
     try:
         logger.info("Iniciando handler de rag_lmbd_obtener_alertas")
         
-        # Extraer parámetros del evento
-        query_params = event.get('queryStringParameters', {})
+        # Extraer parámetros del evento (query string, path params o body JSON).
+        query_params = event.get('queryStringParameters') or {}
+        path_params = event.get('pathParameters') or {}
+        body_params = {}
+        body_raw = event.get('body')
+        if isinstance(body_raw, str) and body_raw.strip():
+            try:
+                body_params = json.loads(body_raw)
+            except json.JSONDecodeError:
+                body_params = {}
+        elif isinstance(body_raw, dict):
+            body_params = body_raw
+
+        alerta_id = (
+            query_params.get('alerta_id')
+            or query_params.get('id')
+            or path_params.get('alerta_id')
+            or path_params.get('id')
+            or body_params.get('alerta_id')
+            or body_params.get('id')
+        )
                 
         # Conectar a base de datos
         connection = get_db_connection()
