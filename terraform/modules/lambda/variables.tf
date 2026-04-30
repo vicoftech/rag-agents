@@ -170,3 +170,10 @@ variable "ephemeral_storage_size" {
   type        = number
   default     = 512
 }
+
+# Copiar como paquete top-level `shared` (p. ej. src/shared) junto a los .py de la Lambda.
+variable "shared_package_path" {
+  type        = string
+  default     = ""
+  description = "Ruta del directorio a empaquetar como shared/ (vacío = no copiar)"
+}

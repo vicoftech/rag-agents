@@ -1,8 +1,5 @@
-boto3
-python-dotenv
 pdfplumber
 pymupdf
-langchain
 psycopg2-binary
 langchain-text-splitters
 numpy

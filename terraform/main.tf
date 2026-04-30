@@ -157,7 +157,13 @@ data "aws_region" "current" {}
 # S3 Bucket for Documents
 # ==============================================================================
 
+data "aws_s3_bucket" "documents_existing" {
+  count  = var.create_documents_bucket ? 0 : 1
+  bucket = "rag-documents-${var.environment}-${data.aws_caller_identity.current.account_id}"
+}
+
 module "s3_documents" {
+  count  = var.create_documents_bucket ? 1 : 0
   source = "./modules/s3_documents"
 
   bucket_name          = "rag-documents-${var.environment}-${data.aws_caller_identity.current.account_id}"
@@ -169,6 +175,16 @@ module "s3_documents" {
   tags = local.common_tags
 }
 
+locals {
+  documents_bucket_name = var.create_documents_bucket ? module.s3_documents[0].bucket_name : data.aws_s3_bucket.documents_existing[0].bucket
+  documents_bucket_arn  = var.create_documents_bucket ? module.s3_documents[0].bucket_arn : data.aws_s3_bucket.documents_existing[0].arn
+  rag_lambda_security_group_id = (
+    var.existing_rag_lambda_security_group_id != ""
+    ? var.existing_rag_lambda_security_group_id
+    : aws_security_group.rag_lambda[0].id
+  )
+}
+
 # ==============================================================================
 # Sparticuz Chromium Lambda layer (rag_lmbd_anmatlinks / Playwright)
 # ==============================================================================
@@ -177,7 +193,7 @@ module "sparticuz_chromium_layer" {
   source = "./modules/sparticuz_chromium_layer"
 
   environment    = var.environment
-  s3_bucket_name = module.s3_documents.bucket_name
+  s3_bucket_name = local.documents_bucket_name
   layer_zip_url  = var.sparticuz_chromium_layer_zip_url
 }
 
@@ -274,6 +290,7 @@ resource "aws_vpc_endpoint" "bedrock" {
 # Security group dedicado para Lambdas en VPC (S3/Bedrock/Secrets/Textract/etc.).
 # No reutilizar el SG de Aurora en las Lambdas: suele carecer de egress y rompe GetObject a S3.
 resource "aws_security_group" "rag_lambda" {
+  count       = var.existing_rag_lambda_security_group_id != "" ? 0 : 1
   name        = "rag-lambda-${var.environment}-sg"
   description = "RAG Lambdas en VPC: egress a APIs AWS (S3 gateway, Bedrock, Secrets, Textract)"
   vpc_id      = var.vpc_id
@@ -304,7 +321,7 @@ resource "aws_security_group" "rag_interface_endpoints" {
     from_port       = 443
     to_port         = 443
     protocol        = "tcp"
-    security_groups = [aws_security_group.rag_lambda.id]
+    security_groups = [local.rag_lambda_security_group_id]
   }
 
   egress {
@@ -350,7 +367,7 @@ resource "aws_vpc_endpoint" "textract" {
 
 resource "aws_vpc_security_group_ingress_rule" "rds_from_rag_lambda" {
   security_group_id            = local.db_security_group_id
-  referenced_security_group_id = aws_security_group.rag_lambda.id
+  referenced_security_group_id = local.rag_lambda_security_group_id
   ip_protocol                  = "tcp"
   from_port                    = 5432
   to_port                      = 5432
@@ -401,13 +418,13 @@ module "lambda_embeddings_async" {
   # VPC Configuration for RDS access
   vpc_id             = var.vpc_id
   subnet_ids         = var.subnets
-  security_group_ids = [aws_security_group.rag_lambda.id]
+  security_group_ids = [local.rag_lambda_security_group_id]
 
   environment_variables = local.lambda_embeddings_env
 
   # Use S3 for large deployment packages
   use_s3_deployment = true
-  s3_bucket_name    = module.s3_documents.bucket_name
+  s3_bucket_name    = local.documents_bucket_name
 
   s3_trigger_enabled = false
 
@@ -429,8 +446,8 @@ module "lambda_embeddings_async" {
           "s3:ListBucket"
         ]
         resources = [
-          module.s3_documents.bucket_arn,
-          "${module.s3_documents.bucket_arn}/*"
+          local.documents_bucket_arn,
+          "${local.documents_bucket_arn}/*"
         ]
       },
     ],
@@ -472,14 +489,14 @@ module "lambda_query" {
   # VPC Configuration for RDS access
   vpc_id             = var.vpc_id
   subnet_ids         = var.subnets
-  security_group_ids = [aws_security_group.rag_lambda.id]
+  security_group_ids = [local.rag_lambda_security_group_id]
 
   # Use S3 for large deployment packages
   use_s3_deployment = true
-  s3_bucket_name    = module.s3_documents.bucket_name
+  s3_bucket_name    = local.documents_bucket_name
 
   environment_variables = merge(local.lambda_query_env, {
-    DOCUMENTS_S3_BUCKET = module.s3_documents.bucket_name
+    DOCUMENTS_S3_BUCKET = local.documents_bucket_name
   })
 
   # IAM Permissions - Bedrock + Marketplace + S3 presigned URLs for documents bucket
@@ -493,7 +510,7 @@ module "lambda_query" {
           "s3:GetObject",
         ]
         resources = [
-          "${module.s3_documents.bucket_arn}/*",
+          "${local.documents_bucket_arn}/*",
         ]
       },
     ],
@@ -717,7 +734,7 @@ module "lambda_s3writer" {
   environment = var.environment
 
   environment_variables = {
-    S3_BUCKET_NAME  = module.s3_documents.bucket_name
+    S3_BUCKET_NAME  = local.documents_bucket_name
     REQUEST_TIMEOUT = "60"
     MAX_FILE_SIZE   = "52428800" # 50MB
     TENANT_ID       = "7c9aa113-ecf2-4449-a955-d91c76e7ee27"
@@ -733,7 +750,7 @@ module "lambda_s3writer" {
         "s3:PutObjectAcl"
       ]
       resources = [
-        "${module.s3_documents.bucket_arn}/*"
+        "${local.documents_bucket_arn}/*"
       ]
     }
   ]
@@ -884,7 +901,7 @@ module "lambda_bolinks" {
 module "boletin_oficial_sfn" {
   source = "./modules/boletin_oficial_sfn"
 
-  state_machine_name = "Alerts-BoletinOficialSyncronizer-${var.environment}"
+  state_machine_name = "Alerts-BoletinOficialSyncronizer-async-${var.environment}"
 
   bolinks_function_arn   = module.lambda_bolinks.function_arn
   s3writer_function_arn  = module.lambda_s3writer.function_arn
@@ -922,7 +939,7 @@ module "lambda_anmatlinks" {
   }
 
   use_s3_deployment = true
-  s3_bucket_name    = module.s3_documents.bucket_name
+  s3_bucket_name    = local.documents_bucket_name
 
   tags = local.common_tags
 }
@@ -999,7 +1016,7 @@ module "bedrock_agent" {
   # VPC Configuration (optional, same as other lambdas)
   vpc_id             = var.vpc_id
   subnet_ids         = var.subnets
-  security_group_ids = length(var.subnets) > 0 ? [aws_security_group.rag_lambda.id] : []
+  security_group_ids = length(var.subnets) > 0 ? [local.rag_lambda_security_group_id] : []
 
   environment_variables = merge(
     {
@@ -1083,7 +1100,7 @@ module "agentcore" {
   runtime_description        = var.agentcore_runtime_description
   runtime_network_mode       = var.agentcore_runtime_network_mode
   runtime_subnet_ids         = var.agentcore_runtime_network_mode == "VPC" ? var.subnets : []
-  runtime_security_group_ids = var.agentcore_runtime_network_mode == "VPC" ? [aws_security_group.rag_lambda.id] : []
+  runtime_security_group_ids = var.agentcore_runtime_network_mode == "VPC" ? [local.rag_lambda_security_group_id] : []
   runtime_protocol           = var.agentcore_runtime_protocol
   runtime_idle_timeout       = var.agentcore_runtime_idle_timeout
   runtime_max_lifetime       = var.agentcore_runtime_max_lifetime

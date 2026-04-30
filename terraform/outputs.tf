@@ -29,21 +29,26 @@ output "aurora_security_group_id" {
 
 output "rag_lambda_security_group_id" {
   description = "Security group for VPC Lambdas (embeddings, query, agent): egress a S3/APIs; no usar el SG de RDS en Lambdas"
-  value       = aws_security_group.rag_lambda.id
+  value       = local.rag_lambda_security_group_id
 }
 
 # ==============================================================================
 # S3 Outputs
 # ==============================================================================
 
+output "rag_ingestion_state_machine_arn" {
+  description = "Step Functions RAG v2: alert-rag-ingestion (requiere create_rag_ingestion)"
+  value       = var.create_rag_ingestion ? module.rag_ingestion[0].state_machine_arn : null
+}
+
 output "s3_documents_bucket_name" {
   description = "S3 documents bucket name"
-  value       = module.s3_documents.bucket_name
+  value       = local.documents_bucket_name
 }
 
 output "s3_documents_bucket_arn" {
   description = "S3 documents bucket ARN"
-  value       = module.s3_documents.bucket_arn
+  value       = local.documents_bucket_arn
 }
 
 # ==============================================================================
@@ -76,7 +81,7 @@ output "lambda_query_arn" {
 
 output "upload_document_example" {
   description = "Example command to upload a document (key must include /documents/ after agent UUID)"
-  value       = "aws s3 cp document.pdf s3://${module.s3_documents.bucket_name}/tenant_boletin/<agent-uuid>/documents/20260310/primera/archivo.pdf"
+  value       = "aws s3 cp document.pdf s3://${local.documents_bucket_name}/tenant_boletin/<agent-uuid>/documents/20260310/primera/archivo.pdf"
 }
 
 output "invoke_query_example" {

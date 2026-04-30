@@ -56,21 +56,26 @@ resource "aws_lambda_permission" "s3_invoke_embeddings_enqueue" {
   action        = "lambda:InvokeFunction"
   function_name = module.lambda_embeddings_enqueue.function_name
   principal     = "s3.amazonaws.com"
-  source_arn    = module.s3_documents.bucket_arn
+  source_arn    = local.documents_bucket_arn
 }
 
-# Una sola notificación para el bucket de documentos (reemplaza la que era directo a embeddings).
+# Una sola notificación para el bucket (encolador legacy y/o EventBridge para RAG v2).
 resource "aws_s3_bucket_notification" "documents_to_embeddings_queue" {
-  bucket = module.s3_documents.bucket_name
+  bucket = local.documents_bucket_name
 
-  lambda_function {
-    id                  = "s3-embeddings-enqueue-pdf"
-    lambda_function_arn = module.lambda_embeddings_enqueue.function_arn
-    events              = ["s3:ObjectCreated:*"]
-    filter_suffix       = ".pdf"
+  dynamic "lambda_function" {
+    for_each = var.legacy_s3_embeddings_enqueue_enabled ? [1] : []
+    content {
+      id                  = "s3-embeddings-enqueue-pdf"
+      lambda_function_arn = module.lambda_embeddings_enqueue.function_arn
+      events              = ["s3:ObjectCreated:*"]
+      filter_suffix       = ".pdf"
+    }
   }
 
-  depends_on = [aws_lambda_permission.s3_invoke_embeddings_enqueue]
+  eventbridge = var.s3_object_created_to_eventbridge
+
+  depends_on = [module.lambda_embeddings_enqueue, aws_lambda_permission.s3_invoke_embeddings_enqueue]
 }
 
 output "embeddings_ingest_queue_url" {

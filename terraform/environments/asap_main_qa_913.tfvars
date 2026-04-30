@@ -96,3 +96,8 @@ agentcore_create_cognito        = false
 agentcore_create_memory         = false
 agentcore_create_gateway        = false
 agentcore_create_gateway_target = false
+
+# RAG v2 (Step Functions + lotes SQS). Deshabilita la cola legacy S3→embeddings para no duplicar.
+create_rag_ingestion                  = true
+s3_object_created_to_eventbridge      = true
+legacy_s3_embeddings_enqueue_enabled    = false

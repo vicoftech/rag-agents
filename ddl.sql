@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS {{TENANT_SCHEMA}}.documents (
     document_name TEXT NOT NULL,
     chunk_text TEXT NOT NULL,
     embedding VECTOR(1536),
+    chunk_index INTEGER,
     created_at TIMESTAMP DEFAULT NOW()
 );
 
@@ -30,3 +31,6 @@ CREATE INDEX IF NOT EXISTS idx_documents_embedding
 
 CREATE INDEX IF NOT EXISTS idx_documents_agent_id
     ON {{TENANT_SCHEMA}}.documents(agent_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_doc_chunk
+    ON {{TENANT_SCHEMA}}.documents(document_id, chunk_index);

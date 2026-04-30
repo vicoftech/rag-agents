@@ -104,6 +104,9 @@ resource "aws_security_group" "lambda" {
 
 locals {
   is_windows = can(regex("^[A-Za-z]:", abspath(path.root)))
+
+  shared_package_abs  = var.shared_package_path == "" ? "" : abspath(var.shared_package_path)
+  shared_path_trigger = var.shared_package_path == "" ? "no-shared" : (try(sha256(join("", [for f in fileset(local.shared_package_abs, "**/*.py") : filesha256("${local.shared_package_abs}/${f}")])), "shared-missing"))
 }
 
 # Build Lambda with dependencies if requirements.txt exists
@@ -113,8 +116,9 @@ resource "null_resource" "build_lambda_unix" {
   triggers = {
     requirements   = fileexists("${var.source_path}/requirements.txt") ? filemd5("${var.source_path}/requirements.txt") : "no-requirements"
     source_hash    = sha256(join("", [for f in fileset(var.source_path, "**/*.py") : filesha256("${var.source_path}/${f}")]))
+    shared_hash    = local.shared_path_trigger
     build_platform = "manylinux2014_x86_64" # Force rebuild when platform changes
-    build_version  = "11"                   # Increment to force rebuild
+    build_version  = "12"                   # Increment to force rebuild
   }
 
   provisioner "local-exec" {
@@ -142,6 +146,10 @@ resource "null_resource" "build_lambda_unix" {
         mkdir -p "${path.module}/.builds/${var.function_name}/lib"
         find "${var.source_path}/lib" -maxdepth 1 -name '*.py' -exec cp {} "${path.module}/.builds/${var.function_name}/lib/" \;
       fi
+      if [ -n "${var.shared_package_path}" ]; then
+        mkdir -p "${path.module}/.builds/${var.function_name}/shared"
+        cp -R "${local.shared_package_abs}/." "${path.module}/.builds/${var.function_name}/shared/"
+      fi
     EOT
   }
 }
@@ -152,8 +160,9 @@ resource "null_resource" "build_lambda_windows" {
   triggers = {
     requirements   = fileexists("${var.source_path}/requirements.txt") ? filemd5("${var.source_path}/requirements.txt") : "no-requirements"
     source_hash    = sha256(join("", [for f in fileset(var.source_path, "**/*.py") : filesha256("${var.source_path}/${f}")]))
+    shared_hash    = local.shared_path_trigger
     build_platform = "manylinux2014_x86_64"
-    build_version  = "11"
+    build_version  = "12"
   }
 
   provisioner "local-exec" {
@@ -180,6 +189,12 @@ resource "null_resource" "build_lambda_windows" {
         Get-ChildItem -Path $libDir -Filter *.py -File | ForEach-Object {
           Copy-Item $_.FullName -Destination $targetLibDir -Force
         }
+      }
+      if ("${var.shared_package_path}" -ne "") {
+        $sp = "${local.shared_package_abs}"
+        $tshared = Join-Path $buildDir "shared"
+        New-Item -ItemType Directory -Force -Path $tshared | Out-Null
+        Copy-Item -Path (Join-Path $sp "*") -Destination $tshared -Recurse -Force
       }
     EOT
   }

@@ -39,6 +39,12 @@ variable "subnets" {
   type        = list(string)
 }
 
+variable "existing_rag_lambda_security_group_id" {
+  description = "Si no vacío, no se crea aws_security_group.rag_lambda: se reutiliza este SG (prod con Lambdas ya desplegadas)."
+  type        = string
+  default     = ""
+}
+
 variable "create_vpc_endpoint_s3" {
   description = "Crear VPC endpoint Gateway para S3 (desactivar si la VPC ya tiene ruta/prefix list a S3)"
   type        = bool
@@ -147,6 +153,12 @@ variable "s3_bucket_force_destroy" {
   description = "Si true, el bucket de documentos se puede borrar con objetos (usar solo para terraform destroy / reset)"
   type        = bool
   default     = false
+}
+
+variable "create_documents_bucket" {
+  description = "Si false, no crea el bucket: usa data.aws_s3_bucket sobre rag-documents-<environment>-<account_id> (debe existir, p. ej. prod ya creado)."
+  type        = bool
+  default     = true
 }
 
 # ==============================================================================
@@ -638,4 +650,28 @@ variable "sparticuz_chromium_layer_zip_url" {
   description = "Official Sparticuz Chromium Lambda layer (x86_64) ZIP URL for rag_lmbd_anmatlinks"
   type        = string
   default     = "https://github.com/Sparticuz/chromium/releases/download/v143.0.4/chromium-v143.0.4-layer.x64.zip"
+}
+
+variable "create_rag_ingestion" {
+  description = "Desplegar pipeline RAG v2: DDB, SQS, Lambdas, Step Functions, regla S3 (EventBridge)"
+  type        = bool
+  default     = false
+}
+
+variable "rag_embed_sqs_maximum_concurrency" {
+  description = "RAG v2: máximo de invocaciones concurrentes del embed worker (trigger SQS chunk_batches)"
+  type        = number
+  default     = 5
+}
+
+variable "s3_object_created_to_eventbridge" {
+  description = "Bucket de documentos: notificar a EventBridge (Object Created). Necesario para SFN RAG o reglas en EB."
+  type        = bool
+  default     = false
+}
+
+variable "legacy_s3_embeddings_enqueue_enabled" {
+  description = "Mantener S3 → Lambda encolador → SQS old rag-embeddings-ingest (deshabilitar al usar solo RAG v2)"
+  type        = bool
+  default     = true
 }

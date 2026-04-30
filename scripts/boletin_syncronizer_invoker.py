@@ -3,6 +3,11 @@
 Invoca la Step Function de Boletín por fecha (descendente) y secciones.
 Soporta paralelizar días (--parallel-days) y, opcionalmente, secciones (--parallel-sections).
 
+Rango de fechas:
+  - Por día: --start-date / --end-date (YYYY-MM-DD), recorrido descendente.
+  - Por años calendario completos (1 ene → 31 dic de cada año): --start-year / --end-year
+    (p. ej. 2026 y 2016 = años 2016 a 2026, todos los días de cada uno).
+
 Por defecto: producción (cuenta 913, profile asap_main). Usá --env qa para el state machine -qa.
 """
 
@@ -349,7 +354,83 @@ def main():
         metavar="SEC",
         help="Con varios días en paralelo, cada cuántos segundos loguear estado del pool (default: 45; 0=desactivar).",
     )
+    parser.add_argument(
+        "--start-date",
+        default=None,
+        metavar="YYYY-MM-DD",
+        help=(
+            "Primer día a procesar (más reciente; se va hacia atrás). "
+            f"Default: {START_DATE.strftime('%Y-%m-%d')}."
+        ),
+    )
+    parser.add_argument(
+        "--end-date",
+        default=None,
+        metavar="YYYY-MM-DD",
+        help=(
+            "Último día del rango (más antiguo). "
+            f"Default: {END_DATE.strftime('%Y-%m-%d')}. "
+            "Si usás --start-year/--end-year, este flag se ignora."
+        ),
+    )
+    parser.add_argument(
+        "--start-year",
+        type=int,
+        default=None,
+        metavar="YYYY",
+        help="Año más reciente: incluir todo ese año (1 ene – 31 dic). Requiere --end-year.",
+    )
+    parser.add_argument(
+        "--end-year",
+        type=int,
+        default=None,
+        metavar="YYYY",
+        help="Año más antiguo: incluir todo ese año (1 ene – 31 dic). Requiere --start-year.",
+    )
     args = parser.parse_args()
+
+    def _parse_ymd(s: str) -> datetime:
+        y, m, d = (int(p) for p in s.strip().split("-", 2))
+        return datetime(y, m, d)
+
+    by_calendar_years = args.start_year is not None or args.end_year is not None
+    if by_calendar_years:
+        if args.start_year is None or args.end_year is None:
+            print(
+                "ERROR: con modo años usá --start-year y --end-year a la vez "
+                "(año reciente y año antiguo, p. ej. 2026 y 2016).",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if args.start_year < args.end_year:
+            print(
+                f"ERROR: --start-year ({args.start_year}) debe ser >= --end-year ({args.end_year}) "
+                "(se procesa del año reciente hacia el antiguo).",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if args.start_date or args.end_date:
+            print(
+                "[WARN] Modo --start-year/--end-year: se ignoran --start-date y --end-date.",
+                file=sys.stderr,
+            )
+        # Un día de full-year range por año: 31-12 (inicio) … 1-1 (cierre) en orden descendente.
+        start_date = datetime(args.start_year, 12, 31)
+        end_date = datetime(args.end_year, 1, 1)
+    else:
+        start_date = START_DATE
+        end_date = END_DATE
+        if args.start_date:
+            start_date = _parse_ymd(args.start_date)
+        if args.end_date:
+            end_date = _parse_ymd(args.end_date)
+    if start_date < end_date:
+        print(
+            f"ERROR: inicio del rango ({start_date.date()}) debe ser >= fin ({end_date.date()}) "
+            "(el recorrido de días es descendente).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     global STEP_FUNCTION_ARN
     if args.sfn_arn and str(args.sfn_arn).strip():
@@ -371,7 +452,16 @@ def main():
     print("Invocando Step Functions (Boletín)")
     print(f"Región: {args.region} | Perfil: {args.profile} | entorno: {args.env}")
     print(f"State machine: {STEP_FUNCTION_ARN}")
-    print(f"Rango: {START_DATE.strftime('%Y-%m-%d')} → {END_DATE.strftime('%Y-%m-%d')}")
+    if by_calendar_years:
+        n_years = args.start_year - args.end_year + 1
+        print(
+            f"Modo años calendario completos: {args.end_year}–{args.start_year} "
+            f"({n_years} años, en cada uno del 01-01 al 31-12, días en orden descendente.)"
+        )
+    print(
+        f"Rango de días: {start_date.strftime('%Y-%m-%d')} (más reciente) "
+        f"→ {end_date.strftime('%Y-%m-%d')} (más antiguo)"
+    )
     print(f"Secciones: {', '.join(SECTIONS)}")
     print(f"Tenant: {args.tenant_id} | Agent: {args.agent_id}")
     print(
@@ -389,7 +479,7 @@ def main():
         print("ERROR: credenciales inválidas o expiradas.")
         sys.exit(1)
 
-    days = list(iter_days_descending(START_DATE, END_DATE))
+    days = list(iter_days_descending(start_date, end_date))
     if not days:
         print("No hay fechas en el rango.")
         return

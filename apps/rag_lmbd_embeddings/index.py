@@ -149,6 +149,7 @@ def ensure_tenant_schema_exists(tenant_id: str, agent_id: str):
                     document_name   TEXT NOT NULL,
                     chunk_text      TEXT NOT NULL,
                     embedding       VECTOR(1536),
+                    chunk_index     INTEGER,
                     created_at      TIMESTAMP DEFAULT NOW()
                 )
             """)
@@ -196,6 +197,13 @@ def ensure_tenant_schema_exists(tenant_id: str, agent_id: str):
             cur.execute(f"""
                 CREATE INDEX IF NOT EXISTS idx_{tenant_id}_documents_doc_id 
                 ON {tenant_id}.documents(document_id)
+            """)
+
+            # Índice único para upsert por documento+chunk
+            idxu = f"idx_{tenant_id}_documents_doc_chunk".replace("-", "_")
+            cur.execute(f"""
+                CREATE UNIQUE INDEX IF NOT EXISTS {idxu}
+                ON {tenant_id}.documents(document_id, chunk_index)
             """)
 
             # B-tree en created_at (filtro por rango UTC en rag_lmbd_query; AT TIME ZONE no es IMMUTABLE en índices)
@@ -285,6 +293,16 @@ Responde con precisión y sin inventar información que no esté en el contexto.
             cur.execute(f"""
                 CREATE INDEX IF NOT EXISTS {idx_created}
                 ON {tenant_id}.documents (created_at)
+            """)
+
+            # Self-heal del esquema en tenants existentes: columna e índice para upsert por chunk.
+            cur.execute(
+                f"ALTER TABLE {tenant_id}.documents ADD COLUMN IF NOT EXISTS chunk_index INTEGER"
+            )
+            idxu = f"idx_{tenant_id}_documents_doc_chunk".replace("-", "_")
+            cur.execute(f"""
+                CREATE UNIQUE INDEX IF NOT EXISTS {idxu}
+                ON {tenant_id}.documents(document_id, chunk_index)
             """)
             conn.commit()
 

@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
 """
-Recorre un CSV (columnas: key, s3_uri, size opcional) y envía a la cola
-`rag-embeddings-ingest-*` el JSON de evento S3 que el encolador pondría en el
-body, para reprocesar sin copiar objetos en S3.
+Recorre un CSV (columnas: key, s3_uri, size opcional) y dispara StartExecution
+de una State Machine por cada fila para reprocesar ingestas.
 
-Uso (prod):
+Uso (QA):
   cd scripts && python embeddings_replay_sqs_from_csv.py --profile asap_main --dry-run
-  # Por defecto: solo filas con prefix=tenant_boletin (el CSV mezcla tenant_anmat + tenant_boletin)
   cd scripts && python embeddings_replay_sqs_from_csv.py --profile asap_main
   # Enviar todos los prefix del CSV, o filtrar solo ANMAT:
   cd scripts && python embeddings_replay_sqs_from_csv.py --profile asap_main --all-prefixes
@@ -18,11 +16,10 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import random
-import string
 import sys
 import time
 import urllib.parse
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Iterator
 
@@ -34,45 +31,61 @@ except ImportError as e:
     raise SystemExit(1) from e
 
 
-def _build_message_body(
+def _safe_name_part(value: str) -> str:
+    safe = []
+    for c in value:
+        if c.isalnum() or c in "-_":
+            safe.append(c)
+        else:
+            safe.append("-")
+    out = "".join(safe).strip("-")
+    return out[:40] if out else "doc"
+
+
+def _run_suffix() -> str:
+    """
+    Sufijo corto por corrida para evitar ExecutionAlreadyExists al reintentar.
+    """
+    return datetime.now(timezone.utc).strftime("%m%d%H%M%S")
+
+
+def _from_key(key: str, default_tenant: str, default_agent: str) -> dict[str, str]:
+    """
+    Intenta inferir tenant/agent/document_name desde key.
+    Estructura esperada típica: <tenant>/<agent>/.../<document_name>.
+    """
+    clean = key.lstrip("/")
+    parts = [p for p in clean.split("/") if p]
+    tenant_id = default_tenant
+    agent_id = default_agent
+    if len(parts) >= 1 and parts[0]:
+        tenant_id = parts[0]
+    if len(parts) >= 2 and parts[1]:
+        agent_id = parts[1]
+    document_name = parts[-1] if parts else clean
+    return {
+        "tenant_id": tenant_id,
+        "agent_id": agent_id,
+        "document_name": document_name,
+    }
+
+
+def _build_sfn_input(
     bucket: str,
     key: str,
-    size: int,
-    region: str,
-) -> str:
-    """Cuerpo JSON con Records[0] compatible con rag_lmbd_embeddings (desenroscado SQS)."""
-    key_encoded = urllib.parse.quote(key, safe="/")
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-    seq = "".join(random.choices(string.digits, k=12))
-    record: dict[str, Any] = {
-        "eventVersion": "2.1",
-        "eventSource": "aws:s3",
-        "awsRegion": region,
-        "eventTime": now,
-        "eventName": "ObjectCreated:Put",
-        "userIdentity": {"principalId": "csv-replay"},
-        "requestParameters": {"sourceIPAddress": "0.0.0.0"},
-        "responseElements": {
-            "x-amz-request-id": "REPLAY",
-            "x-amz-id-2": "REPLAY/REPLAY",
-        },
-        "s3": {
-            "s3SchemaVersion": "1.0",
-            "configurationId": "csv-replay",
-            "bucket": {
-                "name": bucket,
-                "arn": f"arn:aws:s3:::{bucket}",
-                "ownerIdentity": {"principalId": "REPLAY"},
-            },
-            "object": {
-                "key": key_encoded,
-                "size": int(size) if size else 0,
-                "eTag": "csv-replay",
-                "sequencer": seq,
-            },
-        },
+    default_tenant: str,
+    default_agent: str,
+) -> dict[str, Any]:
+    attrs = _from_key(key, default_tenant, default_agent)
+    return {
+        "bucket": bucket,
+        "key": urllib.parse.unquote_plus(key),
+        "tenant_id": attrs["tenant_id"],
+        "agent_id": attrs["agent_id"],
+        "document_id": str(uuid.uuid4()),
+        "document_name": attrs["document_name"],
+        "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
-    return json.dumps({"Records": [record]}, ensure_ascii=False)
 
 
 def _row_key_size(row: dict[str, str]) -> tuple[str | None, int]:
@@ -124,7 +137,7 @@ def iter_csv_keys(
 
 def main() -> int:
     p = argparse.ArgumentParser(
-        description="Enviar eventos S3 sintéticos a la cola de ingest de embeddings (CSV de URIs)."
+        description="Disparar StartExecution de SFN por cada key del CSV."
     )
     p.add_argument(
         "--csv",
@@ -132,9 +145,9 @@ def main() -> int:
         help="Ruta al CSV (convive en scripts/ con el listado S3).",
     )
     p.add_argument(
-        "--queue-url",
-        default="https://sqs.us-east-1.amazonaws.com/913123310997/rag-embeddings-ingest-prod",
-        help="URL de rag-embeddings-ingest-ENV",
+        "--state-machine-arn",
+        required=True,
+        help="ARN de la State Machine de ingesta RAG.",
     )
     p.add_argument("--bucket", default="rag-documents-prod-913123310997", help="Bucket de documentos")
     p.add_argument("--region", default="us-east-1")
@@ -149,7 +162,7 @@ def main() -> int:
         "--sleep",
         type=float,
         default=0.0,
-        help="Segundos de pausa entre cada batch de 10 mensajes",
+        help="Segundos de pausa entre cada StartExecution",
     )
     p.add_argument(
         "--include-non-pdf",
@@ -170,6 +183,16 @@ def main() -> int:
         action="store_true",
         help="Incluir todas las filas; ignora --only-prefix.",
     )
+    p.add_argument(
+        "--default-tenant-id",
+        default="tenant_boletin",
+        help="Tenant default si no se puede inferir desde key.",
+    )
+    p.add_argument(
+        "--default-agent-id",
+        default="25abefca-8e5c-4c6e-973d-2fad3af8b469",
+        help="Agent default si no se puede inferir desde key.",
+    )
     args = p.parse_args()
 
     if args.all_prefixes:
@@ -188,47 +211,46 @@ def main() -> int:
         print("Nada que enviar (CSV vacío o sin claves / PDFs).", file=sys.stderr)
         return 1
 
-    print(f"Enviando {n} mensajes a {args.queue_url} (bucket={args.bucket})")
+    print(f"Disparando {n} ejecuciones en {args.state_machine_arn} (bucket={args.bucket})")
 
     if args.dry_run:
-        k0, s0 = rows[0]
-        body = _build_message_body(args.bucket, k0, s0, args.region)
-        print("Primer MessageBody (ejemplo):")
+        k0, _ = rows[0]
+        payload = _build_sfn_input(
+            args.bucket, k0, args.default_tenant_id, args.default_agent_id
+        )
+        print("Primer input SFN (ejemplo):")
+        body = json.dumps(payload, ensure_ascii=False)
         print((body[:800] + "…\n") if len(body) > 800 else body)
         return 0
 
     session = boto3.session.Session(profile_name=args.profile, region_name=args.region)
-    sqs = session.client("sqs", region_name=args.region)
+    sfn = session.client("stepfunctions", region_name=args.region)
+    run_suffix = _run_suffix()
 
-    batch_size = 10
     successful = 0
-    for i in range(0, n, batch_size):
-        chunk = rows[i : i + batch_size]
-        entries: list[dict[str, str]] = []
-        for j, (key, size) in enumerate(chunk):
-            body = _build_message_body(args.bucket, key, size, args.region)
-            # Id único en el lote: alfanumérico, máx. 80 chars
-            entries.append(
-                {
-                    "Id": f"k{i + j:08d}",
-                    "MessageBody": body,
-                }
-            )
+    for i, (key, _size) in enumerate(rows):
+        payload = _build_sfn_input(
+            args.bucket, key, args.default_tenant_id, args.default_agent_id
+        )
+        doc = _safe_name_part(payload["document_name"])
+        name = f"csv-{run_suffix}-{i:06d}-{doc}"
         try:
-            resp = sqs.send_message_batch(QueueUrl=args.queue_url, Entries=entries)
+            sfn.start_execution(
+                stateMachineArn=args.state_machine_arn,
+                name=name,
+                input=json.dumps(payload, ensure_ascii=False),
+            )
         except ClientError as e:
-            print(f"Error send_message_batch en offset {i}: {e}", file=sys.stderr)
+            print(f"Error start_execution en fila {i} key={key}: {e}", file=sys.stderr)
             return 1
-        for fail in resp.get("Failed", []):
-            print(f"Fallo: {fail}", file=sys.stderr)
-        successful += len(resp.get("Successful", []))
+        successful += 1
         if args.sleep > 0:
             time.sleep(args.sleep)
-        done = min(i + batch_size, n)
-        if done % 500 < batch_size or done == n:
+        done = i + 1
+        if done % 200 == 0 or done == n:
             print(f"  … {done}/{n}")
 
-    print(f"Listo. Mensajes aceptados: {successful}")
+    print(f"Listo. Ejecuciones iniciadas: {successful}")
     return 0 if successful == n else 1
 
 
