@@ -45,6 +45,12 @@ variable "existing_rag_lambda_security_group_id" {
   default     = ""
 }
 
+variable "boletin_oficial_state_machine_name_override" {
+  description = "Si no vacío, usa este nombre para el Step Functions de bolinks→s3writer→dbwriter (p. ej. prod heredado sin sufijo -async)."
+  type        = string
+  default     = ""
+}
+
 variable "create_vpc_endpoint_s3" {
   description = "Crear VPC endpoint Gateway para S3 (desactivar si la VPC ya tiene ruta/prefix list a S3)"
   type        = bool

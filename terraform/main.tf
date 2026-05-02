@@ -27,7 +27,7 @@ terraform {
       version = ">= 0.9.0"
     }
   }
-  required_version = ">= 1.2.0"
+  required_version = ">= 1.5.0"
 
   # Estado remoto (bucket + DynamoDB creados con terraform/bootstrap/)
   backend "s3" {
@@ -60,7 +60,6 @@ provider "random" {}
 provider "time" {}
 
 locals {
-  env             = terraform.workspace
   use_existing_db = var.create_aurora_cluster == false
 
   common_tags = {
@@ -144,6 +143,22 @@ locals {
       resources = [var.db_secret_id]
     }
   ] : []
+}
+
+# Estado remoto S3 está particionado por workspace ([env:/<name>/...]). Si apliás prod.tfvars
+# con workspace "default", los recursos y el código divergen del intento sin error obvio.
+check "workspace_aligned_with_tfvars_environment" {
+  assert {
+    condition = (
+      terraform.workspace == var.environment
+      || (terraform.workspace == "default" && var.environment == "dev")
+    )
+    error_message = <<-EOT
+      Workspace Terraform "${terraform.workspace}" no alinea con var.environment="${var.environment}" del tfvars.
+      Ej.: terraform workspace select ${var.environment} antes de plan/apply.
+      Excepción explícita: workspace "default" solo con environment="dev".
+    EOT
+  }
 }
 
 # ==============================================================================
@@ -543,7 +558,7 @@ module "lambda_obtener_alertas" {
   security_group_ids = var.lambda_obtener_alertas_security_group_ids
 
   use_s3_deployment = true
-  s3_bucket_name    = module.s3_documents.bucket_name
+  s3_bucket_name    = local.documents_bucket_name
 
   # Esta Lambda apunta a una BD externa gestionada fuera de este proyecto Terraform.
   # Se define de forma agnóstica en lambda_obtener_alertas_db y aquí se mapea al
@@ -901,7 +916,11 @@ module "lambda_bolinks" {
 module "boletin_oficial_sfn" {
   source = "./modules/boletin_oficial_sfn"
 
-  state_machine_name = "Alerts-BoletinOficialSyncronizer-async-${var.environment}"
+  state_machine_name = (
+    var.boletin_oficial_state_machine_name_override != ""
+    ? var.boletin_oficial_state_machine_name_override
+    : "Alerts-BoletinOficialSyncronizer-async-${var.environment}"
+  )
 
   bolinks_function_arn   = module.lambda_bolinks.function_arn
   s3writer_function_arn  = module.lambda_s3writer.function_arn

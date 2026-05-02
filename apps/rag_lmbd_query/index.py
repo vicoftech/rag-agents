@@ -57,6 +57,13 @@ MAX_SEMANTIC_DISTANCE = float(os.getenv("MAX_SEMANTIC_DISTANCE", "0.45"))
 # Si el umbral descarta todo, aún devolver al menos 1 (el mejor) si la SQL devolvió filas.
 # N=0 en env se trata como 1 (nunca dejar contexto vacío cuando hay al menos 1 fila de vector search).
 SEMANTIC_FALLBACK_TOP_N = int(os.getenv("SEMANTIC_FALLBACK_TOP_N", "5"))
+# Pesos RRF por canal (fts spanish puede perder dígitos / barras → pata literal substring).
+HYBRID_VECTOR_WEIGHT = float(os.getenv("HYBRID_VECTOR_WEIGHT", "0.45"))
+HYBRID_LEXICAL_WEIGHT = float(os.getenv("HYBRID_LEXICAL_WEIGHT", "0.35"))
+HYBRID_LITERAL_WEIGHT = float(os.getenv("HYBRID_LITERAL_WEIGHT", "0.35"))
+# No ejecutar POSITION(substr) sobre consultas muy cortas (noise + full scan más caro proporcionalmente).
+HYBRID_LITERAL_MIN_CHARS = int(os.getenv("HYBRID_LITERAL_MIN_CHARS", "3"))
+HYBRID_RRF_K = int(os.getenv("HYBRID_RRF_K", "60"))
 _DB_SECRET_CACHE = None
 
 DOCUMENTS_S3_BUCKET = os.getenv("DOCUMENTS_S3_BUCKET", "")
@@ -233,7 +240,7 @@ def embed(text: str, input_type: str = "search_query"):
 
 
 
-# --- Semantic Search adaptado al nuevo esquema ---
+# --- Semantic Search adaptado al nuevo esquema (pgvector + FTS + RRF) ---
 def semantic_search(
     query,
     tenant_id,
@@ -242,90 +249,242 @@ def semantic_search(
     chunk_text=None,
     created_at_day=None,
     k=50,
+    *,
+    rrf_k=None,
+    vector_weight=None,
+    lexical_weight=None,
+    literal_weight=None,
+    max_semantic_distance=None,
+    semantic_fallback_top_n=None,
 ):
+    max_sd = (
+        MAX_SEMANTIC_DISTANCE if max_semantic_distance is None else float(max_semantic_distance)
+    )
+    fb_n = (
+        SEMANTIC_FALLBACK_TOP_N
+        if semantic_fallback_top_n is None
+        else int(semantic_fallback_top_n)
+    )
+
+    rk = HYBRID_RRF_K if rrf_k is None else int(rrf_k)
+    vw = HYBRID_VECTOR_WEIGHT if vector_weight is None else float(vector_weight)
+    lw = HYBRID_LEXICAL_WEIGHT if lexical_weight is None else float(lexical_weight)
+    lit_w = HYBRID_LITERAL_WEIGHT if literal_weight is None else float(literal_weight)
+
     q_emb = embed(query, input_type="search_query")
 
     if not isinstance(q_emb, list):
         raise ValueError("El embedding debe ser una lista")
     if len(q_emb) != EXPECTED_EMBEDDING_DIM:
         raise ValueError(
-            f"Embedding query tiene {len(q_emb)} dims; se esperaban {EXPECTED_EMBEDDING_DIM} "
-            "(ajuste EXPECTED_EMBEDDING_DIM o output_dimension del modelo)"
+            f"Embedding query tiene {len(q_emb)} dims; se esperaban {EXPECTED_EMBEDDING_DIM}"
         )
 
     q_emb_str = "[" + ",".join(str(float(x)) for x in q_emb) + "]"
+
+    filter_clauses: list[str] = []
+    filter_params: list = []
+
+    if document_name:
+        filter_clauses.append("d.document_name = %s")
+        filter_params.append(document_name)
+    if agent_id:
+        filter_clauses.append("d.agent_id = %s")
+        filter_params.append(agent_id)
+    if chunk_text:
+        filter_clauses.append("d.chunk_text = %s")
+        filter_params.append(chunk_text)
+
+    if created_at_day is not None:
+        start_utc = datetime.combine(created_at_day, time.min, tzinfo=timezone.utc)
+        end_utc = start_utc + timedelta(days=1)
+        filter_clauses.append("d.created_at >= %s AND d.created_at < %s")
+        filter_params.append(start_utc.replace(tzinfo=None))
+        filter_params.append(end_utc.replace(tzinfo=None))
+
+    where_sql = ("WHERE " + " AND ".join(filter_clauses)) if filter_clauses else ""
 
     schema = resolve_schema_name(tenant_id)
     conn = get_connection()
     cur = conn.cursor()
 
-    # Base query
+    q_plain = (query or "").strip()
+    include_literal = lit_w > 0 and len(q_plain) >= HYBRID_LITERAL_MIN_CHARS
+    lit_sql_weight = float(lit_w) if include_literal else 0.0
+
+    if include_literal:
+        # No reutilizar where_sql aquí: ya incluye "WHERE"; hay que fusionar una sola cláusula.
+        literal_where_parts = [
+            "POSITION(LOWER(%s::text) IN LOWER(d.chunk_text)) > 0",
+            *filter_clauses,
+        ]
+        literal_where_sql = "WHERE " + " AND ".join(literal_where_parts)
+        literal_cte = f"""
+        literal_ranked AS (
+            SELECT
+                d.ctid,
+                d.chunk_text,
+                d.document_name,
+                ROW_NUMBER() OVER (
+                    ORDER BY POSITION(LOWER(%s::text) IN LOWER(d.chunk_text)) ASC,
+                             d.ctid
+                ) AS lit_rank
+            FROM {schema}.documents AS d
+            {literal_where_sql}
+            LIMIT %s
+        ),
+        """
+        # Orden de %s al leer el texto: OVER … POSITION, WHERE POSITION, filtros..., LIMIT.
+        literal_params = [query, query, *filter_params, k]
+    else:
+        literal_cte = f"""
+        literal_ranked AS (
+            SELECT d.ctid, d.chunk_text, d.document_name,
+                   1::bigint AS lit_rank
+            FROM {schema}.documents AS d
+            WHERE FALSE
+            LIMIT 0
+        ),
+        """
+        literal_params = []
+
     sql = f"""
-        SELECT 
-            chunk_text,
-            document_name,
-            embedding <=> %s::vector AS distance
-        FROM {schema}.documents
+        WITH base AS (
+            SELECT
+                d.ctid,
+                d.chunk_text,
+                d.document_name,
+                d.embedding <=> %s::vector AS vector_distance
+            FROM {schema}.documents AS d
+            {where_sql}
+        ),
+
+        vector_ranked AS (
+            SELECT
+                ctid,
+                chunk_text,
+                document_name,
+                vector_distance,
+                ROW_NUMBER() OVER (ORDER BY vector_distance ASC) AS vec_rank
+            FROM base
+            ORDER BY vector_distance ASC
+            LIMIT %s
+        ),
+
+        lexical_ranked AS (
+            SELECT
+                d.ctid,
+                d.chunk_text,
+                d.document_name,
+                ts_rank_cd(d.fts_vector, q.query, 32) AS lex_score,
+                ROW_NUMBER() OVER (
+                    ORDER BY ts_rank_cd(d.fts_vector, q.query, 32) DESC
+                ) AS lex_rank
+            FROM {schema}.documents AS d
+            CROSS JOIN LATERAL (SELECT plainto_tsquery('spanish', %s) AS query) AS q
+            {where_sql}
+            ORDER BY lex_score DESC
+            LIMIT %s
+        ),
+
+        {literal_cte}
+
+        all_keys AS (
+            SELECT ctid FROM vector_ranked
+            UNION
+            SELECT ctid FROM lexical_ranked
+            UNION
+            SELECT ctid FROM literal_ranked
+        ),
+
+        merged AS (
+            SELECT
+                k.ctid,
+                COALESCE(v.chunk_text, l.chunk_text, lit.chunk_text) AS chunk_text,
+                COALESCE(v.document_name, l.document_name, lit.document_name) AS document_name,
+                v.vector_distance,
+                v.vec_rank,
+                l.lex_rank,
+                lit.lit_rank
+            FROM all_keys k
+            LEFT JOIN vector_ranked   v   ON v.ctid   = k.ctid
+            LEFT JOIN lexical_ranked  l   ON l.ctid   = k.ctid
+            LEFT JOIN literal_ranked  lit ON lit.ctid = k.ctid
+        ),
+
+        rrf AS (
+            SELECT
+                chunk_text,
+                document_name,
+                vector_distance,
+                (
+                    CASE WHEN vec_rank IS NOT NULL
+                        THEN %s::double precision / (%s + vec_rank::double precision) ELSE 0 END
+                  + CASE WHEN lex_rank IS NOT NULL
+                        THEN %s::double precision / (%s + lex_rank::double precision) ELSE 0 END
+                  + CASE WHEN lit_rank IS NOT NULL
+                        THEN %s::double precision / (%s + lit_rank::double precision) ELSE 0 END
+                ) AS rrf_score
+            FROM merged
+        )
+
+        SELECT chunk_text, document_name, vector_distance, rrf_score
+        FROM rrf
+        ORDER BY rrf_score DESC
+        LIMIT %s
     """
 
-    params = [q_emb_str]
+    params = [
+        q_emb_str,
+        *filter_params,
+        k,
+        query,
+        *filter_params,
+        k,
+        *literal_params,
+        vw,
+        rk,
+        lw,
+        rk,
+        lit_sql_weight,
+        rk,
+        k,
+    ]
 
-    # Filtros opcionales
-    filters = []
-    if document_name:
-        filters.append("document_name = %s")
-        params.append(document_name)
+    try:
+        cur.execute(sql, params)
+        rows = cur.fetchall()
+    except Exception as e:
+        print(f"[retrieval] ERROR en hybrid search: {e}")
+        raise
+    finally:
+        cur.close()
+        conn.close()
 
-    if agent_id:
-        filters.append("agent_id = %s")
-        params.append(agent_id)
+    print(
+        f"[retrieval] hybrid search returned {len(rows)} rows "
+        f"(k={k}, schema={schema}, vector_w={vw}, lexical_w={lw}, "
+        f"literal_w={lit_sql_weight}, literal_substring_leg={include_literal})"
+    )
 
-    if chunk_text:
-        filters.append("chunk_text = %s")
-        params.append(chunk_text)
-
-    if created_at_day is not None:
-        # Día civil UTC; created_at es timestamp sin TZ guardado como instante UTC (NOW() en Lambda).
-        # Rango [start, end) usa índice btree en created_at (AT TIME ZONE no es IMMUTABLE → no indexable).
-        start_utc = datetime.combine(created_at_day, time.min, tzinfo=timezone.utc)
-        end_utc = start_utc + timedelta(days=1)
-        filters.append("created_at >= %s AND created_at < %s")
-        params.append(start_utc.replace(tzinfo=None))
-        params.append(end_utc.replace(tzinfo=None))
-
-    if filters:
-        sql += " WHERE " + " AND ".join(filters)
-
-    sql += " ORDER BY embedding <=> %s::vector LIMIT %s"
-
-    params.append(q_emb_str)
-    params.append(k)
-
-    cur.execute(sql, params)
-    rows = cur.fetchall()
-    print(f"[retrieval] vector search returned {len(rows)} rows (k={k}, schema={schema})")
-
-    cur.close()
-    conn.close()
-
-    # Filtra vecinos semánticos por umbral de distancia.
-    # Con cosine distance (<=>), valores más bajos son más similares.
-    matched_rows = [row for row in rows if row[2] is not None and row[2] <= MAX_SEMANTIC_DISTANCE]
+    matched_rows = [
+        row for row in rows if row[2] is None or row[2] <= max_sd
+    ]
 
     if not matched_rows and rows:
-        # Mínimo 1 chunk: el vecino semánticamente más cercano (aunque supere el umbral).
-        n_cap = max(1, SEMANTIC_FALLBACK_TOP_N)
-        n = min(n_cap, len(rows))
+        n = min(max(1, fb_n), len(rows))
         matched_rows = rows[:n]
         dists = [round(float(r[2]), 4) for r in matched_rows if r[2] is not None]
         print(
-            f"[retrieval] no chunk under MAX_SEMANTIC_DISTANCE={MAX_SEMANTIC_DISTANCE}; "
-            f"using best {n} neighbor(s) as context, distances={dists}"
+            f"[retrieval] no chunk under MAX_SEMANTIC_DISTANCE={max_sd}; "
+            f"using best {n} by rrf_score, vector_distances={dists}"
         )
     elif not rows:
-        print("[retrieval] 0 SQL rows: revisá tenant_id, agent_id, document_name/chunk_text/created_at o datos en BD")
+        print(
+            "[retrieval] 0 rows: revisá tenant_id, agent_id, columna fts_vector, "
+            "document_name/chunk_text/created_at o datos en BD"
+        )
 
-    # Extraer chunks y documentos únicos solo de matches válidos
     chunks = [row[0] for row in matched_rows]
     documents = sorted(set(row[1] for row in matched_rows))
 
@@ -504,7 +663,14 @@ def handler(event, context):
         return resp
 
     # Obtener chunks relevantes
-    chunks, documents = semantic_search(query, tenant_id, document_name, agent_id, chunk_text)
+    chunks, documents = semantic_search(
+        query,
+        tenant_id,
+        document_name,
+        agent_id,
+        chunk_text,
+        created_at_day,
+    )
     context_text = "\n\n".join(chunks)
 
     # Obtener prompt del agente

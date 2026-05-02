@@ -37,8 +37,8 @@ output "rag_lambda_security_group_id" {
 # ==============================================================================
 
 output "rag_ingestion_state_machine_arn" {
-  description = "Step Functions RAG v2: alert-rag-ingestion (requiere create_rag_ingestion)"
-  value       = var.create_rag_ingestion ? module.rag_ingestion[0].state_machine_arn : null
+  description = "Reservado: el módulo RAG ingestion SFN no está definido en root; usar null."
+  value       = null
 }
 
 output "s3_documents_bucket_name" {

@@ -112,9 +112,18 @@ cd "$TERRAFORM_DIR"
 echo -e "${YELLOW}Initializing Terraform...${NC}"
 terraform init -upgrade
 
-# Select or create workspace
+# Select or create workspace (must match estado remoto partition + prod.tfvars)
 echo -e "${YELLOW}Selecting workspace: ${ENVIRONMENT}${NC}"
-terraform workspace select "$ENVIRONMENT" 2>/dev/null || terraform workspace new "$ENVIRONMENT"
+if ! terraform workspace select "$ENVIRONMENT" 2>/dev/null && ! terraform workspace new "$ENVIRONMENT" 2>/dev/null; then
+  echo -e "${RED}terraform workspace select/new failed${NC}"
+  exit 1
+fi
+CURRENT_WS="$(terraform workspace show)"
+if [[ "$CURRENT_WS" != "$ENVIRONMENT" ]]; then
+  echo -e "${RED}Workspace actual \"$CURRENT_WS\" != ENVIRONMENT \"$ENVIRONMENT\"; abort.${NC}"
+  exit 1
+fi
+echo -e "Active workspace: ${GREEN}${CURRENT_WS}${NC}"
 
 # Run Terraform action
 case $ACTION in
