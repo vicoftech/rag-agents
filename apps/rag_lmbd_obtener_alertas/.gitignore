@@ -3,18 +3,19 @@
 /venv
 .env
 
-# pip install -t . (artefactos locales; el paquete se arma con build-lambdas / CI)
+# pip install -t .
 *.dist-info/
 /bin/
 *.so
 boto3/
 botocore/
+certifi/
+charset_normalizer/
 dateutil/
-dotenv/
+idna/
 jmespath/
-numpy/
-pgvector/
 psycopg2/
+requests/
 s3transfer/
 six.py
 urllib3/

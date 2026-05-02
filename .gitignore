@@ -16,3 +16,7 @@ terraform/environments/prod.tfvars
 *.tfstate
 *.tfstate.*
 .terraform/
+
+# Logs locales de corridas / tooling
+run.log
+alerts_boletin_run_*.log

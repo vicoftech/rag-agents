@@ -1,0 +1,2 @@
+prefix,key,s3_uri,size,last_modified
+tenant_boletin,tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260408/segunda/aviso_segunda_20260408_segunda_020646.pdf,s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260408/segunda/aviso_segunda_20260408_segunda_020646.pdf,125340,2026-04-23T02:06:47+00:00

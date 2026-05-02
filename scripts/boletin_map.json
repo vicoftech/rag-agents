@@ -1,0 +1,11 @@
+{
+  "_default": {
+    "tenant_id": "boletin",
+    "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7"
+  },
+  "1": {
+    "tenant_id": "boletin",
+    "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+    "s3_tenant_slug": "tenant_boletin"
+  }
+}

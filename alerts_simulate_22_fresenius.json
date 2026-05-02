@@ -1,0 +1,21 @@
+[
+  {
+    "alerta_id": 22,
+    "corrida_label": "anmat",
+    "chunks_count": 8,
+    "message": {
+      "body_payload": {
+        "keywords": [
+          "Fresenius Medical Care Argentina S.A"
+        ],
+        "nombreUsuario": "",
+        "nombre_alerta": "Prueba alerta 22 - Fresenius",
+        "url": "https://dpamhb6uwt9g1.cloudfront.net/#/search/historic-search/ANMAT/Fresenius%20Medical%20Care%20Argentina%20S.A/2026-04-26/2026-04-30"
+      },
+      "from": "wisoft.soporte@asap-consulting.net",
+      "subject": "Prueba alerta 22 - Fresenius",
+      "template_name": "alert_aviso",
+      "to": "viglesias@asap-consulting.net"
+    }
+  }
+]

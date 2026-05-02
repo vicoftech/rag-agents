@@ -1,0 +1,12 @@
+{
+  "_default": {
+    "tenant_id": "anmat",
+    "agent_id": "51d1efe8-448e-4c58-8e3d-f74df1301e81",
+    "s3_tenant_slug": "tenant_anmat"
+  },
+  "0": {
+    "tenant_id": "anmat",
+    "agent_id": "51d1efe8-448e-4c58-8e3d-f74df1301e81",
+    "s3_tenant_slug": "tenant_anmat"
+  }
+}
