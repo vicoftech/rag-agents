@@ -9,6 +9,7 @@ from lib.llmClient import LLMClient
 from string import Template
 import numpy as np
 from pgvector.psycopg2 import register_vector
+from typing import Any
 
 from lib.bedrock_embeddings import parse_embedding_vector
 from lib.tenant_schema import resolve_schema_name
@@ -164,6 +165,8 @@ def parse_created_at_day(raw):
     if isinstance(raw, str) and not raw.strip():
         return None
     s = str(raw).strip()
+    if s.lower() in {"null", "none"}:
+        return None
     try:
         if len(s) == 10 and s[4] == "-" and s[7] == "-":
             return date.fromisoformat(s)
@@ -180,6 +183,47 @@ def parse_created_at_day(raw):
             "created_at inválido: use YYYY-MM-DD o ISO-8601 (ej. 2026-03-15 o 2026-03-15T12:00:00Z)"
         ) from e
 
+
+def resolve_created_at_bounds(
+    single_raw,
+    created_at_start: str | None,
+    created_at_end: str | None,
+) -> tuple[datetime | None, datetime | None]:
+    """
+    Devuelve (inicio_inclusivo, fin_exclusivo) en tiempo naive UTC para filtrar ``created_at`` en SQL.
+    Rango ``created_at_start``/``created_at_end`` (YYYY-MM-DD o ISO día) tiene prioridad sobre un solo día.
+    """
+    cs = (created_at_start or "").strip() if isinstance(created_at_start, str) else ""
+    ce = (created_at_end or "").strip() if isinstance(created_at_end, str) else ""
+    if cs and ce:
+        d0 = parse_created_at_day(cs)
+        d1 = parse_created_at_day(ce)
+        if d1 < d0:
+            raise ValueError(
+                "created_at_end debe ser >= created_at_start "
+                f"(obtuve {d1.isoformat()} < {d0.isoformat()})"
+            )
+        start = datetime.combine(d0, time.min, tzinfo=timezone.utc)
+        end_exc = datetime.combine(d1 + timedelta(days=1), time.min, tzinfo=timezone.utc)
+        return start.replace(tzinfo=None), end_exc.replace(tzinfo=None)
+    if single_raw is None or (isinstance(single_raw, str) and not str(single_raw).strip()):
+        return None, None
+    d = parse_created_at_day(single_raw)
+    if d is None:
+        return None, None
+    start = datetime.combine(d, time.min, tzinfo=timezone.utc)
+    end_exc = start + timedelta(days=1)
+    return start.replace(tzinfo=None), end_exc.replace(tzinfo=None)
+
+
+def pagination_meta(total_count: int, page_num: int, page_size: int) -> dict[str, Any]:
+    """Metadatos de paginación (``page_num`` 1-based)."""
+    psz = max(1, int(page_size))
+    tcp = max(0, int(total_count))
+    total_pages = (tcp + psz - 1) // psz if tcp > 0 else 0
+    pn = max(1, int(page_num))
+    has_next = bool(total_pages and pn < total_pages)
+    return {"total_count": tcp, "total_pages": total_pages, "has_next": has_next}
 
 
 def _resolve_db_credentials():
@@ -248,12 +292,16 @@ def semantic_search(
     agent_id=None,
     chunk_text=None,
     created_at_day=None,
+    created_at_start=None,
+    created_at_end=None,
     k=50,
     *,
     rrf_k=None,
     vector_weight=None,
     lexical_weight=None,
     literal_weight=None,
+    literal_keyword_overlap=True,
+    literal_min_chars_override=None,
     max_semantic_distance=None,
     semantic_fallback_top_n=None,
 ):
@@ -269,7 +317,12 @@ def semantic_search(
     rk = HYBRID_RRF_K if rrf_k is None else int(rrf_k)
     vw = HYBRID_VECTOR_WEIGHT if vector_weight is None else float(vector_weight)
     lw = HYBRID_LEXICAL_WEIGHT if lexical_weight is None else float(lexical_weight)
-    lit_w = HYBRID_LITERAL_WEIGHT if literal_weight is None else float(literal_weight)
+    if literal_weight is not None:
+        lit_w = float(literal_weight)
+    elif literal_keyword_overlap is False:
+        lit_w = 0.0
+    else:
+        lit_w = float(HYBRID_LITERAL_WEIGHT)
 
     q_emb = embed(query, input_type="search_query")
 
@@ -295,12 +348,12 @@ def semantic_search(
         filter_clauses.append("d.chunk_text = %s")
         filter_params.append(chunk_text)
 
-    if created_at_day is not None:
-        start_utc = datetime.combine(created_at_day, time.min, tzinfo=timezone.utc)
-        end_utc = start_utc + timedelta(days=1)
+    ca_lo, ca_hi_exc = resolve_created_at_bounds(
+        created_at_day, created_at_start, created_at_end
+    )
+    if ca_lo is not None and ca_hi_exc is not None:
         filter_clauses.append("d.created_at >= %s AND d.created_at < %s")
-        filter_params.append(start_utc.replace(tzinfo=None))
-        filter_params.append(end_utc.replace(tzinfo=None))
+        filter_params.extend([ca_lo, ca_hi_exc])
 
     where_sql = ("WHERE " + " AND ".join(filter_clauses)) if filter_clauses else ""
 
@@ -309,7 +362,12 @@ def semantic_search(
     cur = conn.cursor()
 
     q_plain = (query or "").strip()
-    include_literal = lit_w > 0 and len(q_plain) >= HYBRID_LITERAL_MIN_CHARS
+    lit_min = (
+        int(literal_min_chars_override)
+        if literal_min_chars_override is not None
+        else HYBRID_LITERAL_MIN_CHARS
+    )
+    include_literal = lit_w > 0 and len(q_plain) >= max(1, lit_min)
     lit_sql_weight = float(lit_w) if include_literal else 0.0
 
     if include_literal:
@@ -485,10 +543,48 @@ def semantic_search(
             "document_name/chunk_text/created_at o datos en BD"
         )
 
-    chunks = [row[0] for row in matched_rows]
-    documents = sorted(set(row[1] for row in matched_rows))
+    n_sql = len(rows)
+    after_sim = sum(1 for r in rows if r[2] is None or float(r[2]) <= max_sd)
+    semantic_fallback_used = after_sim == 0 and bool(rows) and bool(matched_rows)
 
-    return chunks, documents
+    chunks = [row[0] for row in matched_rows]
+    documents = sorted({(row[1] or "") for row in matched_rows if row[1]})
+    context_items: list[dict[str, Any]] = []
+    for i, row in enumerate(matched_rows):
+        rs = row[3]
+        context_items.append(
+            {
+                "rank": i,
+                "chunk_text": row[0],
+                "document_name": row[1] or "",
+                "distance": row[2],
+                "rrf_score": float(rs) if rs is not None else None,
+            }
+        )
+
+    ca_s = (created_at_start or "").strip() if isinstance(created_at_start, str) else ""
+    ca_e = (created_at_end or "").strip() if isinstance(created_at_end, str) else ""
+    retrieval_config: dict[str, Any] = {
+        "hybrid_search": True,
+        "retrieval_limit": k,
+        "max_semantic_distance": max_sd,
+        "semantic_fallback_top_n": fb_n,
+        "retrieval_sql_row_count": n_sql,
+        "chunks_after_similarity_gate": after_sim,
+        "semantic_fallback_neighbor_used": semantic_fallback_used,
+        "literal_keyword_overlap_applied": bool(literal_keyword_overlap and lit_w > 0),
+        "literal_substring_leg_sql": include_literal,
+        "literal_weight_applied": lit_sql_weight,
+        "literal_min_chars": lit_min,
+        "vector_weight": vw,
+        "lexical_weight": lw,
+        "rrf_k": rk,
+        "created_at_start": ca_s or None,
+        "created_at_end": ca_e or None,
+        "created_at_single_day": created_at_day.isoformat() if created_at_day else None,
+    }
+
+    return chunks, documents, context_items, retrieval_config
 
 
 
@@ -611,6 +707,7 @@ def handler(event, context):
         created_at_raw = body.get("created_at")
         if created_at_raw is None:
             created_at_raw = body.get("create_at")
+        req_src = body
     else:
         tenant_id = event.get("tenant_id")
         agent_id = event.get("agent_id")
@@ -620,6 +717,7 @@ def handler(event, context):
         created_at_raw = event.get("created_at")
         if created_at_raw is None:
             created_at_raw = event.get("create_at")
+        req_src = event
 
     if not tenant_id or not agent_id or not query:
         resp = {
@@ -647,9 +745,29 @@ def handler(event, context):
             }
         return resp
 
+    ca_start = str(req_src.get("created_at_start") or "").strip()
+    ca_end = str(req_src.get("created_at_end") or "").strip()
+    if bool(ca_start) ^ bool(ca_end):
+        resp = {
+            "statusCode": 400,
+            "body": json.dumps(
+                {
+                    "error": "Si usás ventana por fechas enviá created_at_start y "
+                    "created_at_end juntos (YYYY-MM-DD)."
+                }
+            ),
+        }
+        if is_http_event:
+            resp["headers"] = {"Content-Type": "application/json", **CORS_HEADERS}
+        return resp
+
     created_at_day = None
     try:
-        created_at_day = parse_created_at_day(created_at_raw)
+        if not (ca_start and ca_end):
+            created_at_day = parse_created_at_day(created_at_raw)
+        else:
+            created_at_day = None
+            resolve_created_at_bounds(None, ca_start, ca_end)
     except ValueError as e:
         resp = {
             "statusCode": 400,
@@ -662,15 +780,101 @@ def handler(event, context):
             }
         return resp
 
-    # Obtener chunks relevantes
-    chunks, documents = semantic_search(
-        query,
-        tenant_id,
-        document_name,
-        agent_id,
-        chunk_text,
-        created_at_day,
-    )
+    k_lim = req_src.get("retrieval_limit")
+    try:
+        k_req = int(k_lim) if k_lim is not None else 50
+    except (TypeError, ValueError):
+        resp = {
+            "statusCode": 400,
+            "body": json.dumps({"error": "retrieval_limit debe ser entero"}),
+        }
+        if is_http_event:
+            resp["headers"] = {"Content-Type": "application/json", **CORS_HEADERS}
+        return resp
+    if k_req < 1 or k_req > 500:
+        resp = {
+            "statusCode": 400,
+            "body": json.dumps({"error": "retrieval_limit debe estar entre 1 y 500"}),
+        }
+        if is_http_event:
+            resp["headers"] = {"Content-Type": "application/json", **CORS_HEADERS}
+        return resp
+
+    msd_raw = req_src.get("max_semantic_distance")
+    sfb_raw = req_src.get("semantic_fallback_top_n")
+    try:
+        msd_eff = float(msd_raw) if msd_raw is not None else None
+        if msd_eff is not None:
+            if msd_eff > 2.0:
+                msd_eff /= 100.0
+            if not (0 < msd_eff <= 2.0):
+                raise ValueError(f"max_semantic_distance fuera de rango: {msd_eff!r}")
+    except (TypeError, ValueError) as e:
+        resp = {
+            "statusCode": 400,
+            "body": json.dumps({"error": str(e)}),
+        }
+        if is_http_event:
+            resp["headers"] = {"Content-Type": "application/json", **CORS_HEADERS}
+        return resp
+
+    sfb_eff = None
+    try:
+        if sfb_raw is not None:
+            sfb_eff = int(sfb_raw)
+            if sfb_eff < 0:
+                raise ValueError("semantic_fallback_top_n no puede ser negativo")
+    except (TypeError, ValueError) as e:
+        resp = {
+            "statusCode": 400,
+            "body": json.dumps({"error": str(e)}),
+        }
+        if is_http_event:
+            resp["headers"] = {"Content-Type": "application/json", **CORS_HEADERS}
+        return resp
+
+    lk_ov_raw = req_src.get("literal_keyword_overlap")
+    literal_overlap = True if lk_ov_raw is None else bool(lk_ov_raw)
+
+    lk_ml_raw = req_src.get("literal_keyword_min_length")
+    literal_ml = None
+    try:
+        if lk_ml_raw is not None:
+            literal_ml = int(lk_ml_raw)
+            if literal_ml < 1 or literal_ml > 256:
+                raise ValueError("literal_keyword_min_length inválido en payload")
+    except (TypeError, ValueError) as e:
+        resp = {
+            "statusCode": 400,
+            "body": json.dumps({"error": str(e)}),
+        }
+        if is_http_event:
+            resp["headers"] = {"Content-Type": "application/json", **CORS_HEADERS}
+        return resp
+
+    retrieval_config: dict[str, Any] = {}
+    try:
+        chunks, documents, context_items, retrieval_config = semantic_search(
+            query,
+            tenant_id,
+            document_name,
+            agent_id,
+            chunk_text,
+            created_at_day,
+            ca_start if ca_start else None,
+            ca_end if ca_end else None,
+            k=k_req,
+            max_semantic_distance=msd_eff,
+            semantic_fallback_top_n=sfb_eff,
+            literal_keyword_overlap=literal_overlap,
+            literal_min_chars_override=literal_ml,
+        )
+    except ValueError as e:
+        resp = {"statusCode": 400, "body": json.dumps({"error": str(e)})}
+        if is_http_event:
+            resp["headers"] = {"Content-Type": "application/json", **CORS_HEADERS}
+        return resp
+
     context_text = "\n\n".join(chunks)
 
     # Obtener prompt del agente
@@ -689,11 +893,15 @@ def handler(event, context):
     print(response)
     resp = {
         "statusCode": 200,
-        "body": json.dumps({
-            "response": response,
-            "contexts": chunks,
-            "documents": documents
-        }),
+        "body": json.dumps(
+            {
+                "response": response,
+                "contexts": chunks,
+                "documents": documents,
+                "context_items": context_items,
+                "retrieval_config": retrieval_config,
+            }
+        ),
     }
     if is_http_event:
         resp["headers"] = {

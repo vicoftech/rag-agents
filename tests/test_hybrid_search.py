@@ -33,10 +33,13 @@ SEMANTIC_CASES = [
 
 
 def test_keyword(keyword):
-    chunks, docs = semantic_search(
-        query=keyword,
-        tenant_id=TEST_TENANT_ID,
-        agent_id=TEST_AGENT_ID,
+    chunks, docs, *_ = semantic_search(
+        keyword,
+        TEST_TENANT_ID,
+        None,
+        TEST_AGENT_ID,
+        None,
+        None,
         k=20,
     )
     found = any(keyword.lower() in c.lower() for c in chunks)

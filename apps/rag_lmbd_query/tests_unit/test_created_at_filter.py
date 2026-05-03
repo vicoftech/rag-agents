@@ -51,7 +51,7 @@ def test_resolve_range_takes_priority_over_single_day():
 
 
 def test_resolve_from_after_to_raises():
-    with pytest.raises(ValueError, match="created_at_from"):
+    with pytest.raises(ValueError, match="created_at_start"):
         resolve_created_at_bounds(None, "2026-05-01", "2026-04-01")
 
 

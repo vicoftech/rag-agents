@@ -300,6 +300,85 @@ jobs:
 2. Verificar la política IAM incluye el modelo correcto
 3. Verificar la región del modelo
 
+## 📧 Alertas documentales (RAG) y notificaciones por correo
+
+Flujo operativo usado para validar matches de corpus (ANMAT / boletín) y encolar envíos de mail sin tocar destinatarios productivos.
+
+### Script `scripts/alerts_semantic_matches.py`
+
+- Invoca `rag_lmbd_obtener_alertas` y, por cada alerta, `rag_lmbd_query` (búsqueda semántica + LLM).
+- Genera un JSON con `corridas[].resultados` (o `resultados`) y un array `notificaciones` por cada alerta con chunks recuperados.
+
+**Modo prueba (destinatario único):**
+
+- `--testing-email usuario@dominio.com` — Sustituye en cada resultado `mail`, `cuenta.mail` y `destinatarios` por ese correo, y deja traza en `meta.testing_email_override` y `meta.testing_email`. Así los mensajes publicados en SQS llevan `message.to` solo a esa dirección (no a clientes productivos).
+- Requiere que el correo contenga `@` (validación del CLI).
+
+**Publicación a la cola de emails:**
+
+- `--publish-email-queue` — Tras escribir `-o/--output`, envía un mensaje SQS por notificación (JSON UTF-8).
+- Cola por defecto: `email-sender-record-email-processor-prod` (sobrescribible con `--email-sqs-queue QUEUE_NAME`).
+- Para generar el archivo sin enviar: `--publish-email-queue` junto con `--no-email-queue-send`.
+
+**Ejemplos (prod, perfil `asap_main`, región `us-east-1`):**
+
+```bash
+# ANMAT: ventana de fechas created_at (UTC civil) + testing email + cola
+python3 scripts/alerts_semantic_matches.py \
+  --profile asap_main --env prod \
+  --corrida anmat=scripts/anmat_map.json \
+  --s3-bucket rag-documents-prod-913123310997 \
+  --max-semantic-distance 0.30 \
+  --created-at-start 2026-04-26 \
+  --created-at-end 2026-05-02 \
+  --testing-email alguien@asap-consulting.net \
+  -o alerts_anmat_run.json \
+  --publish-email-queue
+```
+
+```bash
+# Boletín oficial (misma idea; mapa tenant_boletin)
+python3 scripts/alerts_semantic_matches.py \
+  --profile asap_main --env prod \
+  --corrida boletin=scripts/boletin_map.json \
+  --s3-bucket rag-documents-prod-913123310997 \
+  --max-semantic-distance 0.30 \
+  --created-at-start 2026-04-26 \
+  --created-at-end 2026-05-02 \
+  --testing-email alguien@asap-consulting.net \
+  -o alerts_boletin_run.json \
+  --publish-email-queue
+```
+
+Las Lambdas en prod siguen el naming `rag_lmbd_obtener_alertas-prod` y `rag_lmbd_query-prod` (según `--env prod`).
+
+### Template SES `alert_aviso`
+
+El consumidor de la cola suele armar el envío con **Amazon SES** usando un template. En este proyecto el nombre del template es **`alert_aviso`** (no existe `alerta_aviso` en SES).
+
+**Placeholders usados en el cuerpo/asunto:** `{{ nombre_alerta }}`, `{{ keywords }}`, `{{ url }}` (en SES van con espacios alrededor del nombre, según el template cargado).
+
+**Descargar el template actual a JSON (para revisión o backup):**
+
+```bash
+aws ses get-template \
+  --template-name alert_aviso \
+  --profile asap_main \
+  --region us-east-1 \
+  --output json > ses_template_alert_aviso_from_ses.json
+```
+
+**Subir de nuevo un archivo en formato `GetTemplate` / `update-template` (objeto raíz `Template` con `TemplateName`, `SubjectPart`, `TextPart`, `HtmlPart`):**
+
+```bash
+aws ses update-template \
+  --cli-input-json file://ses_template_alert_aviso_from_ses.json \
+  --profile asap_main \
+  --region us-east-1
+```
+
+En el repositorio se mantiene una copia de referencia en la raíz: `ses_template_alert_aviso_from_ses.json` (sincronizar con SES cuando se editen asunto o HTML).
+
 ## 📝 Notas
 
 - Los workspaces de Terraform permiten manejar múltiples ambientes

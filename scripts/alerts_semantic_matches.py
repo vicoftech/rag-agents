@@ -3,6 +3,8 @@
 Para cada alerta activa (Lambda rag_lmbd_obtener_alertas), ejecuta la búsqueda semántica
 (Lambda rag_lmbd_query) y agrega chunks que matchearon + URIs de objeto S3.
 
+Las invocaciones a ``rag_lmbd_query`` pueden ejecutarse en paralelo (``--parallel``, default 10 hilos).
+
 La Lambda de query también invoca el LLM; tiene costo por alerta.
 
 En cada invocación el script sobrescribe el umbral sólo para esa llamada.
@@ -28,6 +30,14 @@ Para acercarse a una **búsqueda por palabra clave**:
     Con esto también se **desactiva el fallback** de vecinos lejanos (evita ruido tipo OCR irrelevante).
 
   `--no-literal-keyword-filter` vuelve al flujo sólo-semántico (con fallback posible si el umbral deja todos fuera).
+
+**Salida JSON:** por defecto ``corridas[].resultados`` (o ``resultados``) **sólo incluye alertas con**
+``chunks_count > 0`` y match documental (**no** aparecen las filas sólo con ``explicacion_sin_contexto_recuperado``).
+Para auditoría incluir también las sin match: ``--include-zero-chunk-resultados``.
+
+Con varias keywords, las muy cortas (p. ej. «beta», default ``--exact-keyword-substantive-min-len 5``) se excluyen
+del filtro OR para evitar falsos positivos. Modo ``--exact-chunk-keywords-mode all_corpus`` exige que **cada**
+keyword sustantiva aparezca exacta en **algún** chunk de la lista.
 
 Dos corpus (boletín y ANMAT) en una sola ejecución:
 
@@ -276,6 +286,22 @@ def keywords_for_exact_chunk_filter(*, alerta: dict[str, Any]) -> list[str]:
     return [nb] if nb else []
 
 
+def substantive_exact_keywords(keywords: list[str], *, min_normalized_len: int) -> list[str]:
+    """
+    Con varias palabras clave, descarta tokens demasiado cortos (p. ej. «beta») que matchean
+    en OCR por casualidad dentro del modo OR. Si todos son cortos, conserva la lista original.
+    """
+    raw = [str(k).strip() for k in keywords if str(k).strip()]
+    if min_normalized_len <= 0 or len(raw) <= 1:
+        return raw
+    out: list[str] = []
+    for k in raw:
+        collapsed = normalize_text_for_exact_keyword_match(k).replace(" ", "")
+        if len(collapsed) >= min_normalized_len:
+            out.append(k)
+    return out if out else raw
+
+
 def historic_search_urls_for_keywords(
     fuente_codigo: str,
     keywords: list[str],
@@ -405,6 +431,82 @@ def build_plain_alert_message(
     }
 
 
+def _patch_destinatarios_for_testing(dest: Any, te: str) -> Any:
+    """Normaliza ``destinatarios`` sustituyendo correos de destino por ``te``."""
+    if isinstance(dest, dict):
+        d2 = dict(dest)
+        d2["to"] = te
+        for k in ("email", "mail", "destinatario", "correo"):
+            if k in d2:
+                d2[k] = te
+        return d2
+    if isinstance(dest, list):
+        out: list[dict[str, Any]] = []
+        for item in dest:
+            if isinstance(item, dict):
+                i2 = dict(item)
+                i2["to"] = te
+                for k in ("email", "mail", "destinatario", "correo"):
+                    if k in i2:
+                        i2[k] = te
+                out.append(i2)
+        return out if out else [{"to": te}]
+    if isinstance(dest, str):
+        s = dest.strip()
+        if s.startswith("{") or s.startswith("["):
+            try:
+                obj = json.loads(s)
+                patched = _patch_destinatarios_for_testing(obj, te)
+                return json.dumps(patched, ensure_ascii=False)
+            except json.JSONDecodeError:
+                pass
+        return json.dumps({"to": te}, ensure_ascii=False)
+    return {"to": te}
+
+
+def apply_testing_email_to_blob(blob: dict[str, Any], testing_email: str) -> None:
+    """
+    Modo prueba: sustituye ``mail``, ``cuenta.mail`` y ``destinatarios`` en cada resultado,
+    y registra el override en ``meta`` (las notificaciones posteriores usan el mismo ``to``).
+    """
+    te = (testing_email or "").strip()
+    if not te:
+        return
+    meta = blob.get("meta")
+    if not isinstance(meta, dict):
+        meta = {}
+        blob["meta"] = meta
+    meta["testing_email_override"] = True
+    meta["testing_email"] = te
+
+    def patch_resultado(r: dict[str, Any]) -> None:
+        if not isinstance(r, dict):
+            return
+        r["mail"] = te
+        cuenta = r.get("cuenta")
+        if isinstance(cuenta, dict):
+            cuenta["mail"] = te
+        if "destinatarios" in r:
+            r["destinatarios"] = _patch_destinatarios_for_testing(r["destinatarios"], te)
+
+    for c in blob.get("corridas") or []:
+        for r in c.get("resultados") or []:
+            patch_resultado(r)
+    for r in blob.get("resultados") or []:
+        patch_resultado(r)
+
+
+def _es_resultado_con_match_documental(r: dict[str, Any]) -> bool:
+    """True sólo si hubo chunks recuperados y sin marcador de «sin contexto»."""
+    if int(r.get("chunks_count") or 0) <= 0:
+        return False
+    if not r.get("tiene_fuente_documental_recuperada", True):
+        return False
+    if r.get("explicacion_sin_contexto_recuperado"):
+        return False
+    return True
+
+
 def compute_notificaciones(blob: dict[str, Any], fallback_from: str) -> list[dict[str, Any]]:
     meta = blob.get("meta") or {}
     desde, hasta = busqueda_fechas_display(meta)
@@ -417,7 +519,7 @@ def compute_notificaciones(blob: dict[str, Any], fallback_from: str) -> list[dic
             for r in c.get("resultados") or []:
                 if not isinstance(r, dict):
                     continue
-                if int(r.get("chunks_count") or 0) <= 0:
+                if not _es_resultado_con_match_documental(r):
                     continue
                 fuente = resolve_fuente_informacion(
                     corrida_label=label, tenant_id_usado=str(r.get("tenant_id_usado") or "")
@@ -441,7 +543,7 @@ def compute_notificaciones(blob: dict[str, Any], fallback_from: str) -> list[dic
     for r in blob.get("resultados") or []:
         if not isinstance(r, dict):
             continue
-        if int(r.get("chunks_count") or 0) <= 0:
+        if not _es_resultado_con_match_documental(r):
             continue
         fuente = resolve_fuente_informacion(
             corrida_label="",
@@ -516,6 +618,14 @@ def parse_max_semantic_distance_cli(raw: str) -> float:
         raise argparse.ArgumentTypeError(
             f"--max-semantic-distance debe normalizar a (0, 2]; obtuve {v!r}"
         )
+    return v
+
+
+def parse_parallel_workers(raw: str) -> int:
+    """Máximo de hilos para invocaciones concurrentes a rag_lmbd_query."""
+    v = int(str(raw).strip())
+    if v < 1:
+        raise argparse.ArgumentTypeError("--parallel debe ser un entero >= 1")
     return v
 
 
@@ -646,6 +756,8 @@ def process_one_alert(
     literal_keyword_overlap: bool = True,
     literal_keyword_min_length: int = 3,
     exact_chunk_keyword_filter: bool = True,
+    exact_keyword_substantive_min_len: int = 5,
+    exact_chunk_keywords_mode: str = "any",
     created_at_start: str | None = None,
     created_at_end: str | None = None,
     include_full_chunk_text: bool = False,
@@ -716,16 +828,28 @@ def process_one_alert(
 
     n_chunks_before_exact = len(paired_chunks)
     keyword_list_exact = keywords_for_exact_chunk_filter(alerta=alerta)
+    mode_lc = str(exact_chunk_keywords_mode or "any").strip().lower()
     if exact_chunk_keyword_filter and keyword_list_exact:
-        paired_chunks = [
-            (e, t)
-            for (e, t) in paired_chunks
-            if any(
-                exact_keyword_in_chunk_text(t, kw)
-                for kw in keyword_list_exact
-                if str(kw).strip()
+        kws = [str(kw).strip() for kw in keyword_list_exact if str(kw).strip()]
+        if mode_lc == "all_corpus":
+            ok = bool(kws) and all(
+                any(exact_keyword_in_chunk_text(t, kw) for _, t in paired_chunks)
+                for kw in kws
             )
-        ]
+            if ok:
+                paired_chunks = [
+                    (e, t)
+                    for (e, t) in paired_chunks
+                    if any(exact_keyword_in_chunk_text(t, kw) for kw in kws)
+                ]
+            else:
+                paired_chunks = []
+        else:
+            paired_chunks = [
+                (e, t)
+                for (e, t) in paired_chunks
+                if any(exact_keyword_in_chunk_text(t, kw) for kw in kws)
+            ]
     n_chunks_after_exact = len(paired_chunks)
 
     context_entries = []
@@ -793,6 +917,8 @@ def process_one_alert(
     if exact_chunk_keyword_filter and keyword_list_exact:
         out["exact_keyword_chunk_filter"] = {
             "keywords": keyword_list_exact,
+            "keywords_mode": mode_lc,
+            "substantive_min_normalized_len": int(exact_keyword_substantive_min_len),
             "chunks_before": n_chunks_before_exact,
             "chunks_after": n_chunks_after_exact,
         }
@@ -830,6 +956,8 @@ def _run_query_workers(
     literal_keyword_overlap: bool,
     literal_keyword_min_length: int,
     exact_chunk_keyword_filter: bool,
+    exact_keyword_substantive_min_len: int,
+    exact_chunk_keywords_mode: str,
     parallel: int,
     created_at_start: str | None,
     created_at_end: str | None,
@@ -861,6 +989,8 @@ def _run_query_workers(
                     literal_keyword_overlap=literal_keyword_overlap,
                     literal_keyword_min_length=literal_keyword_min_length,
                     exact_chunk_keyword_filter=exact_chunk_keyword_filter,
+                    exact_keyword_substantive_min_len=exact_keyword_substantive_min_len,
+                    exact_chunk_keywords_mode=exact_chunk_keywords_mode,
                     created_at_start=created_at_start,
                     created_at_end=created_at_end,
                     include_full_chunk_text=include_full_chunk_text,
@@ -908,6 +1038,41 @@ def _run_query_workers(
 
     _log_step("QUERY", f"Fin procesamiento: ok={len(results)} error={len(errors)}.")
     return results, errors
+
+
+def omit_resultados_sin_coincidencia_documental(
+    blob: dict[str, Any], *, include_zero_chunk: bool
+) -> dict[str, Any]:
+    """
+    Deja en ``resultados`` / ``corridas[].resultados`` sólo filas con chunks reales
+    (misma regla que ``notificaciones``). Con ``include_zero_chunk=True`` no altera.
+    """
+    if include_zero_chunk:
+        return blob
+    if isinstance(blob.get("corridas"), list):
+        for c in blob["corridas"]:
+            if not isinstance(c, dict):
+                continue
+            summ = c.get("summary")
+            if not isinstance(summ, dict):
+                summ = {}
+                c["summary"] = summ
+            full = [r for r in (c.get("resultados") or []) if isinstance(r, dict)]
+            filt = [r for r in full if _es_resultado_con_match_documental(r)]
+            summ["resultados_totales_procesados"] = len(full)
+            summ["resultados_con_coincidencia_documental"] = len(filt)
+            c["resultados"] = filt
+    elif isinstance(blob.get("resultados"), list):
+        full = [r for r in blob["resultados"] if isinstance(r, dict)]
+        summ = blob.get("summary")
+        if not isinstance(summ, dict):
+            summ = {}
+            blob["summary"] = summ
+        filt = [r for r in full if _es_resultado_con_match_documental(r)]
+        summ["resultados_totales_procesados"] = len(full)
+        summ["resultados_con_coincidencia_documental"] = len(filt)
+        blob["resultados"] = filt
+    return blob
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
@@ -972,6 +1137,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     literal_kw = getattr(args, "literal_keyword_overlap", True)
     literal_kw_len = int(getattr(args, "literal_keyword_min_length", 3))
     exact_kw_filter = not getattr(args, "no_exact_chunk_keyword_filter", False)
+    exact_sub_len = int(getattr(args, "exact_keyword_substantive_min_len", 5))
+    exact_kw_mode = str(getattr(args, "exact_chunk_keywords_mode", "any"))
 
     base_meta: dict[str, Any] = {
         "obtener_alertas_lambda": obtener_name,
@@ -983,6 +1150,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "literal_keyword_overlap": literal_kw,
         "literal_keyword_min_length": literal_kw_len,
         "exact_chunk_keyword_filter": exact_kw_filter,
+        "exact_keyword_substantive_min_len": exact_sub_len,
+        "exact_chunk_keywords_mode": exact_kw_mode,
+        "json_incluye_alertas_sin_match": bool(getattr(args, "include_zero_chunk_resultados", False)),
+        "query_parallel_workers": int(getattr(args, "parallel", 10)),
     }
     if sim_q:
         base_meta["obtener_alertas_skipped"] = True
@@ -1033,6 +1204,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 literal_keyword_overlap=literal_kw,
                 literal_keyword_min_length=literal_kw_len,
                 exact_chunk_keyword_filter=exact_kw_filter,
+                exact_keyword_substantive_min_len=exact_sub_len,
+                exact_chunk_keywords_mode=exact_kw_mode,
                 parallel=args.parallel,
                 created_at_start=ca_start_str,
                 created_at_end=ca_end_str,
@@ -1052,7 +1225,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 }
             )
             _log_step("RUN", f"Corrida '{label}' finalizada: ok={len(results)} error={len(errors)}.")
-        return {"meta": base_meta, "corridas": corridas_out}
+        blob_out: dict[str, Any] = {"meta": base_meta, "corridas": corridas_out}
+        return omit_resultados_sin_coincidencia_documental(
+            blob_out, include_zero_chunk=bool(args.include_zero_chunk_resultados)
+        )
 
     fm = load_fuente_map(args.fuente_map_file, args.fuente_map_inline)
     _log_step("RUN", "Procesando corrida única.")
@@ -1068,6 +1244,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         literal_keyword_overlap=literal_kw,
         literal_keyword_min_length=literal_kw_len,
         exact_chunk_keyword_filter=exact_kw_filter,
+        exact_keyword_substantive_min_len=exact_sub_len,
+        exact_chunk_keywords_mode=exact_kw_mode,
         parallel=args.parallel,
         created_at_start=ca_start_str,
         created_at_end=ca_end_str,
@@ -1079,7 +1257,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "matches_error": len(errors),
     }
     _log_step("RUN", f"Fin corrida única: ok={len(results)} error={len(errors)}.")
-    return {"meta": base_meta, "summary": summary, "resultados": results, "errors": errors}
+    blob_out = {"meta": base_meta, "summary": summary, "resultados": results, "errors": errors}
+    return omit_resultados_sin_coincidencia_documental(
+        blob_out, include_zero_chunk=bool(args.include_zero_chunk_resultados)
+    )
 
 
 def main(argv: list[str]) -> int:
@@ -1155,6 +1336,34 @@ def main(argv: list[str]) -> int:
         help=(
             "Desactiva el filtro POST-Lambda en este script: sólo conserva chunks donde el texto incluye "
             "coincidencia exacta (tokens UTF-8) de al menos una palabra clave de la alerta."
+        ),
+    )
+    p.add_argument(
+        "--exact-keyword-substantive-min-len",
+        type=int,
+        default=5,
+        metavar="N",
+        help=(
+            "Con 2 o más palabras clave, excluye del filtro exacto las keywords con menos de N caracteres "
+            "tras NFKC+casefold y sin espacios (ej. «beta», «IV»). Con una sola keyword no aplica filtro por "
+            "longitud. 0 lo desactiva. Default 5."
+        ),
+    )
+    p.add_argument(
+        "--exact-chunk-keywords-mode",
+        choices=("any", "all_corpus"),
+        default="any",
+        help=(
+            "any: cada chunk puede matchear con cualquiera de las keywords (OR). "
+            "all_corpus: después del OR cada keyword debe aparecer exacta en algún chunk de la lista (AND)."
+        ),
+    )
+    p.add_argument(
+        "--include-zero-chunk-resultados",
+        action="store_true",
+        help=(
+            "Incluye en el JSON todas las alertas aun sin chunks recuperados (con "
+            "explicaciones «sin matching»). Por defecto se omiten y sólo quedan filas con match documental."
         ),
     )
     p.add_argument(
@@ -1244,7 +1453,16 @@ def main(argv: list[str]) -> int:
         default="",
         help="Lista de IDs de alerta coma-separados (filtro después de obtener lista)",
     )
-    p.add_argument("--parallel", type=int, default=1, help="Invocaciones query en paralelo (cuidado con rate limits)")
+    p.add_argument(
+        "--parallel",
+        type=parse_parallel_workers,
+        default=10,
+        metavar="N",
+        help=(
+            "Máximo de hilos concurrentes para invocar rag_lmbd_query (ThreadPoolExecutor). "
+            "1 = secuencial. Default 10; reducir si hay throttling o límites de cuenta."
+        ),
+    )
     p.add_argument("-o", "--output", default="", help="Escribir JSON aquí")
     p.add_argument(
         "--salida-solo-notificaciones",
@@ -1277,6 +1495,16 @@ def main(argv: list[str]) -> int:
         help=(
             "Fuerza modo prueba sin envío a SQS, incluso si se pasa --publish-email-queue "
             "(genera archivo JSON pero no publica mensajes)."
+        ),
+    )
+    p.add_argument(
+        "--testing-email",
+        default="",
+        metavar="EMAIL",
+        help=(
+            "Modo prueba: reemplaza todos los destinatarios en cada resultado (mail, cuenta, destinatarios) "
+            "por este correo; las notificaciones y la cola SQS usan sólo este ``to``. "
+            "Se guarda en meta.testing_email_override / meta.testing_email."
         ),
     )
     p.add_argument(
@@ -1317,6 +1545,10 @@ def main(argv: list[str]) -> int:
     if args.created_at_span_days < 1:
         p.error("--created-at-span-days debe ser >= 1")
 
+    ek = getattr(args, "exact_keyword_substantive_min_len", 5)
+    if ek < 0 or ek > 256:
+        p.error("--exact-keyword-substantive-min-len debe estar entre 0 y 256.")
+
     cs = args.created_at_start.strip()
     ce = args.created_at_end.strip()
     setattr(args, "created_at_explicit", None)
@@ -1342,6 +1574,10 @@ def main(argv: list[str]) -> int:
     if args.publish_email_queue and not str(args.output or "").strip():
         p.error("--publish-email-queue requiere -o/--output.")
 
+    te_arg = (getattr(args, "testing_email", "") or "").strip()
+    if te_arg and "@" not in te_arg:
+        p.error("--testing-email debe ser un correo que contenga «@».")
+
     try:
         _log_step("MAIN", "Ejecutando run().")
         out = run(args)
@@ -1366,6 +1602,10 @@ def main(argv: list[str]) -> int:
             return 2
         if extra.get("from"):
             fb_from = str(extra["from"]).strip() or fb_from
+
+    if te_arg:
+        apply_testing_email_to_blob(out, te_arg)
+        _log_step("MAIN", f"Modo testing-email activo: destinatarios → {te_arg!r}")
 
     notifs = compute_notificaciones(out, fb_from)
     _log_step("MAIN", f"Notificaciones generadas (chunks_count>0): {len(notifs)}")
