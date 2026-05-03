@@ -384,3 +384,18 @@ output "agentcore_usage_instructions" {
   description = "Instructions for using AgentCore"
   value       = var.create_agentcore ? module.agentcore[0].usage_instructions : null
 }
+
+output "scheduled_boletin_anmat_lambda_arn" {
+  description = "Lambda que dispara SFN Boletín/ANMAT (null si enable_scheduled_boletin_anmat_sfn=false)"
+  value       = var.enable_scheduled_boletin_anmat_sfn ? module.scheduled_boletin_anmat_sfn[0].lambda_function_arn : null
+}
+
+output "scheduled_boletin_anmat_schedule_boletin_arn" {
+  description = "ARN regla Scheduler Boletín 09:00 (timezone scheduled_sync_timezone)"
+  value       = var.enable_scheduled_boletin_anmat_sfn ? module.scheduled_boletin_anmat_sfn[0].schedule_boletin_arn : null
+}
+
+output "scheduled_boletin_anmat_schedule_anmat_arn" {
+  description = "ARN regla Scheduler ANMAT 09:30"
+  value       = var.enable_scheduled_boletin_anmat_sfn ? module.scheduled_boletin_anmat_sfn[0].schedule_anmat_arn : null
+}

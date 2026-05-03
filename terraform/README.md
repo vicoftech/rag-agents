@@ -379,6 +379,28 @@ aws ses update-template \
 
 En el repositorio se mantiene una copia de referencia en la raíz: `ses_template_alert_aviso_from_ses.json` (sincronizar con SES cuando se editen asunto o HTML).
 
+## ⏰ Step Functions Boletín / ANMAT (horario diario)
+
+Módulo Terraform `modules/scheduled_boletin_anmat_sfn`: **EventBridge Scheduler** llama a una Lambda que hace `states:StartExecution`.
+
+| Horario (TZ `scheduled_sync_timezone`, default Buenos Aires) | Corpus | Comportamiento |
+|-------------------------------------------------------------|--------|----------------|
+| **09:00** | Boletín | Para **ayer** y **hoy** (civil en esa TZ), una ejecución SFN por cada sección (`primera`…`cuarta`). Misma carga útil que `scripts/boletin_syncronizer_invoker.py`. |
+| **09:30** | ANMAT | **Una** ejecución del SFN `rag-anmat-to-s3writer-*` con `year` = año civil actual (o `anmat_year_override`) y rango de páginas configurable (`anmat_page_start` / `anmat_page_end`, default 1–15). |
+
+**Criterio “hoy y ayer”:** aplica de forma literal al **Boletín** (dos fechas en el payload `date`). El SFN de **ANMAT** hoy sólo acepta **año + páginas** en la Lambda anmatlinks; no hay filtro por fecha de norma en el ASL. Para alinear ANMAT a un rango calendario habría que extender la Lambda/SFN.
+
+**Activar en `terraform apply`:** en el `.tfvars` correspondiente:
+
+```hcl
+enable_scheduled_boletin_anmat_sfn = true
+# Opcional: UUIDs agente RAG si difieren del default
+# scheduled_boletin_rag_agent_id = "..."
+# scheduled_anmat_rag_agent_id = "..."
+```
+
+Archivos: `terraform/scheduled_boletin_anmat_sfn.tf`, variables `enable_scheduled_*`, outputs `scheduled_boletin_anmat_*`.
+
 ## 📝 Notas
 
 - Los workspaces de Terraform permiten manejar múltiples ambientes

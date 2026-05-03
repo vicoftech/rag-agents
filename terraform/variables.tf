@@ -51,6 +51,30 @@ variable "boletin_oficial_state_machine_name_override" {
   default     = ""
 }
 
+variable "enable_scheduled_boletin_anmat_sfn" {
+  description = "Si true, despliega EventBridge Scheduler + Lambda que disparan diariamente los SFN de Boletín (09:00) y ANMAT (09:30) en scheduled_sync_timezone."
+  type        = bool
+  default     = false
+}
+
+variable "scheduled_boletin_rag_agent_id" {
+  description = "UUID agente RAG boletín para el payload del SFN diario (tenant_id=boletin)."
+  type        = string
+  default     = "05032266-f6e1-48cb-9248-bc116652c7c7"
+}
+
+variable "scheduled_anmat_rag_agent_id" {
+  description = "UUID agente RAG ANMAT para el payload del SFN diario (tenant_id=anmat)."
+  type        = string
+  default     = "51d1efe8-448e-4c58-8e3d-f74df1301e81"
+}
+
+variable "scheduled_sync_timezone" {
+  description = "Zona IANA para las horas 9:00 / 9:30 de las reglas (ej. America/Argentina/Buenos_Aires)."
+  type        = string
+  default     = "America/Argentina/Buenos_Aires"
+}
+
 variable "create_vpc_endpoint_s3" {
   description = "Crear VPC endpoint Gateway para S3 (desactivar si la VPC ya tiene ruta/prefix list a S3)"
   type        = bool

@@ -955,10 +955,32 @@ module "lambda_anmatlinks" {
   environment_variables = {
     CHROMIUM_PACK_PATH       = "/opt/nodejs/node_modules/@sparticuz/chromium/bin"
     ANMAT_FORCED_RESOLVER_IP = "190.210.84.134"
+    S3_BUCKET_NAME           = local.documents_bucket_name
   }
 
   use_s3_deployment = true
   s3_bucket_name    = local.documents_bucket_name
+
+  attach_policy_statements = [
+    {
+      effect = "Allow"
+      actions = [
+        "s3:ListBucket",
+      ]
+      resources = [
+        "arn:aws:s3:::${local.documents_bucket_name}",
+      ]
+    },
+    {
+      effect = "Allow"
+      actions = [
+        "s3:GetObject",
+      ]
+      resources = [
+        "arn:aws:s3:::${local.documents_bucket_name}/*",
+      ]
+    },
+  ]
 
   tags = local.common_tags
 }

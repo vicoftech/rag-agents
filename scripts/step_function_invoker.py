@@ -43,6 +43,9 @@ def invoke_step_function(
         "tenant_id": TENANT_ID,
         "pagesSinceReset": pages_since_reset,
         "total_pages": total_pages,
+        # Vacío / false: sin filtro mensual ni skip S3 (compat SFN).
+        "filter_yyyymm": "",
+        "skip_existing_s3": False,
     }
     
     try:

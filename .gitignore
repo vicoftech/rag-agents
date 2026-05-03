@@ -16,7 +16,9 @@ terraform/environments/prod.tfvars
 *.tfstate
 *.tfstate.*
 .terraform/
+terraform/modules/scheduled_boletin_anmat_sfn/.build/
 
 # Logs locales de corridas / tooling
 run.log
+migrate_s3_anmat_full.log
 alerts_boletin_run_*.log

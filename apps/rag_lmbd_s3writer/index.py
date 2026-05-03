@@ -10,6 +10,7 @@ from urllib.parse import urlparse, unquote
 from datetime import datetime
 from typing import List, Dict, Optional
 import hashlib
+from botocore.exceptions import ClientError
 
 # AWS Session
 session_args = {'region_name': os.getenv('AWS_REGION', 'us-east-1')}
@@ -341,26 +342,40 @@ def upload_to_s3(content: bytes, bucket: str, key: str) -> bool:
         print(f"Error uploading to S3: {e}")
         return False
 
+def _anmat_pdf_stem_from_url(pdf_url: str, index: int) -> str:
+    """Nombre base estable para PDFs BuscaDispo (último segmento del path, sin extensión)."""
+    parsed = urlparse(pdf_url)
+    host = (parsed.hostname or "").lower()
+    if ANMAT_HOSTNAME not in host and "buscadispo.anmat" not in host:
+        return ""
+    segments = [p for p in (parsed.path or "").split("/") if p]
+    if not segments:
+        return f"aviso_{index:03d}"
+    base = segments[-1].rsplit(".", 1)[0]
+    stem = re.sub(r"[^\w\-]+", "_", base)[:120]
+    return stem or f"aviso_{index:03d}"
+
+
 def generate_filename_from_url(pdf_url: str, index: int, date_str: str, section: str) -> str:
     """
     Genera nombre de archivo para PDF basado en URL, fecha y sección
     """
-    # Extraer ID del aviso de la URL
+    stem_anmat = _anmat_pdf_stem_from_url(pdf_url, index)
+    if stem_anmat:
+        # ANMAT: nombre determinista (sin timestamp) para idempotencia / HeadObject
+        return f"aviso_{stem_anmat}_{date_str}_{section}.pdf"
+
+    # Boletín u otros: ID en path + timestamp para evitar colisiones
     # Ej: https://www.boletinoficial.gob.ar/pdf/aviso/primera/339534/20260317
-    # -> aviso_339534_20260317_primera.pdf
     parts = pdf_url.strip('/').split('/')
     if len(parts) >= 6:
         aviso_id = parts[5]  # El ID del aviso
     else:
         aviso_id = f"aviso_{index:03d}"
-    
-    # Limpiar URL de parámetros
-    clean_url = pdf_url.split('?')[0]
-    
-    # Generar nombre único
+
     timestamp = datetime.now().strftime('%H%M%S')
     filename = f"aviso_{aviso_id}_{date_str}_{section}_{timestamp}.pdf"
-    
+
     return filename
 
 def process_bolinks_output(bolinks_output: Dict, tenant_id: str, agent_id: str) -> Dict:
@@ -485,6 +500,29 @@ def process_single_pdf(pdf: Dict, tenant_id: str, agent_id: str) -> Dict:
         date_str = pdf.get('date') or ''
         section = pdf.get('section') or 'default'
         print(f"single_pdf: {pdf['url']}")
+        filename = generate_filename_from_url(pdf['url'], 0, date_str, section)
+        s3_key = f"{site_id}/{date_str}/{section}/{filename}"
+
+        if S3_BUCKET and _anmat_pdf_stem_from_url(pdf['url'], 0):
+            try:
+                s3_client.head_object(Bucket=S3_BUCKET, Key=s3_key)
+                print(f"single_pdf: ya existe en S3, omitiendo descarga: s3://{S3_BUCKET}/{s3_key}")
+                return {
+                    'success': True,
+                    'skipped_existing_s3': True,
+                    'site_id': site_id,
+                    'date': date_str or '',
+                    'processed_count': 0,
+                    'failed_count': 0,
+                    'uploaded_files': [],
+                    's3_bucket': S3_BUCKET,
+                    's3_key': s3_key,
+                }
+            except ClientError as e:
+                code = e.response.get('Error', {}).get('Code', '')
+                if code not in ('404', 'NoSuchKey', 'NotFound'):
+                    raise
+
         pdf_content = download_pdf(pdf['url'])
         if not pdf_content:
             return {
@@ -492,8 +530,6 @@ def process_single_pdf(pdf: Dict, tenant_id: str, agent_id: str) -> Dict:
                 'error': 'download failed',
                 'url': pdf.get('url'),
             }
-        filename = generate_filename_from_url(pdf['url'], 0, date_str, section)
-        s3_key = f"{site_id}/{date_str}/{section}/{filename}"
         if not upload_to_s3(pdf_content, S3_BUCKET, s3_key):
             return {
                 'success': False,

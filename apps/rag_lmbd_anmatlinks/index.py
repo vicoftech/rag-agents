@@ -1,10 +1,13 @@
 import json
 import os
+import re
 import socket
 import time
 from datetime import datetime
 from urllib.parse import urlparse
 
+import boto3
+from botocore.exceptions import ClientError
 from playwright.sync_api import sync_playwright
 
 from lib.lambda_chromium import try_sparticuz_launch_config
@@ -15,6 +18,89 @@ DEFAULT_ANMAT_ORIGIN = "https://buscadispo.anmat.gob.ar"
 
 def _anmat_origin() -> str:
     return os.environ.get("ANMAT_BASE_URL", DEFAULT_ANMAT_ORIGIN).rstrip("/")
+
+
+def _normalize_tenant_prefix(tenant_id: str) -> str:
+    tenant = str(tenant_id or "").strip()
+    if not tenant:
+        return tenant
+    return tenant if tenant.startswith("tenant_") else f"tenant_{tenant}"
+
+
+def _anmat_pdf_stem_from_url(pdf_url: str, index: int) -> str:
+    """Misma convención que rag_lmbd_s3writer: último segmento del path BuscaDispo."""
+    parsed = urlparse(pdf_url)
+    host = (parsed.hostname or "").lower()
+    if "buscadispo.anmat" not in host:
+        return ""
+    segments = [p for p in (parsed.path or "").split("/") if p]
+    if not segments:
+        return f"aviso_{index:03d}"
+    base = segments[-1].rsplit(".", 1)[0]
+    stem = re.sub(r"[^\w\-]+", "_", base)[:120]
+    return stem or f"aviso_{index:03d}"
+
+
+def _s3_object_names_for_prefix(
+    s3,
+    bucket: str,
+    prefix: str,
+) -> set[str]:
+    """Nombres de objeto (sin path) bajo prefix."""
+    names: set[str] = set()
+    token = None
+    while True:
+        kwargs: dict = {"Bucket": bucket, "Prefix": prefix, "MaxKeys": 500}
+        if token:
+            kwargs["ContinuationToken"] = token
+        resp = s3.list_objects_v2(**kwargs)
+        for obj in resp.get("Contents") or []:
+            key = obj.get("Key", "")
+            if key:
+                names.add(key.rsplit("/", 1)[-1])
+        if not resp.get("IsTruncated"):
+            return names
+        token = resp.get("NextContinuationToken")
+
+
+def _filter_skip_existing_s3(
+    links: list[dict],
+    tenant_id: str,
+    agent_id: str,
+    bucket: str,
+) -> list[dict]:
+    """
+    Quita enlaces cuyo stem del PDF ya aparece en algún nombre de objeto
+    bajo .../documents/{date}/{section}/ (una listada S3 por prefijo distinto).
+    """
+    s3 = boto3.client("s3", region_name=os.environ.get("AWS_REGION", "us-east-1"))
+    tp = _normalize_tenant_prefix(tenant_id)
+    prefix_to_names: dict[str, set[str]] = {}
+    kept: list[dict] = []
+    skipped = 0
+    for item in links:
+        url = item.get("url") or ""
+        date_str = item.get("date") or ""
+        section = item.get("section") or "default"
+        stem = _anmat_pdf_stem_from_url(url, 0)
+        if not stem:
+            kept.append(item)
+            continue
+        prefix = f"{tp}/{agent_id}/documents/{date_str}/{section}/"
+        try:
+            if prefix not in prefix_to_names:
+                prefix_to_names[prefix] = _s3_object_names_for_prefix(s3, bucket, prefix)
+            names = prefix_to_names[prefix]
+            if any(stem in n for n in names):
+                skipped += 1
+                print(f"Omitiendo (ya en S3): {url}")
+                continue
+        except ClientError as e:
+            print(f"Advertencia S3 al comprobar existencia, se conserva el link: {e}")
+        kept.append(item)
+    if skipped:
+        print(f"Enlaces omitidos por existencia en S3: {skipped}")
+    return kept
 
 
 def _format_ip_for_chromium_map(ip: str) -> str:
@@ -440,6 +526,15 @@ def _pick_param(event: dict, body: dict, key: str, default=None):
     return body.get(key, default)
 
 
+def _truthy(val) -> bool:
+    if val is True:
+        return True
+    if val is False or val is None:
+        return False
+    s = str(val).strip().lower()
+    return s in ("1", "true", "yes", "on")
+
+
 def handler(event, context):
     try:
         body = _parse_event_body(event)
@@ -474,7 +569,21 @@ def handler(event, context):
                 total_pages_cap = None
         if total_pages_cap is not None and total_pages_cap <= 0:
             total_pages_cap = None
-        
+
+        raw_filter = _pick_param(event, body, "filter_yyyymm", "")
+        filter_yyyymm = str(raw_filter or "").strip()
+        if filter_yyyymm and (not filter_yyyymm.isdigit() or len(filter_yyyymm) != 6):
+            return {
+                "statusCode": 400,
+                "body": json.dumps(
+                    {"error": 'filter_yyyymm debe ser 6 dígitos YYYYMM o vacío.'}
+                ),
+            }
+
+        skip_existing_s3 = _truthy(_pick_param(event, body, "skip_existing_s3", False))
+        tenant_id = _pick_param(event, body, "tenant_id", None)
+        agent_id = _pick_param(event, body, "agent_id", None)
+
         # Scraper: un reintento completo si Playwright sigue sin resolver (suele alinearse con
         # resolución intermitente en el mismo invocación, no solo "DNS secundario").
         try:
@@ -489,6 +598,22 @@ def handler(event, context):
             links, total_pages, total_records, has_more = scrape_anmat(
                 year, page_start, page_end, total_pages_cap
             )
+
+        if filter_yyyymm:
+            links = [
+                x for x in links if (x.get("date") or "")[:6] == filter_yyyymm
+            ]
+
+        if skip_existing_s3:
+            bucket = (os.environ.get("S3_BUCKET_NAME") or "").strip()
+            if not bucket or not tenant_id or not agent_id:
+                print(
+                    "skip_existing_s3 ignorado: requieren S3_BUCKET_NAME, tenant_id y agent_id"
+                )
+            else:
+                links = _filter_skip_existing_s3(
+                    links, str(tenant_id), str(agent_id), bucket
+                )
 
         return {
             'statusCode': 200,
@@ -505,6 +630,10 @@ def handler(event, context):
                     'page_start': page_start,
                     'page_end': page_end,
                     'total_pages': total_pages_cap,
+                    'filter_yyyymm': filter_yyyymm or None,
+                    'skip_existing_s3': skip_existing_s3,
+                    'tenant_id': tenant_id,
+                    'agent_id': agent_id,
                 },
                 'total_records': total_records,
                 'total_pages_approx': total_pages,
