@@ -1,7 +1,8 @@
 import os
 import json
+import time
 import urllib.parse
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, time as dt_time, timedelta, timezone
 import boto3
 from botocore.exceptions import ClientError
 import psycopg2
@@ -69,6 +70,8 @@ _DB_SECRET_CACHE = None
 
 DOCUMENTS_S3_BUCKET = os.getenv("DOCUMENTS_S3_BUCKET", "")
 PRESIGNED_URL_EXPIRES_SECONDS = int(os.getenv("PRESIGNED_URL_EXPIRES_SECONDS", "3600"))
+# Si el cliente no envía retrieval_limit, se usa este tope (híbrido más barato con valores menores).
+DEFAULT_RETRIEVAL_LIMIT = int(os.getenv("DEFAULT_RETRIEVAL_LIMIT", "25"))
 
 
 def _http_json_response(status_code, payload, is_http_event=True):
@@ -203,15 +206,15 @@ def resolve_created_at_bounds(
                 "created_at_end debe ser >= created_at_start "
                 f"(obtuve {d1.isoformat()} < {d0.isoformat()})"
             )
-        start = datetime.combine(d0, time.min, tzinfo=timezone.utc)
-        end_exc = datetime.combine(d1 + timedelta(days=1), time.min, tzinfo=timezone.utc)
+        start = datetime.combine(d0, dt_time.min, tzinfo=timezone.utc)
+        end_exc = datetime.combine(d1 + timedelta(days=1), dt_time.min, tzinfo=timezone.utc)
         return start.replace(tzinfo=None), end_exc.replace(tzinfo=None)
     if single_raw is None or (isinstance(single_raw, str) and not str(single_raw).strip()):
         return None, None
     d = parse_created_at_day(single_raw)
     if d is None:
         return None, None
-    start = datetime.combine(d, time.min, tzinfo=timezone.utc)
+    start = datetime.combine(d, dt_time.min, tzinfo=timezone.utc)
     end_exc = start + timedelta(days=1)
     return start.replace(tzinfo=None), end_exc.replace(tzinfo=None)
 
@@ -324,7 +327,10 @@ def semantic_search(
     else:
         lit_w = float(HYBRID_LITERAL_WEIGHT)
 
+    _t_semantic0 = time.perf_counter()
+    _t_embed0 = time.perf_counter()
     q_emb = embed(query, input_type="search_query")
+    _embed_ms = (time.perf_counter() - _t_embed0) * 1000.0
 
     if not isinstance(q_emb, list):
         raise ValueError("El embedding debe ser una lista")
@@ -357,6 +363,7 @@ def semantic_search(
 
     where_sql = ("WHERE " + " AND ".join(filter_clauses)) if filter_clauses else ""
 
+    _t_db0 = time.perf_counter()
     schema = resolve_schema_name(tenant_id)
     conn = get_connection()
     cur = conn.cursor()
@@ -518,6 +525,13 @@ def semantic_search(
     finally:
         cur.close()
         conn.close()
+
+    _db_ms = (time.perf_counter() - _t_db0) * 1000.0
+    _semantic_total_ms = (time.perf_counter() - _t_semantic0) * 1000.0
+    print(
+        f"[timing] semantic_search tenant_id={tenant_id!r} embed_ms={_embed_ms:.1f} "
+        f"db_ms={_db_ms:.1f} total_ms={_semantic_total_ms:.1f} rows={len(rows)} k={k}"
+    )
 
     print(
         f"[retrieval] hybrid search returned {len(rows)} rows "
@@ -782,7 +796,7 @@ def handler(event, context):
 
     k_lim = req_src.get("retrieval_limit")
     try:
-        k_req = int(k_lim) if k_lim is not None else 50
+        k_req = int(k_lim) if k_lim is not None else DEFAULT_RETRIEVAL_LIMIT
     except (TypeError, ValueError):
         resp = {
             "statusCode": 400,
@@ -853,7 +867,9 @@ def handler(event, context):
         return resp
 
     retrieval_config: dict[str, Any] = {}
+    request_id = getattr(context, "aws_request_id", "") if context else ""
     try:
+        _t_search0 = time.perf_counter()
         chunks, documents, context_items, retrieval_config = semantic_search(
             query,
             tenant_id,
@@ -869,6 +885,7 @@ def handler(event, context):
             literal_keyword_overlap=literal_overlap,
             literal_min_chars_override=literal_ml,
         )
+        _search_ms = (time.perf_counter() - _t_search0) * 1000.0
     except ValueError as e:
         resp = {"statusCode": 400, "body": json.dumps({"error": str(e)})}
         if is_http_event:
@@ -877,19 +894,26 @@ def handler(event, context):
 
     context_text = "\n\n".join(chunks)
 
-    # Obtener prompt del agente
+    _t_prompt0 = time.perf_counter()
     agent_prompt = get_prompt_template(tenant_id, agent_id)
+    _prompt_fetch_ms = (time.perf_counter() - _t_prompt0) * 1000.0
 
-    # Construir prompt final
     prompt = apply_prompt_template(
         agent_prompt,
         context=context_text,
         query=query
     )
 
-    # Llamar al modelo
-    llmClient = LLMClient(bedrock,MAIN_LLM_MODEL,FALLBACK_LLM_MODEL)
+    llmClient = LLMClient(bedrock, MAIN_LLM_MODEL, FALLBACK_LLM_MODEL)
+    _t_llm0 = time.perf_counter()
     response = llmClient.generate(prompt)
+    _llm_ms = (time.perf_counter() - _t_llm0) * 1000.0
+    _handler_work_ms = _search_ms + _prompt_fetch_ms + _llm_ms
+    print(
+        f"[timing] handler request_id={request_id} tenant_id={tenant_id!r} "
+        f"semantic_search_ms={_search_ms:.1f} prompt_template_ms={_prompt_fetch_ms:.1f} "
+        f"llm_generate_ms={_llm_ms:.1f} handler_after_validate_ms={_handler_work_ms:.1f}"
+    )
     print(response)
     resp = {
         "statusCode": 200,
