@@ -31,11 +31,42 @@ def download_boletin_pdf(fecha, seccion):
         else:
             raise Exception("Formato de fecha debe ser YYYY-mm-dd")
             
+        # Primero navegar a la sección para establecer el referer correcto
+        page.goto(f"https://www.boletinoficial.gob.ar/seccion/{seccion}", wait_until="networkidle")
+        
         # 3. Simulamos el click en el calendario usando un objeto Date real.
         # Esto dispara correctamente los eventos internos de la página que actualizan 
         # la sesión del lado del servidor para descargar el PDF de la fecha correcta.
         page.evaluate(f"$('#divCalendario').datepicker('setDate', new Date({year}, {month}, {day}))")
         
+
+
+        # Hacer la petición POST con headers correctos
+        response = page.request.post(
+            "https://www.boletinoficial.gob.ar/pdf/download_section",
+            form={
+                "nombreSeccion": seccion,
+            },
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "User-Agent": "Mozilla/5.0",
+                "Referer": "https://www.boletinoficial.gob.ar/"
+            }
+        )
+        print("Response Status: ", response.status)
+        print("Response Headers: ", response.headers)
+        response_json = response.json()
+        print("Response JSON: ", response_json)
+        
+        # Si recibimos el PDF en base64, guardarlo directamente
+        if response_json and 'pdfBase64' in response_json:
+            import base64
+            pdf_bytes = base64.b64decode(response_json['pdfBase64'])
+            with open(file_path, 'wb') as f:
+                f.write(pdf_bytes)
+            print("PDF guardado desde base64")
+            return file_path
+
         # Esperamos a que la petición AJAX interna de la página actualice la sesión
         page.wait_for_timeout(5000)
         
