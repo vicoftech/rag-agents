@@ -106,10 +106,25 @@ def _normalize_s3_key(raw_key: str) -> str:
     """Decode query param and reject traversal / empty keys."""
     if raw_key is None or not str(raw_key).strip():
         raise ValueError("key es requerido")
-    key = urllib.parse.unquote(str(raw_key).strip(), errors="strict")
+    try:
+        key = urllib.parse.unquote(str(raw_key).strip(), errors="strict")
+    except UnicodeDecodeError as e:
+        raise ValueError("key con codificación porcentual inválida") from e
     if not key or key.startswith("/") or ".." in key.split("/"):
         raise ValueError("key inválido")
     return key
+
+
+def _presigned_query_params(event: dict[str, Any]) -> dict[str, str]:
+    """queryStringParameters puede ser null en API Gateway HTTP API; fallback a rawQueryString."""
+    qp = event.get("queryStringParameters")
+    if qp and isinstance(qp, dict):
+        return {str(k): "" if v is None else str(v) for k, v in qp.items()}
+    raw = (event.get("rawQueryString") or "").strip()
+    if not raw:
+        return {}
+    parsed = urllib.parse.parse_qsl(raw, keep_blank_values=True, strict_parsing=False)
+    return {k: v for k, v in parsed}
 
 
 def handle_presigned_download(event, is_http_event=True):
@@ -124,7 +139,7 @@ def handle_presigned_download(event, is_http_event=True):
             is_http_event,
         )
 
-    params = event.get("queryStringParameters") or {}
+    params = _presigned_query_params(event)
     raw_key = params.get("key")
     try:
         object_key = _normalize_s3_key(raw_key)
@@ -855,15 +870,19 @@ def handler(event, context):
             }
         return resp
 
-    ca_start = str(req_src.get("created_at_start") or "").strip()
-    ca_end = str(req_src.get("created_at_end") or "").strip()
+    ca_start = str(
+        req_src.get("created_at_start") or req_src.get("start_at") or ""
+    ).strip()
+    ca_end = str(
+        req_src.get("created_at_end") or req_src.get("end_at") or ""
+    ).strip()
     if bool(ca_start) ^ bool(ca_end):
         resp = {
             "statusCode": 400,
             "body": json.dumps(
                 {
-                    "error": "Si usás ventana por fechas enviá created_at_start y "
-                    "created_at_end juntos (YYYY-MM-DD)."
+                    "error": "Si usás ventana por fechas enviá start_at y end_at juntos "
+                    "(o created_at_start y created_at_end), en YYYY-MM-DD o ISO día."
                 }
             ),
         }

@@ -29,6 +29,22 @@ class TestNormalizeS3Key:
         with pytest.raises(ValueError, match="inválido"):
             mod._normalize_s3_key("a/../b.pdf")
 
+    def test_invalid_percent_raises_clear_error(self):
+        # strict unquote rejects truncated % sequences → must not propagate UnicodeDecodeError
+        with pytest.raises(ValueError, match="codificación"):
+            mod._normalize_s3_key("bad%EE.pdf")
+
+
+class TestPresignedQueryParams:
+    def test_fallback_raw_query_string_when_qp_null(self):
+        ev = {
+            "queryStringParameters": None,
+            "rawQueryString": "key=x%2Fy.pdf&foo=bar",
+        }
+        p = mod._presigned_query_params(ev)
+        # parse_qs decodes %-encoding
+        assert p["key"] == "x/y.pdf"
+
 
 class TestIsPresignedUrlRoute:
     def test_route_key_match(self):
