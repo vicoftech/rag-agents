@@ -4,8 +4,13 @@ output "api_id" {
 }
 
 output "api_endpoint" {
-  description = "Endpoint URL of the API Gateway"
+  description = "Hostname base (`https://<api-id>.execute-api.<region>.amazonaws.com`)"
   value       = aws_apigatewayv2_api.this.api_endpoint
+}
+
+output "stage_environment" {
+  description = "Nombre del stage (p. ej. qa, prod) — sufijo URL."
+  value       = var.environment
 }
 
 output "invoke_url" {

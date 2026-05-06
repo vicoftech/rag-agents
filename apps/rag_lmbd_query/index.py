@@ -11,6 +11,7 @@ from string import Template
 import numpy as np
 from pgvector.psycopg2 import register_vector
 from typing import Any
+from decimal import Decimal
 
 from lib.bedrock_embeddings import parse_embedding_vector
 from lib.tenant_schema import resolve_schema_name
@@ -72,6 +73,22 @@ DOCUMENTS_S3_BUCKET = os.getenv("DOCUMENTS_S3_BUCKET", "")
 PRESIGNED_URL_EXPIRES_SECONDS = int(os.getenv("PRESIGNED_URL_EXPIRES_SECONDS", "3600"))
 # Si el cliente no envía retrieval_limit, se usa este tope (híbrido más barato con valores menores).
 DEFAULT_RETRIEVAL_LIMIT = int(os.getenv("DEFAULT_RETRIEVAL_LIMIT", "25"))
+QUERY_JOB_TABLE_NAME = os.getenv("QUERY_JOB_TABLE_NAME", "").strip()
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _to_dynamo_numbers(obj):
+    """Convierte floats anidados a Decimal para atributos DynamoDB tipo M."""
+    if isinstance(obj, float):
+        return Decimal(str(obj))
+    if isinstance(obj, dict):
+        return {k: _to_dynamo_numbers(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_to_dynamo_numbers(v) for v in obj]
+    return obj
 
 
 def _http_json_response(status_code, payload, is_http_event=True):
@@ -666,8 +683,87 @@ def apply_prompt_template(prompt_template: str, context: str, query: str) -> str
         # Último recurso: errores desconocidos
         raise Exception(f"Error al aplicar el prompt template: {str(e)}")
 
+
+def sqs_handler(event, context):
+    """Proceso async: ejecuta la misma lógica que invocación directa y persiste resultado en DynamoDB."""
+    tbl = boto3.resource("dynamodb").Table(QUERY_JOB_TABLE_NAME)
+
+    for record in event.get("Records", []):
+        try:
+            body = json.loads(record["body"])
+        except Exception as e:
+            print(f"[async-query] Mensaje JSON inválido: {e}")
+            continue
+
+        job_id = body.get("job_id")
+        if not job_id:
+            print("[async-query] Falta job_id en mensaje SQS")
+            continue
+
+        req = {k: v for k, v in body.items() if k != "job_id"}
+        now = _utc_now_iso()
+        try:
+            out = handler(req, context)
+        except Exception as e:
+            err_txt = str(e)
+            print(f"[async-query] Excepción en pipeline job_id={job_id}: {err_txt}")
+            try:
+                tbl.update_item(
+                    Key={"id": job_id},
+                    UpdateExpression="SET #st = :e, updated_at = :u, #r = :res",
+                    ExpressionAttributeNames={"#st": "status", "#r": "result"},
+                    ExpressionAttributeValues={
+                        ":e": "Error",
+                        ":u": _utc_now_iso(),
+                        ":res": {"message": err_txt[:4000]},
+                    },
+                )
+            except Exception as ddb_e:
+                print(f"[async-query] Error persistiendo Error en Dynamo job_id={job_id}: {ddb_e}")
+            continue
+
+        status_code = int(out.get("statusCode") or 500)
+        payload_raw = out.get("body")
+        try:
+            payload = json.loads(payload_raw) if isinstance(payload_raw, str) else payload_raw
+        except Exception:
+            payload = {"error": "Respuesta inválida del pipeline", "raw": payload_raw}
+
+        try:
+            if status_code != 200:
+                err_txt = payload.get("error") if isinstance(payload, dict) else str(payload)
+                tbl.update_item(
+                    Key={"id": job_id},
+                    UpdateExpression="SET #st = :e, updated_at = :u, #r = :res",
+                    ExpressionAttributeNames={"#st": "status", "#r": "result"},
+                    ExpressionAttributeValues={
+                        ":e": "Error",
+                        ":u": now,
+                        ":res": {"message": err_txt[:4000]},
+                    },
+                )
+            else:
+                tbl.update_item(
+                    Key={"id": job_id},
+                    UpdateExpression="SET #st = :ok, updated_at = :u, #r = :res",
+                    ExpressionAttributeNames={"#st": "status", "#r": "result"},
+                    ExpressionAttributeValues={
+                        ":ok": "Ready",
+                        ":u": now,
+                        ":res": _to_dynamo_numbers(payload),
+                    },
+                )
+        except Exception as e:
+            print(f"[async-query] Error actualizando Dynamo job_id={job_id}: {e}")
+
+    return {}
+
+
 # --- Main Lambda Handler ---
 def handler(event, context):
+    if event.get("Records") and QUERY_JOB_TABLE_NAME:
+        return sqs_handler(event, context)
+
     http_method = None
     try:
         http_method = (

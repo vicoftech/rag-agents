@@ -399,3 +399,36 @@ output "scheduled_boletin_anmat_schedule_anmat_arn" {
   description = "ARN regla Scheduler ANMAT 09:30"
   value       = var.enable_scheduled_boletin_anmat_sfn ? module.scheduled_boletin_anmat_sfn[0].schedule_anmat_arn : null
 }
+
+output "rag_query_async_table_name" {
+  description = "DynamoDB jobs async RAG (null si enable_async_rag_query=false)"
+  value       = var.enable_async_rag_query ? aws_dynamodb_table.rag_result_query_table[0].name : null
+}
+
+output "rag_query_documents_queue_url" {
+  description = "SQS rag-query-documents (null si async desactivado)"
+  value       = var.enable_async_rag_query ? aws_sqs_queue.rag_query_documents[0].url : null
+}
+
+output "rag_query_dispatcher_function_name" {
+  description = "Lambda dispatcher async RAG API GW"
+  value       = var.enable_async_rag_query ? module.lambda_query_dispatcher[0].function_name : null
+}
+
+output "rag_query_async_status_url_hint" {
+  description = "GET https://…/stage/query/status/{id}"
+  value = (
+    var.enable_async_rag_query
+    ? "${module.api_gateway_query.api_endpoint}/${module.api_gateway_query.stage_environment}/query/status/{id}"
+    : null
+  )
+}
+
+output "rag_query_async_result_url_hint" {
+  description = "GET https://…/stage/query/result/{id}"
+  value = (
+    var.enable_async_rag_query
+    ? "${module.api_gateway_query.api_endpoint}/${module.api_gateway_query.stage_environment}/query/result/{id}"
+    : null
+  )
+}

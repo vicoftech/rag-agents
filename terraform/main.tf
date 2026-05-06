@@ -152,6 +152,8 @@ check "workspace_aligned_with_tfvars_environment" {
     condition = (
       terraform.workspace == var.environment
       || (terraform.workspace == "default" && var.environment == "dev")
+      # Workspace histórico QA en esta cuenta/proyecto (estado backend-qa-913)
+      || (terraform.workspace == "asap_main_qa_913" && var.environment == "qa")
     )
     error_message = <<-EOT
       Workspace Terraform "${terraform.workspace}" no alinea con var.environment="${var.environment}" del tfvars.
@@ -510,9 +512,20 @@ module "lambda_query" {
   use_s3_deployment = true
   s3_bucket_name    = local.documents_bucket_name
 
-  environment_variables = merge(local.lambda_query_env, {
-    DOCUMENTS_S3_BUCKET = local.documents_bucket_name
-  })
+  environment_variables = merge(
+    local.lambda_query_env,
+    {
+      DOCUMENTS_S3_BUCKET = local.documents_bucket_name
+    },
+    local.async_rag ? {
+      QUERY_JOB_TABLE_NAME = aws_dynamodb_table.rag_result_query_table[0].name
+    } : {},
+  )
+
+  sqs_trigger_enabled     = local.async_rag
+  sqs_queue_arn           = local.async_rag ? aws_sqs_queue.rag_query_documents[0].arn : ""
+  sqs_batch_size          = local.async_rag ? 1 : 10
+  sqs_maximum_concurrency = local.async_rag ? 40 : null
 
   # IAM Permissions - Bedrock + Marketplace + S3 presigned URLs for documents bucket
   attach_policy_statements = concat(
@@ -529,6 +542,19 @@ module "lambda_query" {
         ]
       },
     ],
+    local.async_rag ? [
+      {
+        effect = "Allow"
+        actions = [
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:UpdateItem",
+        ]
+        resources = [
+          aws_dynamodb_table.rag_result_query_table[0].arn,
+        ]
+      },
+    ] : [],
   )
 
   tags = local.common_tags
@@ -603,6 +629,14 @@ module "api_gateway_query" {
 
   lambda_function_name = module.lambda_query.function_name
   lambda_invoke_arn    = module.lambda_query.invoke_arn
+
+  dispatcher_lambda_function_name = (
+    local.async_rag ? module.lambda_query_dispatcher[0].function_name : ""
+  )
+  dispatcher_lambda_invoke_arn = (
+    local.async_rag ? module.lambda_query_dispatcher[0].invoke_arn : ""
+  )
+  enable_query_dispatcher = local.async_rag
 
   cognito_user_pool_client_id = module.cognito_query.user_pool_client_id
   cognito_endpoint            = module.cognito_query.cognito_endpoint

@@ -29,6 +29,24 @@ variable "lambda_invoke_arn" {
   type        = string
 }
 
+variable "dispatcher_lambda_function_name" {
+  description = "Nombre de la Lambda que despacha POST/GET async (vacío = POST /query va al worker síncrono)"
+  type        = string
+  default     = ""
+}
+
+variable "dispatcher_lambda_invoke_arn" {
+  description = "Invoke ARN del dispatcher para API Gateway HTTP API"
+  type        = string
+  default     = ""
+}
+
+variable "enable_query_dispatcher" {
+  description = "Si true, rutas POST/GET /query/async usan integrations del dispatcher (count estable; debe coincidir con enable_async_* en root)."
+  type        = bool
+  default     = false
+}
+
 variable "cognito_user_pool_client_id" {
   description = "Cognito User Pool Client ID"
   type        = string

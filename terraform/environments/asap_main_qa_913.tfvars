@@ -101,3 +101,6 @@ agentcore_create_gateway_target = false
 create_rag_ingestion                 = true
 s3_object_created_to_eventbridge     = true
 legacy_s3_embeddings_enqueue_enabled = false
+
+# Consultas RAG async: POST /query devuelve {id}; worker por SQS; estado/result en Dynamo rag_result_query_table-qa.
+enable_async_rag_query = true
