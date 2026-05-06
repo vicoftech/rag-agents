@@ -239,6 +239,7 @@ def download_boletin_pdf(fecha, seccion, tenant_id, agent_id, storage: FileStora
 if S3_BUCKET:
     storage = FileS3Storage(S3_BUCKET)
 else:
+    print("Falta configurar el Bucket de S3, no se almacenarán los documentos.")
     storage = FakeFileStorage()
 
 def lambda_handler(event, context):
