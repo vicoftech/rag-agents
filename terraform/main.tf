@@ -143,6 +143,14 @@ locals {
       resources = [var.db_secret_id]
     }
   ] : []
+
+  rag_query_jwt_external = trimspace(var.rag_query_api_cognito_user_pool_id) != "" && trimspace(var.rag_query_api_cognito_client_id) != ""
+
+  rag_query_jwt_audience_client_id = local.rag_query_jwt_external ? var.rag_query_api_cognito_client_id : module.cognito_query.user_pool_client_id
+
+  rag_query_jwt_issuer_endpoint = local.rag_query_jwt_external ? "https://cognito-idp.${var.aws_region}.amazonaws.com/${trimspace(var.rag_query_api_cognito_user_pool_id)}" : module.cognito_query.cognito_endpoint
+
+  rag_query_jwt_user_pool_id_effective = local.rag_query_jwt_external ? trimspace(var.rag_query_api_cognito_user_pool_id) : module.cognito_query.user_pool_id
 }
 
 # Estado remoto S3 está particionado por workspace ([env:/<name>/...]). Si apliás prod.tfvars
@@ -638,8 +646,8 @@ module "api_gateway_query" {
   )
   enable_query_dispatcher = local.async_rag
 
-  cognito_user_pool_client_id = module.cognito_query.user_pool_client_id
-  cognito_endpoint            = module.cognito_query.cognito_endpoint
+  cognito_user_pool_client_id = local.rag_query_jwt_audience_client_id
+  cognito_endpoint            = local.rag_query_jwt_issuer_endpoint
 
   cors_allowed_origins = ["*"]
   cors_allowed_methods = ["GET", "POST", "OPTIONS"]

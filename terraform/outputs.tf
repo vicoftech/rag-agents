@@ -149,19 +149,19 @@ output "cognito_user_pool_client_id" {
 }
 
 output "query_cognito_user_pool_id" {
-  description = "Cognito User Pool ID for /query JWT authentication"
-  value       = module.cognito_query.user_pool_id
+  description = "Cognito User Pool ID for /query JWT authentication (effective: externo si rag_query_api_cognito_*)."
+  value       = local.rag_query_jwt_user_pool_id_effective
 }
 
 output "query_cognito_user_pool_client_id" {
-  description = "Cognito User Pool Client ID for /query JWT authentication"
-  value       = module.cognito_query.user_pool_client_id
+  description = "Cognito Client ID (audience) efectiva para JWT del API /query"
+  value       = local.rag_query_jwt_audience_client_id
   sensitive   = false
 }
 
 output "query_cognito_endpoint" {
-  description = "Cognito issuer endpoint for /query JWT authentication"
-  value       = module.cognito_query.cognito_endpoint
+  description = "Cognito issuer (JWT) efectivo para el API /query"
+  value       = local.rag_query_jwt_issuer_endpoint
 }
 
 # ==============================================================================

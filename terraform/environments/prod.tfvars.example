@@ -32,3 +32,9 @@ embeddings_model   = "cohere.embed-v4:0"
 main_llm_model     = "anthropic.claude-3-5-sonnet-20241022-v2:0"
 fallback_llm_model = "anthropic.claude-3-haiku-20240307-v1:0"
 output_tokens      = "4096"
+
+# Opcional: API HTTP /query valida JWT contra un User Pool existente (p. ej. clientes/productivos).
+# Si no se define, se usa pool+client que crea el módulo cognito_query del proyecto.
+#
+# rag_query_api_cognito_user_pool_id = "us-east-1_xxxxxxxx"
+# rag_query_api_cognito_client_id    = "xxxxxxxxxxxxxxxxxxxxxxxxxx"

@@ -330,6 +330,20 @@ variable "cognito_user_pool_arn" {
   default     = ""
 }
 
+# JWT del HTTP API `/query`: por defecto el pool que crea module.cognito_query.
+# Si se indica pool + client existentes (p. ej. credenciales productivas), API Gateway usará ese issuer/audience.
+variable "rag_query_api_cognito_user_pool_id" {
+  description = "User Pool ID para JWT del API rag-query-* (vacío = usar pool del módulo cognito_query)."
+  type        = string
+  default     = ""
+}
+
+variable "rag_query_api_cognito_client_id" {
+  description = "App client ID (audience) para JWT del API rag-query-* (vacío = usar client del módulo cognito_query)."
+  type        = string
+  default     = ""
+}
+
 # ==============================================================================
 # Bedrock AgentCore Configuration
 # ==============================================================================
