@@ -55,6 +55,8 @@ Mapas: scripts/boletin_map.json y scripts/anmat_map.json (agent_id UUID de ANMAT
 
 Mapeo por fuente_de_informacion: tenant_id (slug API), agent_id (UUID),
 opcional \"s3_tenant_slug\". URIs: s3://<bucket>/<s3_slug>/<agent>/documents/<document_name>.
+
+Build imagen ECS batch (push ECR): ver ``.github/workflows/batch-alerts-semantic-docker.yml``.
 """
 
 from __future__ import annotations
