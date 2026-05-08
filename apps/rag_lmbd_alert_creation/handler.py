@@ -14,6 +14,7 @@ from typing import Any
 import boto3
 from botocore.exceptions import ClientError
 import psycopg2
+from psycopg2 import errors as pg_errors
 from psycopg2.extensions import connection as PgConnection
 
 logger = logging.getLogger()
@@ -158,6 +159,23 @@ def _validate_payload(data: dict[str, Any]) -> None:
         raise ValueError("matched_chunk_ids debe ser una lista")
 
 
+def _sync_sequence(cur: Any, table_name: str, pk_column: str = "id") -> None:
+    """
+    Re-sincroniza la secuencia SERIAL/BIGSERIAL al MAX(id) actual.
+    Necesario en esquemas legacy con secuencias desfasadas.
+    """
+    cur.execute(
+        """
+        SELECT setval(
+            pg_get_serial_sequence(%s, %s),
+            GREATEST((SELECT COALESCE(MAX(id), 1) FROM {}), 1),
+            true
+        )
+        """.format(table_name),
+        (table_name, pk_column),
+    )
+
+
 def _process_one_record(conn: PgConnection, data: dict[str, Any]) -> None:
     _validate_payload(data)
     busqueda_id = int(data["busqueda_id"])
@@ -169,25 +187,19 @@ def _process_one_record(conn: PgConnection, data: dict[str, Any]) -> None:
 
     cur = conn.cursor()
     try:
+        _sync_sequence(cur, "public.disposicion", "id")
+        _sync_sequence(cur, "public.disposicion_contenido", "id")
+        _sync_sequence(cur, "public.alerta_generada", "id")
+
         cur.execute(
-            """
-            INSERT INTO public.disposicion (
-                descripcion,
-                disposicion_id,
-                eliminado,
-                fecha_de_aparicion,
-                fecha_de_publicacion,
-                fechayhora_revision,
-                nombre_pdf,
-                revisado,
-                url,
-                archivo
-            ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
-            )
-            ON CONFLICT (disposicion_id) DO NOTHING
-            """,
-            (
+            "SELECT id FROM public.disposicion WHERE disposicion_id = %s ORDER BY id ASC LIMIT 1",
+            (disposicion_id_str,),
+        )
+        row = cur.fetchone()
+        if row:
+            disposicion_pk = int(row[0])
+        else:
+            insert_params = (
                 disp.get("descripcion"),
                 disposicion_id_str,
                 False,
@@ -198,18 +210,67 @@ def _process_one_record(conn: PgConnection, data: dict[str, Any]) -> None:
                 False,
                 disp.get("url"),
                 disp.get("archivo"),
-            ),
-        )
-        cur.execute(
-            "SELECT id FROM public.disposicion WHERE disposicion_id = %s",
-            (disposicion_id_str,),
-        )
-        row = cur.fetchone()
-        if not row:
-            raise RuntimeError(
-                f"No se encontró disposicion_id={disposicion_id_str!r} tras upsert"
             )
-        disposicion_pk = int(row[0])
+            try:
+                cur.execute(
+                    """
+                    INSERT INTO public.disposicion (
+                        descripcion,
+                        disposicion_id,
+                        eliminado,
+                        fecha_de_aparicion,
+                        fecha_de_publicacion,
+                        fechayhora_revision,
+                        nombre_pdf,
+                        revisado,
+                        url,
+                        archivo
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    )
+                    RETURNING id
+                    """,
+                    insert_params,
+                )
+            except pg_errors.UniqueViolation:
+                # Esquemas legacy pueden tener la secuencia de PK desfasada.
+                conn.rollback()
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    SELECT setval(
+                        pg_get_serial_sequence('public.disposicion', 'id'),
+                        GREATEST((SELECT COALESCE(MAX(id), 1) FROM public.disposicion), 1),
+                        true
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    INSERT INTO public.disposicion (
+                        descripcion,
+                        disposicion_id,
+                        eliminado,
+                        fecha_de_aparicion,
+                        fecha_de_publicacion,
+                        fechayhora_revision,
+                        nombre_pdf,
+                        revisado,
+                        url,
+                        archivo
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    )
+                    RETURNING id
+                    """,
+                    insert_params,
+                )
+            row = cur.fetchone()
+            if not row:
+                raise RuntimeError(
+                    f"No se pudo crear/obtener disposicion_id={disposicion_id_str!r}"
+                )
+            disposicion_pk = int(row[0])
 
         chunks_inserted = 0
         for chunk_id in matched_ids:

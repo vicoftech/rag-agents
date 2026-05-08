@@ -567,8 +567,8 @@ def compute_notificaciones(blob: dict[str, Any], fallback_from: str) -> list[dic
     return out
 
 
-def publish_notificaciones_to_sqs(
-    notifs: list[dict[str, Any]],
+def _publish_json_messages_to_sqs(
+    messages: list[dict[str, Any]],
     *,
     queue_name: str,
     session: boto3.Session,
@@ -583,13 +583,88 @@ def publish_notificaciones_to_sqs(
     sqs = session.client("sqs")
     qurl = sqs.get_queue_url(QueueName=name)["QueueUrl"]
     sent = 0
-    for item in notifs:
+    for item in messages:
         sqs.send_message(
             QueueUrl=qurl,
             MessageBody=json.dumps(item, ensure_ascii=False),
         )
         sent += 1
     return sent
+
+
+def publish_notificaciones_to_sqs(
+    notifs: list[dict[str, Any]],
+    *,
+    queue_name: str,
+    session: boto3.Session,
+) -> int:
+    return _publish_json_messages_to_sqs(
+        notifs,
+        queue_name=queue_name,
+        session=session,
+    )
+
+
+def compute_alert_creation_messages(blob: dict[str, Any]) -> list[dict[str, Any]]:
+    """
+    Construye mensajes para la cola rag-alert-creation-*:
+    - un mensaje por alerta/documento con chunk_id(s) recuperados
+    - payload compatible con apps/rag_lmbd_alert_creation/handler.py
+    """
+    out: list[dict[str, Any]] = []
+    now_iso = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    default_day = datetime.now(timezone.utc).date().isoformat()
+
+    def _iter_results() -> list[dict[str, Any]]:
+        corridas = blob.get("corridas")
+        if isinstance(corridas, list) and corridas:
+            rows: list[dict[str, Any]] = []
+            for c in corridas:
+                for r in c.get("resultados") or []:
+                    if isinstance(r, dict):
+                        rows.append(r)
+            return rows
+        return [r for r in (blob.get("resultados") or []) if isinstance(r, dict)]
+
+    for r in _iter_results():
+        if not _es_resultado_con_match_documental(r):
+            continue
+        busqueda_id = r.get("alerta_id")
+        if busqueda_id is None:
+            continue
+
+        estado_alerta = r.get("estado_alerta")
+        if estado_alerta is None:
+            estado_alerta = 1
+
+        chunks_by_doc = r.get("matched_chunk_ids_por_documento") or {}
+        for dname in r.get("documents_unique") or []:
+            if not dname:
+                continue
+            matched_ids = chunks_by_doc.get(dname) or []
+            if not matched_ids:
+                continue
+
+            dispo_id = str(dname).strip()
+            url = (r.get("s3_uri_por_documento") or {}).get(dname) or ""
+            out.append(
+                {
+                    "busqueda_id": int(busqueda_id),
+                    "estado_alerta": int(estado_alerta),
+                    "fechayhora_ocurrencia": now_iso,
+                    "disposicion": {
+                        "disposicion_id": dispo_id,
+                        "descripcion": (r.get("descripcion_disposicion_default") or r.get("nombre_busqueda") or dispo_id),
+                        "url": url or f"s3://desconocido/{dispo_id}",
+                        "nombre_pdf": r.get("nombre_pdf_disposicion_default") or dispo_id,
+                        "archivo": r.get("archivo_disposicion_default"),
+                        "fecha_de_aparicion": r.get("fecha_de_aparicion_default") or default_day,
+                        "fecha_de_publicacion": r.get("fecha_de_publicacion_default") or default_day,
+                    },
+                    "matched_chunk_ids": matched_ids,
+                }
+            )
+    return out
 
 
 def utc_created_at_window_dates(*, span_days: int) -> tuple[str, str]:
@@ -806,6 +881,7 @@ def process_one_alert(
             txt = row.get("chunk_text") or ""
             entry: dict[str, Any] = {
                 "rank": i,
+                "chunk_id": row.get("chunk_id"),
                 "document_name": dn,
                 "distance": dist,
                 "chunk_text_preview": txt[:320] + ("…" if len(txt) > 320 else ""),
@@ -818,6 +894,7 @@ def process_one_alert(
             ttxt = txt if isinstance(txt, str) else str(txt or "")
             row_dict: dict[str, Any] = {
                 "rank": i,
+                "chunk_id": None,
                 "document_name": "",
                 "distance": None,
                 "chunk_text_preview": (ttxt[:320] + ("…" if len(ttxt) > 320 else "")),
@@ -879,8 +956,22 @@ def process_one_alert(
                 document_name=dname,
             )
 
+    chunk_ids_by_doc: dict[str, list[int]] = {}
+    matched_chunk_ids: list[int] = []
     for ce in context_entries:
         dn = ce.get("document_name") or ""
+        chunk_id_raw = ce.get("chunk_id")
+        if chunk_id_raw is not None:
+            try:
+                chunk_id = int(chunk_id_raw)
+            except (TypeError, ValueError):
+                chunk_id = None
+            if chunk_id is not None:
+                matched_chunk_ids.append(chunk_id)
+                if dn:
+                    bucket_ids = chunk_ids_by_doc.setdefault(dn, [])
+                    if chunk_id not in bucket_ids:
+                        bucket_ids.append(chunk_id)
         if bucket and dn:
             ce["object_uri_canonical"] = canonical_s3_uri(
                 bucket=bucket,
@@ -899,6 +990,13 @@ def process_one_alert(
         "alerta_id": alerta.get("id"),
         "nombre_busqueda": alerta.get("nombre_busqueda"),
         "palabras_de_busqueda": alerta.get("palabras_de_busqueda"),
+        "estado_alerta": alerta.get("estado_alerta"),
+        "descripcion_disposicion_default": alerta.get("descripcion_disposicion_default"),
+        "url_disposicion_default": alerta.get("url_disposicion_default"),
+        "nombre_pdf_disposicion_default": alerta.get("nombre_pdf_disposicion_default"),
+        "archivo_disposicion_default": alerta.get("archivo_disposicion_default"),
+        "fecha_de_aparicion_default": alerta.get("fecha_de_aparicion_default"),
+        "fecha_de_publicacion_default": alerta.get("fecha_de_publicacion_default"),
         "destinatarios": alerta.get("destinatarios"),
         "cuenta": alerta.get("cuenta"),
         "mail": alerta.get("mail"),
@@ -907,6 +1005,8 @@ def process_one_alert(
         "agent_id_usado": agent_id_norm,
         "query_text_usada": query_text,
         "context_items": context_entries,
+        "matched_chunk_ids": matched_chunk_ids,
+        "matched_chunk_ids_por_documento": chunk_ids_by_doc,
         "llm_response_preview": rsp[:320] + ("…" if len(rsp) > 320 else ""),
         "chunks_count": len(contexts),
         "documents_unique": documents,
@@ -1513,6 +1613,19 @@ def main(argv: list[str]) -> int:
         metavar="QUEUE_NAME",
         help="Nombre de la cola SQS (solo con --publish-email-queue).",
     )
+    p.add_argument(
+        "--publish-alert-creation-queue",
+        action="store_true",
+        help=(
+            "Publica mensajes para rag_lmbd_alert_creation en SQS con busqueda_id/disposicion/matched_chunk_ids."
+        ),
+    )
+    p.add_argument(
+        "--alert-creation-sqs-queue",
+        default="",
+        metavar="QUEUE_NAME",
+        help="Nombre cola SQS de alert creation (default: rag-alert-creation-<env>).",
+    )
     args = p.parse_args(argv)
 
     corrida_specs: list[tuple[str, str]] = []
@@ -1573,6 +1686,8 @@ def main(argv: list[str]) -> int:
         p.error("No mezclar --simulate-alert-query con --obtener-payload (obtener no se llama en modo simulación).")
     if args.publish_email_queue and not str(args.output or "").strip():
         p.error("--publish-email-queue requiere -o/--output.")
+    if args.publish_alert_creation_queue and not str(args.output or "").strip():
+        p.error("--publish-alert-creation-queue requiere -o/--output.")
 
     te_arg = (getattr(args, "testing_email", "") or "").strip()
     if te_arg and "@" not in te_arg:
@@ -1608,11 +1723,14 @@ def main(argv: list[str]) -> int:
         _log_step("MAIN", f"Modo testing-email activo: destinatarios → {te_arg!r}")
 
     notifs = compute_notificaciones(out, fb_from)
+    alert_creation_msgs = compute_alert_creation_messages(out)
     _log_step("MAIN", f"Notificaciones generadas (chunks_count>0): {len(notifs)}")
+    _log_step("MAIN", f"Mensajes alert_creation generados: {len(alert_creation_msgs)}")
     if getattr(args, "salida_solo_notificaciones", False):
         text = json.dumps(notifs, indent=2, ensure_ascii=False)
     else:
         out["notificaciones"] = notifs
+        out["alert_creation_messages"] = alert_creation_msgs
         text = json.dumps(out, indent=2, ensure_ascii=False)
 
     if args.output:
@@ -1636,6 +1754,20 @@ def main(argv: list[str]) -> int:
                 return 4
         elif args.publish_email_queue and args.no_email_queue_send:
             _log_step("MAIN", "Modo prueba activo: se omite publicación a SQS (--no-email-queue-send).")
+
+        if bool(args.publish_alert_creation_queue and not args.no_email_queue_send):
+            try:
+                qn_alert = (args.alert_creation_sqs_queue or "").strip() or f"rag-alert-creation-{args.env}"
+                _log_step("MAIN", f"Publicando alert_creation en SQS queue={qn_alert}")
+                n_alert = _publish_json_messages_to_sqs(
+                    alert_creation_msgs,
+                    queue_name=qn_alert,
+                    session=_session(args.profile, args.region),
+                )
+                _log_step("MAIN", f"SQS alert_creation publicados: {n_alert} mensaje(s) → cola «{qn_alert}»")
+            except ClientError as e:
+                _log_step("MAIN", f"AWS ClientError (SQS alert_creation): {e}", level="ERROR")
+                return 5
     else:
         print(text)
     def _has_any_errors(blob: dict[str, Any]) -> bool:

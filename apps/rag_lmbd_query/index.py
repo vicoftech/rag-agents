@@ -419,6 +419,7 @@ def semantic_search(
         literal_cte = f"""
         literal_ranked AS (
             SELECT
+                d.id,
                 d.ctid,
                 d.chunk_text,
                 d.document_name,
@@ -436,7 +437,7 @@ def semantic_search(
     else:
         literal_cte = f"""
         literal_ranked AS (
-            SELECT d.ctid, d.chunk_text, d.document_name,
+            SELECT d.id, d.ctid, d.chunk_text, d.document_name,
                    1::bigint AS lit_rank
             FROM {schema}.documents AS d
             WHERE FALSE
@@ -448,6 +449,7 @@ def semantic_search(
     sql = f"""
         WITH base AS (
             SELECT
+                d.id,
                 d.ctid,
                 d.chunk_text,
                 d.document_name,
@@ -458,6 +460,7 @@ def semantic_search(
 
         vector_ranked AS (
             SELECT
+                id,
                 ctid,
                 chunk_text,
                 document_name,
@@ -470,6 +473,7 @@ def semantic_search(
 
         lexical_ranked AS (
             SELECT
+                d.id,
                 d.ctid,
                 d.chunk_text,
                 d.document_name,
@@ -497,6 +501,7 @@ def semantic_search(
         merged AS (
             SELECT
                 k.ctid,
+                COALESCE(v.id, l.id, lit.id) AS chunk_id,
                 COALESCE(v.chunk_text, l.chunk_text, lit.chunk_text) AS chunk_text,
                 COALESCE(v.document_name, l.document_name, lit.document_name) AS document_name,
                 v.vector_distance,
@@ -511,6 +516,7 @@ def semantic_search(
 
         rrf AS (
             SELECT
+                chunk_id,
                 chunk_text,
                 document_name,
                 vector_distance,
@@ -525,7 +531,7 @@ def semantic_search(
             FROM merged
         )
 
-        SELECT chunk_text, document_name, vector_distance, rrf_score
+        SELECT chunk_id, chunk_text, document_name, vector_distance, rrf_score
         FROM rrf
         ORDER BY rrf_score DESC
         LIMIT %s
@@ -572,13 +578,13 @@ def semantic_search(
     )
 
     matched_rows = [
-        row for row in rows if row[2] is None or row[2] <= max_sd
+        row for row in rows if row[3] is None or row[3] <= max_sd
     ]
 
     if not matched_rows and rows:
         n = min(max(1, fb_n), len(rows))
         matched_rows = rows[:n]
-        dists = [round(float(r[2]), 4) for r in matched_rows if r[2] is not None]
+        dists = [round(float(r[3]), 4) for r in matched_rows if r[3] is not None]
         print(
             f"[retrieval] no chunk under MAX_SEMANTIC_DISTANCE={max_sd}; "
             f"using best {n} by rrf_score, vector_distances={dists}"
@@ -590,20 +596,21 @@ def semantic_search(
         )
 
     n_sql = len(rows)
-    after_sim = sum(1 for r in rows if r[2] is None or float(r[2]) <= max_sd)
+    after_sim = sum(1 for r in rows if r[3] is None or float(r[3]) <= max_sd)
     semantic_fallback_used = after_sim == 0 and bool(rows) and bool(matched_rows)
 
-    chunks = [row[0] for row in matched_rows]
-    documents = sorted({(row[1] or "") for row in matched_rows if row[1]})
+    chunks = [row[1] for row in matched_rows]
+    documents = sorted({(row[2] or "") for row in matched_rows if row[2]})
     context_items: list[dict[str, Any]] = []
     for i, row in enumerate(matched_rows):
-        rs = row[3]
+        rs = row[4]
         context_items.append(
             {
                 "rank": i,
-                "chunk_text": row[0],
-                "document_name": row[1] or "",
-                "distance": row[2],
+                "chunk_id": int(row[0]) if row[0] is not None else None,
+                "chunk_text": row[1],
+                "document_name": row[2] or "",
+                "distance": row[3],
                 "rrf_score": float(rs) if rs is not None else None,
             }
         )
