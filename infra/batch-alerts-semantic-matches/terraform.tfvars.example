@@ -1,0 +1,22 @@
+# Copiar a terraform.tfvars y ajustar.
+# Horarios por defecto: ANMAT 10:30 ART, Boletín 11:00 ART (siempre UTC en Scheduler).
+
+aws_region  = "us-east-1"
+aws_profile = "asap_main"
+
+# Red alineada con las Lambdas RAG que ya llegan a Lambda/SQS.
+vpc_id = "vpc-0220b63692086a550"
+
+private_subnet_ids = [
+  "subnet-04cc462043523dcb9",
+  "subnet-0254c9d900c8b2fdc",
+]
+
+# Si no hay NAT, probá subnets públicas y true para salida por IGW:
+# assign_public_ip = true
+
+s3_documents_bucket = "rag-documents-prod-913123310997"
+
+# Opcional: override de horarios (cron UTC).
+# schedule_cron_anmat   = "cron(30 13 * * ? *)"
+# schedule_cron_boletin = "cron(0 14 * * ? *)"

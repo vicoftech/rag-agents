@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """
+
 Para cada alerta activa (Lambda rag_lmbd_obtener_alertas), ejecuta la búsqueda semántica
 (Lambda rag_lmbd_query) y agrega chunks que matchearon + URIs de objeto S3.
 
