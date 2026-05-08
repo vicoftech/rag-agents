@@ -1,0 +1,75 @@
+# ---
+# Pipeline: sólo ante cambios en el script principal del batch semántico.
+# Arma la imagen definida en batch/alerts-semantic-matches/Dockerfile y publica en ECR.
+#
+# Secret requerido en el repo (Settings → Secrets → Actions):
+#   AWS_BATCH_ECR_ROLE_ARN — ARN del rol IAM con trust policy GitHub OIDC y permisos
+#   ECR push sobre el repo rag-batch-alerts-prod (cuenta 913123310997 u otra).
+#
+# Opcional: variable del repositorio AWS_REGION (si no está, se usa us-east-1 abajo).
+# ---
+
+name: Batch alerts — Docker → ECR
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - tenant_boletin
+    paths:
+      - "scripts/alerts_semantic_matches.py"
+
+  workflow_dispatch:
+
+concurrency:
+  group: batch-alerts-docker-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      ECR_REPOSITORY: rag-batch-alerts-prod
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_BATCH_ECR_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set image tags
+        id: meta
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          echo "registry=${REGISTRY}" >> "$GITHUB_OUTPUT"
+          echo "image_uri=${REGISTRY}/${ECR_REPOSITORY}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push image
+        env:
+          IMAGE_URI: ${{ steps.meta.outputs.image_uri }}
+        run: |
+          set -eux
+          docker build \
+            -f batch/alerts-semantic-matches/Dockerfile \
+            -t "${IMAGE_URI}:latest" \
+            -t "${IMAGE_URI}:${GITHUB_SHA}" \
+            .
+          docker push "${IMAGE_URI}:latest"
+          docker push "${IMAGE_URI}:${GITHUB_SHA}"
+
+      - name: Summary
+        run: |
+          echo "Pushed \`${{ steps.meta.outputs.image_uri }}:latest\` and \`:${GITHUB_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
