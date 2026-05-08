@@ -42,11 +42,11 @@ resource "aws_lambda_permission" "api_gateway_worker" {
 }
 
 resource "aws_apigatewayv2_integration" "worker" {
-  api_id                   = aws_apigatewayv2_api.this.id
-  integration_type         = "AWS_PROXY"
-  integration_uri          = var.lambda_invoke_arn
-  payload_format_version   = "2.0"
-  timeout_milliseconds     = 30000
+  api_id                 = aws_apigatewayv2_api.this.id
+  integration_type       = "AWS_PROXY"
+  integration_uri        = var.lambda_invoke_arn
+  payload_format_version = "2.0"
+  timeout_milliseconds   = 30000
 }
 
 # Dispatcher (consulta async corta): sólo cuando se pasa ARN
@@ -54,20 +54,20 @@ resource "aws_lambda_permission" "api_gateway_dispatcher" {
   count = local.dispatch_enabled ? 1 : 0
 
   statement_id  = "AllowAPIGatewayInvokeQueryDispatcher"
-  action          = "lambda:InvokeFunction"
-  function_name   = var.dispatcher_lambda_function_name
-  principal       = "apigateway.amazonaws.com"
-  source_arn      = "${aws_apigatewayv2_api.this.execution_arn}/*/*"
+  action        = "lambda:InvokeFunction"
+  function_name = var.dispatcher_lambda_function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.this.execution_arn}/*/*"
 }
 
 resource "aws_apigatewayv2_integration" "dispatcher" {
   count = local.dispatch_enabled ? 1 : 0
 
-  api_id                   = aws_apigatewayv2_api.this.id
-  integration_type         = "AWS_PROXY"
-  integration_uri          = var.dispatcher_lambda_invoke_arn
-  payload_format_version   = "2.0"
-  timeout_milliseconds     = 30000
+  api_id                 = aws_apigatewayv2_api.this.id
+  integration_type       = "AWS_PROXY"
+  integration_uri        = var.dispatcher_lambda_invoke_arn
+  payload_format_version = "2.0"
+  timeout_milliseconds   = 30000
 }
 
 # POST /query: dispatcher si existe; si no, worker síncrono

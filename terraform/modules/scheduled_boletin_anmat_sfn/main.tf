@@ -70,15 +70,15 @@ resource "aws_lambda_function" "runner" {
 
   environment {
     variables = {
-      BOLETIN_SFN_ARN    = var.boletin_state_machine_arn
-      ANMAT_SFN_ARN      = var.anmat_state_machine_arn
-      BOLETIN_TENANT_ID  = var.boletin_tenant_id
-      BOLETIN_AGENT_ID   = var.boletin_agent_id
-      BOLETIN_SECTIONS   = var.boletin_sections
-      ANMAT_TENANT_ID    = var.anmat_tenant_id
-      ANMAT_AGENT_ID     = var.anmat_agent_id
-      ANMAT_YEAR         = local.anmat_year_env
-      SCHEDULE_TZ        = var.schedule_timezone
+      BOLETIN_SFN_ARN   = var.boletin_state_machine_arn
+      ANMAT_SFN_ARN     = var.anmat_state_machine_arn
+      BOLETIN_TENANT_ID = var.boletin_tenant_id
+      BOLETIN_AGENT_ID  = var.boletin_agent_id
+      BOLETIN_SECTIONS  = var.boletin_sections
+      ANMAT_TENANT_ID   = var.anmat_tenant_id
+      ANMAT_AGENT_ID    = var.anmat_agent_id
+      ANMAT_YEAR        = local.anmat_year_env
+      SCHEDULE_TZ       = var.schedule_timezone
     }
   }
 

@@ -46,35 +46,35 @@ resource "aws_dynamodb_table" "rag_result_query_table" {
   dynamic "global_secondary_index" {
     for_each = {
       gsi_status_created_at = {
-        hash_key        = "status"
-        range_key       = "created_at"
+        hash_key  = "status"
+        range_key = "created_at"
       }
       gsi_query_created_at = {
-        hash_key        = "query"
-        range_key       = "created_at"
+        hash_key  = "query"
+        range_key = "created_at"
       }
       gsi_agent_id_created_at = {
-        hash_key        = "agent_id"
-        range_key     = "created_at"
+        hash_key  = "agent_id"
+        range_key = "created_at"
       }
       gsi_tenant_id_created_at = {
-        hash_key        = "tenant_id"
-        range_key     = "created_at"
+        hash_key  = "tenant_id"
+        range_key = "created_at"
       }
       gsi_start_at_created_at = {
-        hash_key        = "start_at"
-        range_key     = "created_at"
+        hash_key  = "start_at"
+        range_key = "created_at"
       }
       gsi_start_end_created_at = {
-        hash_key        = "start_end"
-        range_key     = "created_at"
+        hash_key  = "start_end"
+        range_key = "created_at"
       }
     }
     content {
-      name               = global_secondary_index.key
-      hash_key           = global_secondary_index.value.hash_key
-      range_key          = global_secondary_index.value.range_key
-      projection_type    = "ALL"
+      name            = global_secondary_index.key
+      hash_key        = global_secondary_index.value.hash_key
+      range_key       = global_secondary_index.value.range_key
+      projection_type = "ALL"
     }
   }
 

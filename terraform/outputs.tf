@@ -432,3 +432,13 @@ output "rag_query_async_result_url_hint" {
     : null
   )
 }
+
+output "alert_creation_sqs_queue_url" {
+  description = "SQS rag-alert-creation-* (null si enable_alert_creation_lambda=false)"
+  value       = var.enable_alert_creation_lambda ? aws_sqs_queue.rag_alert_creation[0].url : null
+}
+
+output "lambda_alert_creation_function_name" {
+  description = "Lambda rag_lmbd_alert_creation-*"
+  value       = var.enable_alert_creation_lambda ? module.lambda_alert_creation[0].function_name : null
+}

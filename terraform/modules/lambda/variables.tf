@@ -148,6 +148,12 @@ variable "sqs_maximum_concurrency" {
   default     = null
 }
 
+variable "sqs_report_batch_item_failures" {
+  description = "Si true, el mapping SQS usa ReportBatchItemFailures (el handler debe devolver batchItemFailures)."
+  type        = bool
+  default     = false
+}
+
 variable "environment" {
   description = "Environment name"
   type        = string

@@ -57,13 +57,13 @@ resource "aws_sfn_state_machine" "anmat_to_s3" {
         Parameters = {
           FunctionName = var.anmat_function_arn
           Payload = {
-            "year.$"              = "$.year"
-            "page_start.$"        = "$.page_start"
-            "page_end.$"          = "$.page_end"
-            "tenant_id.$"         = "$.tenant_id"
-            "agent_id.$"          = "$.agent_id"
-            "filter_yyyymm.$"     = "$.filter_yyyymm"
-            "skip_existing_s3.$"  = "$.skip_existing_s3"
+            "year.$"             = "$.year"
+            "page_start.$"       = "$.page_start"
+            "page_end.$"         = "$.page_end"
+            "tenant_id.$"        = "$.tenant_id"
+            "agent_id.$"         = "$.agent_id"
+            "filter_yyyymm.$"    = "$.filter_yyyymm"
+            "skip_existing_s3.$" = "$.skip_existing_s3"
           }
         }
         ResultPath = "$.anmatInvoke"

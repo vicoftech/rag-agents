@@ -11,7 +11,7 @@ module "scheduled_boletin_anmat_sfn" {
   anmat_state_machine_arn   = module.anmat_s3_stepfunction.state_machine_arn
 
   boletin_tenant_id = "boletin"
-  boletin_agent_id = var.scheduled_boletin_rag_agent_id
+  boletin_agent_id  = var.scheduled_boletin_rag_agent_id
 
   anmat_tenant_id = "anmat"
   anmat_agent_id  = var.scheduled_anmat_rag_agent_id

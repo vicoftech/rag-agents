@@ -275,6 +275,8 @@ resource "aws_lambda_event_source_mapping" "sqs" {
   batch_size       = var.sqs_batch_size
   enabled          = true
 
+  function_response_types = var.sqs_report_batch_item_failures ? ["ReportBatchItemFailures"] : null
+
   dynamic "scaling_config" {
     for_each = var.sqs_maximum_concurrency != null ? [1] : []
     content {

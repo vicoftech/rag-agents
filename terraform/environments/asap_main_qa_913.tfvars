@@ -12,6 +12,13 @@ environment = "qa"
 vpc_id  = "vpc-0220b63692086a550"
 subnets = ["subnet-04cc462043523dcb9", "subnet-0254c9d900c8b2fdc"]
 
+# Aurora y bucket ya existen en la cuenta QA; alinear Terraform sin recrear clúster ni S3.
+create_aurora_cluster                   = false
+create_documents_bucket                 = false
+existing_db_host                        = "aurora-pg-qa.cluster-ch7yo6tzxi4l.us-east-1.rds.amazonaws.com"
+existing_db_security_group_id           = "sg-0e73ff3f4dc8653d4"
+existing_rag_lambda_security_group_id = "sg-0e73ff3f4dc8653d4"
+
 # La VPC 913 ya tiene endpoint S3 (gateway) y bedrock-runtime (interface + private DNS)
 create_vpc_endpoint_s3      = false
 create_vpc_endpoint_bedrock = false

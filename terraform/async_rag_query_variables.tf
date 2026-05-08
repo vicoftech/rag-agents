@@ -7,3 +7,9 @@ variable "enable_async_rag_query" {
   type        = bool
   default     = false
 }
+
+variable "enable_alert_creation_lambda" {
+  description = "Si true: cola SQS rag-alert_creation-* y Lambda rag_lmbd_alert_creation-* (persistencia de alertas public.* / tenant_anmat)."
+  type        = bool
+  default     = true
+}
