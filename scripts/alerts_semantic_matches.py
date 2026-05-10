@@ -75,6 +75,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 import boto3
+from botocore.config import Config
 from botocore.exceptions import ClientError
 
 _UUID_RE = re.compile(
@@ -707,6 +708,14 @@ def parse_parallel_workers(raw: str) -> int:
     return v
 
 
+def parse_lambda_read_timeout(raw: str) -> int:
+    """Segundos de espera HTTP al invocar Lambda (RequestResponse); el default de boto3 (~60) es corto vs query+LLM."""
+    v = int(str(raw).strip())
+    if not (30 <= v <= 900):
+        raise argparse.ArgumentTypeError("--lambda-read-timeout debe estar entre 30 y 900")
+    return v
+
+
 def _session(profile: str, region: str) -> boto3.Session:
     kwargs: dict[str, str] = {"region_name": region}
     if profile:
@@ -1192,7 +1201,15 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         f"Inicio env={args.env} region={args.region} obtener={obtener_name} query={query_name}",
     )
     sess = _session(args.profile, args.region)
-    client = sess.client("lambda")
+    read_to = int(getattr(args, "lambda_read_timeout"))
+    client = sess.client(
+        "lambda",
+        config=Config(
+            read_timeout=read_to,
+            connect_timeout=30,
+            retries={"mode": "standard", "max_attempts": 5},
+        ),
+    )
 
     sim_q = (getattr(args, "simulate_alert_query", "") or "").strip()
     if sim_q:
@@ -1257,6 +1274,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "exact_chunk_keywords_mode": exact_kw_mode,
         "json_incluye_alertas_sin_match": bool(getattr(args, "include_zero_chunk_resultados", False)),
         "query_parallel_workers": int(getattr(args, "parallel", 10)),
+        "lambda_invoke_read_timeout_seconds": read_to,
     }
     if sim_q:
         base_meta["obtener_alertas_skipped"] = True
@@ -1564,6 +1582,16 @@ def main(argv: list[str]) -> int:
         help=(
             "Máximo de hilos concurrentes para invocar rag_lmbd_query (ThreadPoolExecutor). "
             "1 = secuencial. Default 10; reducir si hay throttling o límites de cuenta."
+        ),
+    )
+    p.add_argument(
+        "--lambda-read-timeout",
+        type=parse_lambda_read_timeout,
+        default=420,
+        metavar="SEC",
+        help=(
+            "Timeout HTTP (solo lectura) del cliente boto3 para Lambda.invoke; debe superar la demora típica de "
+            "rag_lmbd_query (embed+híbrido+LLM). Default 420s; hasta 900 (tope función Lambda)."
         ),
     )
     p.add_argument("-o", "--output", default="", help="Escribir JSON aquí")
