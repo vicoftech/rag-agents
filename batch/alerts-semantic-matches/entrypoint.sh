@@ -20,7 +20,7 @@ exec python3 scripts/alerts_semantic_matches.py \
   --corrida "${CORRIDA_ARG}" \
   --s3-bucket "${S3_DOCUMENTS_BUCKET}" \
   --no-created-at-filter \
-  --parallel 5 \
+  --parallel 2 \
   --publish-email-queue \
   --publish-alert-creation-queue \
   -o "${OUT}"

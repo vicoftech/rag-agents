@@ -19,6 +19,7 @@ on:
       - tenant_boletin
     paths:
       - "scripts/alerts_semantic_matches.py"
+      - "batch/alerts-semantic-matches/**"
 
   workflow_dispatch:
 
