@@ -11,6 +11,9 @@ environment = "prod"
 vpc_id  = "vpc-xxxxxxxx"
 subnets = ["subnet-xxxxxxxx", "subnet-yyyyyyyy"]
 
+# Fargate/ECS en subnets privadas: crear Interface VPCE para ECR + Logs (alternativa estable a sólo NAT si NACL/hostile paths)
+create_vpc_endpoint_ecr_logs = true
+
 # Existing PostgreSQL (do not create Aurora in prod)
 create_aurora_cluster      = false
 existing_db_host           = "postgres-aurora-prod.cluster-ch7yo6tzxi4l.us-east-1.rds.amazonaws.com"
@@ -32,6 +35,14 @@ embeddings_model   = "cohere.embed-v4:0"
 main_llm_model     = "anthropic.claude-3-5-sonnet-20241022-v2:0"
 fallback_llm_model = "anthropic.claude-3-haiku-20240307-v1:0"
 output_tokens      = "4096"
+
+# Lambda query: corrida batch --no-created-at-filter + modelo grande puede pasar los 120s default.
+# Sandbox.Timedout en logs del batch => subir Timeout (≤900).
+lambda_query_config = {
+  timeout                = 300
+  memory_size            = 1024
+  ephemeral_storage_size = 2048
+}
 
 # Opcional: API HTTP /query valida JWT contra un User Pool existente (p. ej. clientes/productivos).
 # Si no se define, se usa pool+client que crea el módulo cognito_query del proyecto.

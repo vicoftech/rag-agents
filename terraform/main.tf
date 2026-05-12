@@ -390,6 +390,80 @@ resource "aws_vpc_endpoint" "textract" {
   })
 }
 
+# ECR (api + Docker registry) + CloudWatch Logs — pull de imagen y driver awslogs sin depender del retorno público tras NAT para esas APIs.
+data "aws_vpc" "rag_vpce_targets" {
+  count = var.create_vpc_endpoint_ecr_logs ? 1 : 0
+  id    = var.vpc_id
+}
+
+resource "aws_security_group" "vpc_endpoints_ecr_logs" {
+  count       = var.create_vpc_endpoint_ecr_logs ? 1 : 0
+  name        = "vpc-endpoints-ecr-logs-${var.environment}"
+  description = "VPC Interface endpoints HTTPS 443 (ECR api/dkr CloudWatch Logs)"
+  vpc_id      = var.vpc_id
+
+  ingress {
+    description = "HTTPS from Lambdas ECS Fargate and other VPC ENIs"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = [data.aws_vpc.rag_vpce_targets[0].cidr_block]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = merge(local.common_tags, {
+    Name = "vpc-endpoints-ecr-logs-${var.environment}"
+  })
+}
+
+resource "aws_vpc_endpoint" "ecr_api" {
+  count               = var.create_vpc_endpoint_ecr_logs ? 1 : 0
+  vpc_id              = var.vpc_id
+  service_name        = "com.amazonaws.${var.aws_region}.ecr.api"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = var.subnets
+  security_group_ids  = [aws_security_group.vpc_endpoints_ecr_logs[0].id]
+  private_dns_enabled = true
+
+  tags = merge(local.common_tags, {
+    Name = "ecr-api-endpoint-${var.environment}"
+  })
+}
+
+resource "aws_vpc_endpoint" "ecr_dkr" {
+  count               = var.create_vpc_endpoint_ecr_logs ? 1 : 0
+  vpc_id              = var.vpc_id
+  service_name        = "com.amazonaws.${var.aws_region}.ecr.dkr"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = var.subnets
+  security_group_ids  = [aws_security_group.vpc_endpoints_ecr_logs[0].id]
+  private_dns_enabled = true
+
+  tags = merge(local.common_tags, {
+    Name = "ecr-dkr-endpoint-${var.environment}"
+  })
+}
+
+resource "aws_vpc_endpoint" "logs" {
+  count               = var.create_vpc_endpoint_ecr_logs ? 1 : 0
+  vpc_id              = var.vpc_id
+  service_name        = "com.amazonaws.${var.aws_region}.logs"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = var.subnets
+  security_group_ids  = [aws_security_group.vpc_endpoints_ecr_logs[0].id]
+  private_dns_enabled = true
+
+  tags = merge(local.common_tags, {
+    Name = "logs-endpoint-${var.environment}"
+  })
+}
+
 resource "aws_vpc_security_group_ingress_rule" "rds_from_rag_lambda" {
   security_group_id            = local.db_security_group_id
   referenced_security_group_id = local.rag_lambda_security_group_id

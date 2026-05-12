@@ -32,6 +32,16 @@ output "rag_lambda_security_group_id" {
   value       = local.rag_lambda_security_group_id
 }
 
+output "vpc_endpoint_ecr_api_id" {
+  description = "VPC Interface endpoint para ECR API (pull token). Vacío si create_vpc_endpoint_ecr_logs=false."
+  value       = length(aws_vpc_endpoint.ecr_api) > 0 ? aws_vpc_endpoint.ecr_api[0].id : null
+}
+
+output "vpc_endpoint_logs_id" {
+  description = "VPC Interface endpoint para CloudWatch Logs (driver awslogs en Fargate)."
+  value       = length(aws_vpc_endpoint.logs) > 0 ? aws_vpc_endpoint.logs[0].id : null
+}
+
 # ==============================================================================
 # S3 Outputs
 # ==============================================================================

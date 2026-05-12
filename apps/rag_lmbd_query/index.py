@@ -67,7 +67,36 @@ HYBRID_LITERAL_WEIGHT = float(os.getenv("HYBRID_LITERAL_WEIGHT", "0.35"))
 # No ejecutar POSITION(substr) sobre consultas muy cortas (noise + full scan más caro proporcionalmente).
 HYBRID_LITERAL_MIN_CHARS = int(os.getenv("HYBRID_LITERAL_MIN_CHARS", "3"))
 HYBRID_RRF_K = int(os.getenv("HYBRID_RRF_K", "60"))
+# Por sesión: limita paralelismo del planner en la búsqueda híbrida (consultas grandes + disco
+# del cluster sin margen pueden fallar en pgsql_tmp; ver logs "parallel worker").
+# Vacío / "server" → no se envía SET (comportamiento por defecto del servidor).
+_PG_MAX_PARALLEL_PER_GATHER_RAW = os.getenv("PG_MAX_PARALLEL_WORKERS_PER_GATHER", "0").strip()
 _DB_SECRET_CACHE = None
+
+
+def _pg_max_parallel_workers_per_gather_override() -> int | None:
+    r = _PG_MAX_PARALLEL_PER_GATHER_RAW.lower()
+    if not r or r in ("server", "default"):
+        return None
+    try:
+        n = int(r)
+    except ValueError:
+        print(f"[retrieval] PG_MAX_PARALLEL_WORKERS_PER_GATHER inválido {_PG_MAX_PARALLEL_PER_GATHER_RAW!r}")
+        return None
+    return n if n >= 0 else None
+
+
+def _apply_pg_retrieval_session_tuning(cursor) -> None:
+    cap = _pg_max_parallel_workers_per_gather_override()
+    if cap is None:
+        return
+    try:
+        cursor.execute(
+            "SET max_parallel_workers_per_gather = %s",
+            (cap,),
+        )
+    except Exception as e:
+        print(f"[retrieval] SET max_parallel_workers_per_gather={cap}: {e}")
 
 DOCUMENTS_S3_BUCKET = os.getenv("DOCUMENTS_S3_BUCKET", "")
 PRESIGNED_URL_EXPIRES_SECONDS = int(os.getenv("PRESIGNED_URL_EXPIRES_SECONDS", "3600"))
@@ -399,6 +428,7 @@ def semantic_search(
     schema = resolve_schema_name(tenant_id)
     conn = get_connection()
     cur = conn.cursor()
+    _apply_pg_retrieval_session_tuning(cur)
 
     q_plain = (query or "").strip()
     lit_min = (

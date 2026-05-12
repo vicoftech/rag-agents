@@ -93,6 +93,12 @@ variable "create_vpc_endpoint_secrets_textract" {
   default     = false
 }
 
+variable "create_vpc_endpoint_ecr_logs" {
+  description = "Interface VPCE para ECR (api + dkr) y CloudWatch Logs. Necesario para ECS Fargate en subnets privadas cuando el pull de imagen HTTPS a APIs públicas no es fiable vía NAT (p. ej. NACL)."
+  type        = bool
+  default     = false
+}
+
 # ==============================================================================
 # Aurora PostgreSQL Configuration
 # ==============================================================================

@@ -20,7 +20,7 @@ Parámetros del contenedor (equivalente al comando que pediste):
 ## Requisitos
 
 - Docker, Terraform ≥ 1.5, AWS CLI con permisos de admin o equivalente.
-- VPC con salida a Internet (NAT en subnets privadas, o subnets públicas + `assign_public_ip = true`).
+- VPC con salida estable a **ECR** y **CloudWatch Logs** desde las subnets donde corre Fargate: NAT + rutas válidas **o**, en la misma cuenta/VPC que el proyecto RAG, aplicar **`create_vpc_endpoint_ecr_logs = true`** en el Terraform raíz (`terraform/`): crea VPC endpoints Interface para **`ecr.api`**, **`ecr.dkr`** y **`logs`**, más un SG que permite HTTPS desde el CIDR de la VPC (útiles cuando el pull de imagen vía IPs públicas no es confiable por NACL). S3 suele tener ya un Gateway VPC endpoint para capas del registry.
 
 ## Pasos
 
