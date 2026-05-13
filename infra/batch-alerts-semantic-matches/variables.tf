@@ -68,6 +68,42 @@ variable "schedule_cron_boletin" {
   default     = "cron(0 14 ? * MON-FRI *)"
 }
 
+variable "batch_parallel_anmat" {
+  type        = number
+  description = "Argumento --parallel del script para la tarea anmat."
+  default     = 2
+}
+
+variable "batch_parallel_boletin" {
+  type        = number
+  description = "Argumento --parallel del script para la tarea boletín."
+  default     = 4
+}
+
+variable "batch_trace_lambda_payloads" {
+  type        = bool
+  description = "Si true, el contenedor pasa --trace-lambda-payloads y --output-trace /tmp/<corrida>_lambda_trace.json."
+  default     = true
+}
+
+variable "batch_include_zero_chunk_anmat" {
+  type        = bool
+  description = "Si true, tarea anmat añade --include-zero-chunk-resultados."
+  default     = false
+}
+
+variable "batch_include_zero_chunk_boletin" {
+  type        = bool
+  description = "Si true, tarea boletín añade --include-zero-chunk-resultados."
+  default     = false
+}
+
+variable "batch_no_created_at_filter" {
+  type        = bool
+  description = "Si true, añade --no-created-at-filter (ventana completa). Si false, ventana UTC del script (created_at_span_days)."
+  default     = false
+}
+
 variable "task_cpu" {
   type        = number
   description = "Unidades CPU Fargate (1024 = 1 vCPU)."

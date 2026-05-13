@@ -20,3 +20,11 @@ s3_documents_bucket = "rag-documents-prod-913123310997"
 # Opcional: override de horarios (cron UTC).
 # schedule_cron_anmat   = "cron(30 13 ? * MON-FRI *)"
 # schedule_cron_boletin = "cron(0 14 ? * MON-FRI *)"
+
+# Parámetros del script en ECS (entrypoint.sh):
+# batch_parallel_anmat              = 2
+# batch_parallel_boletin            = 4
+# batch_trace_lambda_payloads       = true
+# batch_include_zero_chunk_anmat    = false
+# batch_include_zero_chunk_boletin  = false
+# batch_no_created_at_filter        = false

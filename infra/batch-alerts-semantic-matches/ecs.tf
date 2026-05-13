@@ -43,6 +43,20 @@ resource "aws_ecs_task_definition" "batch" {
         { name = "BATCH_CORRIDA", value = each.key },
         { name = "AWS_DEFAULT_REGION", value = var.aws_region },
         { name = "S3_DOCUMENTS_BUCKET", value = var.s3_documents_bucket },
+        {
+          name  = "BATCH_PARALLEL"
+          value = each.key == "anmat" ? tostring(var.batch_parallel_anmat) : tostring(var.batch_parallel_boletin)
+        },
+        { name = "BATCH_TRACE_LAMBDA_PAYLOADS", value = var.batch_trace_lambda_payloads ? "1" : "0" },
+        {
+          name = "BATCH_INCLUDE_ZERO_CHUNK"
+          value = (
+            each.key == "anmat"
+            ? (var.batch_include_zero_chunk_anmat ? "1" : "0")
+            : (var.batch_include_zero_chunk_boletin ? "1" : "0")
+          )
+        },
+        { name = "BATCH_NO_CREATED_AT_FILTER", value = var.batch_no_created_at_filter ? "1" : "0" },
       ]
       logConfiguration = {
         logDriver = "awslogs"
