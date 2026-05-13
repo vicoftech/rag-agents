@@ -40,6 +40,15 @@ Con varias keywords, las muy cortas (p. ej. «beta», default ``--exact-keyword-
 del filtro OR para evitar falsos positivos. Modo ``--exact-chunk-keywords-mode all_corpus`` exige que **cada**
 keyword sustantiva aparezca exacta en **algún** chunk de la lista.
 
+Para auditoría de payloads hacia Lambdas (obtener + query, incl. ``created_at_*``): ``--trace-lambda-payloads``
+(revisa ``meta.lambda_invoke_trace`` en el JSON de salida).
+
+Con salida JSON completa (sin ``--salida-solo-notificaciones``), el archivo incluye ``notificaciones`` y
+``alert_creation_messages`` (objetos que el script publicaría) y ``sqs_publish_preview``: nombres de cola
+por defecto y cada ``MessageBody`` como string JSON (igual que ``SendMessage``).
+Con ``--trace-lambda-payloads`` y ``--output-trace PATH``, las invocaciones van sólo a ``PATH`` y se
+sacan del JSON principal (evita duplicar un trazo muy grande).
+
 Dos corpus (boletín y ANMAT) en una sola ejecución:
 
   python3 scripts/alerts_semantic_matches.py --profile asap_main --env prod \\
@@ -66,6 +75,7 @@ import argparse
 import json
 import re
 import sys
+import threading
 import unicodedata
 import uuid
 from pathlib import Path
@@ -73,6 +83,7 @@ from urllib.parse import quote
 from datetime import date, datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import boto3
 from botocore.config import Config
@@ -708,6 +719,36 @@ def parse_parallel_workers(raw: str) -> int:
     return v
 
 
+class LambdaInvokeTrace:
+    """Registro thread-safe de payloads enviados a Lambda.invoke (auditoría / debug)."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._seq = 0
+        self.entries: list[dict[str, Any]] = []
+
+    def record(
+        self,
+        function_name: str,
+        payload: dict[str, Any],
+        *,
+        kind: str,
+        alerta_id: Any = None,
+    ) -> None:
+        snap = json.loads(json.dumps(payload, ensure_ascii=False, default=str))
+        with self._lock:
+            self._seq += 1
+            row: dict[str, Any] = {
+                "seq": self._seq,
+                "kind": kind,
+                "function": function_name,
+                "payload": snap,
+            }
+            if alerta_id is not None:
+                row["alerta_id"] = alerta_id
+            self.entries.append(row)
+
+
 def parse_lambda_read_timeout(raw: str) -> int:
     """Segundos de espera HTTP al invocar Lambda (RequestResponse); el default de boto3 (~60) es corto vs query+LLM."""
     v = int(str(raw).strip())
@@ -728,7 +769,17 @@ def _invoke_lambda(
     *,
     name: str,
     payload: dict[str, Any],
+    trace: LambdaInvokeTrace | None = None,
+    trace_kind: str = "invoke",
+    trace_alerta_id: Any = None,
 ) -> dict[str, Any]:
+    if trace is not None:
+        trace.record(
+            name,
+            payload,
+            kind=trace_kind,
+            alerta_id=trace_alerta_id,
+        )
     invoke_kw: dict[str, Any] = {
         "FunctionName": name,
         "InvocationType": "RequestResponse",
@@ -848,6 +899,7 @@ def process_one_alert(
     created_at_start: str | None = None,
     created_at_end: str | None = None,
     include_full_chunk_text: bool = False,
+    invoke_trace: LambdaInvokeTrace | None = None,
 ) -> dict[str, Any]:
     fuente_raw = alerta.get("fuente_de_informacion")
     tenant_id = fuente_cfg["tenant_id"].strip()
@@ -879,7 +931,14 @@ def process_one_alert(
         q_payload["created_at_start"] = created_at_start
         q_payload["created_at_end"] = created_at_end
 
-    q_body = _invoke_lambda(client, name=query_fn_name, payload=q_payload)
+    q_body = _invoke_lambda(
+        client,
+        name=query_fn_name,
+        payload=q_payload,
+        trace=invoke_trace,
+        trace_kind="rag_lmbd_query",
+        trace_alerta_id=alerta.get("id"),
+    )
     contexts_lambda = q_body.get("contexts") or []
 
     raw_items = q_body.get("context_items")
@@ -1074,6 +1133,7 @@ def _run_query_workers(
     created_at_start: str | None,
     created_at_end: str | None,
     include_full_chunk_text: bool,
+    invoke_trace: LambdaInvokeTrace | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     results: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
@@ -1106,6 +1166,7 @@ def _run_query_workers(
                     created_at_start=created_at_start,
                     created_at_end=created_at_end,
                     include_full_chunk_text=include_full_chunk_text,
+                    invoke_trace=invoke_trace,
                 ),
             )
         except Exception as e:
@@ -1196,6 +1257,44 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     if not query_name:
         query_name = f"rag_lmbd_query{suf}"
 
+    sim_q = (getattr(args, "simulate_alert_query", "") or "").strip()
+    if not getattr(args, "allow_weekend_run", False) and not sim_q:
+        tz_art = "America/Argentina/Buenos_Aires"
+        now_art = datetime.now(ZoneInfo(tz_art))
+        if now_art.weekday() >= 5:
+            dias_es = (
+                "lunes",
+                "martes",
+                "miércoles",
+                "jueves",
+                "viernes",
+                "sábado",
+                "domingo",
+            )
+            dia = dias_es[now_art.weekday()]
+            skip_msg = (
+                f"SKIP: ejecución en día no laborable ({now_art.strftime('%Y-%m-%d')}, {dia})"
+            )
+            _log_step("RUN", skip_msg)
+            _log_step("MAIN", skip_msg)
+            stub_meta: dict[str, Any] = {
+                "obtener_alertas_lambda": obtener_name,
+                "query_lambda": query_name,
+                "aws_profile": args.profile or None,
+                "aws_region": args.region,
+                "skipped_non_business_day": True,
+                "skip_timezone": tz_art,
+                "skip_local_date": now_art.strftime("%Y-%m-%d"),
+                "skip_local_weekday": dia,
+            }
+            return {
+                "meta": stub_meta,
+                "corridas": [],
+                "summary": {"total_alertas_filtradas": 0, "matches_ok": 0, "matches_error": 0},
+                "resultados": [],
+                "errors": [],
+            }
+
     _log_step(
         "RUN",
         f"Inicio env={args.env} region={args.region} obtener={obtener_name} query={query_name}",
@@ -1211,7 +1310,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         ),
     )
 
-    sim_q = (getattr(args, "simulate_alert_query", "") or "").strip()
+    invoke_trace: LambdaInvokeTrace | None = None
+    if getattr(args, "trace_lambda_payloads", False):
+        invoke_trace = LambdaInvokeTrace()
+
     if sim_q:
         sim_id = int(getattr(args, "simulate_alerta_id", 900001))
         sim_fuente = int(getattr(args, "simulate_fuente_de_informacion", 0))
@@ -1237,7 +1339,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 # Evento directo: la Lambda lee id/alerta_id desde body JSON.
                 obtener_payload = {"body": json.dumps({"id": id_list[0]})}
         _log_step("RUN", f"Invocando Lambda obtener_alertas={obtener_name}.")
-        obtener_body = _invoke_lambda(client, name=obtener_name, payload=obtener_payload)
+        obtener_body = _invoke_lambda(
+            client,
+            name=obtener_name,
+            payload=obtener_payload,
+            trace=invoke_trace,
+            trace_kind="rag_lmbd_obtener_alertas",
+            trace_alerta_id=None,
+        )
         alertas = obtener_body.get("alertas")
         if not isinstance(alertas, list):
             raise RuntimeError(
@@ -1331,6 +1440,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 created_at_start=ca_start_str,
                 created_at_end=ca_end_str,
                 include_full_chunk_text=args.include_full_chunk_text,
+                invoke_trace=invoke_trace,
             )
             corridas_out.append(
                 {
@@ -1347,6 +1457,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             )
             _log_step("RUN", f"Corrida '{label}' finalizada: ok={len(results)} error={len(errors)}.")
         blob_out: dict[str, Any] = {"meta": base_meta, "corridas": corridas_out}
+        if invoke_trace is not None:
+            base_meta["lambda_invoke_trace"] = list(invoke_trace.entries)
         return omit_resultados_sin_coincidencia_documental(
             blob_out, include_zero_chunk=bool(args.include_zero_chunk_resultados)
         )
@@ -1371,6 +1483,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         created_at_start=ca_start_str,
         created_at_end=ca_end_str,
         include_full_chunk_text=args.include_full_chunk_text,
+        invoke_trace=invoke_trace,
     )
     summary = {
         "total_alertas_filtradas": len(alertas),
@@ -1379,9 +1492,22 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     }
     _log_step("RUN", f"Fin corrida única: ok={len(results)} error={len(errors)}.")
     blob_out = {"meta": base_meta, "summary": summary, "resultados": results, "errors": errors}
+    if invoke_trace is not None:
+        base_meta["lambda_invoke_trace"] = list(invoke_trace.entries)
     return omit_resultados_sin_coincidencia_documental(
         blob_out, include_zero_chunk=bool(args.include_zero_chunk_resultados)
     )
+
+
+def _pop_lambda_invoke_trace(blob: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Extrae y quita ``meta.lambda_invoke_trace`` del blob (sidecar)."""
+    meta = blob.get("meta")
+    if not isinstance(meta, dict):
+        return None
+    raw = meta.pop("lambda_invoke_trace", None)
+    if raw is None:
+        return None
+    return raw if isinstance(raw, list) else None
 
 
 def main(argv: list[str]) -> int:
@@ -1410,6 +1536,23 @@ def main(argv: list[str]) -> int:
     )
     p.add_argument("--region", default="us-east-1")
     p.add_argument("--env", choices=["prod", "qa", "dev"], required=True)
+    p.add_argument(
+        "--allow-weekend-run",
+        action="store_true",
+        help=(
+            "Ejecutar aunque sea sábado o domingo en America/Argentina/Buenos_Aires. "
+            "Sin este flag, el batch no invoca Lambdas ni publica colas (AL-01). "
+            "No aplica si --simulate-alert-query está definido."
+        ),
+    )
+    p.add_argument(
+        "--trace-lambda-payloads",
+        action="store_true",
+        help=(
+            "Incluir en meta.lambda_invoke_trace la lista ordenada por seq de cada payload enviado a "
+            "rag_lmbd_obtener_alertas y rag_lmbd_query (incluye created_at_start/end cuando aplique)."
+        ),
+    )
 
     g = p.add_mutually_exclusive_group(required=False)
     g.add_argument(
@@ -1596,11 +1739,21 @@ def main(argv: list[str]) -> int:
     )
     p.add_argument("-o", "--output", default="", help="Escribir JSON aquí")
     p.add_argument(
+        "--output-trace",
+        default="",
+        metavar="PATH.json",
+        help=(
+            "Segundo archivo: sólo {\"lambda_invoke_trace\": [...]}. Requiere --trace-lambda-payloads. "
+            "Quita esa clave de meta en el JSON principal (-o o stdout)."
+        ),
+    )
+    p.add_argument(
         "--salida-solo-notificaciones",
         action="store_true",
         help=(
             "Con -o, escribir sólo un array JSON (notificaciones con chunks_count>0, sin wrapper meta/corridas). "
-            "Sin este flag, el array va en la clave top-level notificaciones."
+            "Sin este flag, el array va en la clave top-level notificaciones junto con sqs_publish_preview. "
+            "En modo solo-notificaciones no se incluye la vista previa de colas."
         ),
     )
     p.add_argument(
@@ -1720,6 +1873,10 @@ def main(argv: list[str]) -> int:
     if args.publish_alert_creation_queue and not str(args.output or "").strip():
         p.error("--publish-alert-creation-queue requiere -o/--output.")
 
+    trace_out = (getattr(args, "output_trace", "") or "").strip()
+    if trace_out and not getattr(args, "trace_lambda_payloads", False):
+        p.error("--output-trace requiere --trace-lambda-payloads.")
+
     te_arg = (getattr(args, "testing_email", "") or "").strip()
     if te_arg and "@" not in te_arg:
         p.error("--testing-email debe ser un correo que contenga «@».")
@@ -1757,11 +1914,35 @@ def main(argv: list[str]) -> int:
     alert_creation_msgs = compute_alert_creation_messages(out)
     _log_step("MAIN", f"Notificaciones generadas (chunks_count>0): {len(notifs)}")
     _log_step("MAIN", f"Mensajes alert_creation generados: {len(alert_creation_msgs)}")
+    email_qn = (args.email_sqs_queue or "").strip() or "email-sender-record-email-processor-prod"
+    alert_qn = (args.alert_creation_sqs_queue or "").strip() or f"rag-alert-creation-{args.env}"
+    sqs_publish_preview: dict[str, Any] = {
+        "email_queue_name": email_qn,
+        "alert_creation_queue_name": alert_qn,
+        "email_send_message_body_json": [
+            json.dumps(n, ensure_ascii=False) for n in notifs
+        ],
+        "alert_creation_send_message_body_json": [
+            json.dumps(m, ensure_ascii=False) for m in alert_creation_msgs
+        ],
+        "nota": (
+            "Cada string es el MessageBody de SQS SendMessage (mismo json.dumps que al publicar). "
+            "notificaciones y alert_creation_messages repiten el contenido como objetos."
+        ),
+    }
+    trace_path = (getattr(args, "output_trace", "") or "").strip()
+    if trace_path:
+        popped = _pop_lambda_invoke_trace(out)
+        trace_blob = {"lambda_invoke_trace": list(popped) if popped else []}
+        _log_step("MAIN", f"Escribiendo trazas Lambda en {trace_path}")
+        with open(trace_path, "w", encoding="utf-8") as tf:
+            tf.write(json.dumps(trace_blob, indent=2, ensure_ascii=False))
     if getattr(args, "salida_solo_notificaciones", False):
         text = json.dumps(notifs, indent=2, ensure_ascii=False)
     else:
         out["notificaciones"] = notifs
         out["alert_creation_messages"] = alert_creation_msgs
+        out["sqs_publish_preview"] = sqs_publish_preview
         text = json.dumps(out, indent=2, ensure_ascii=False)
 
     if args.output:

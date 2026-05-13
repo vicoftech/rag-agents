@@ -46,13 +46,13 @@ variable "schedule_timezone" {
 }
 
 variable "boletin_cron_minute_hour" {
-  description = "Expresión cron solo minuto y hora locales (resto fijo * * ? *). Ej: \"0 9\" = 09:00"
+  description = "Minuto y hora locales (resto: ? * MON-FRI *). Ej: \"0 9\" = 09:00 lun–vie"
   type        = string
   default     = "0 9"
 }
 
 variable "anmat_cron_minute_hour" {
-  description = "Cron local para ANMAT. Ej: \"30 9\" = 09:30"
+  description = "Minuto y hora locales ANMAT (lun–vie). Ej: \"30 9\" = 09:30"
   type        = string
   default     = "30 9"
 }

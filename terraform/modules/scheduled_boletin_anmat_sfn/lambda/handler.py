@@ -1,8 +1,8 @@
 """
 Disparo diario de Step Functions Boletín y ANMAT desde EventBridge Scheduler.
 
-Boletín: una ejecución SFN por cada (fecha, sección) con fechas [ayer, hoy]
-en la zona configurada (criterio ventana de 2 días civiles).
+Boletín: una ejecución SFN por cada (fecha, sección) con fechas [último día hábil previo, hoy]
+en la zona configurada (lunes–viernes; el lunes no incluye domingo, AL-01).
 
 ANMAT: el state machine ``rag-anmat-to-s3writer`` recibe año, página 1,
 ``filter_yyyymm`` (YYYYMM en la zona ``SCHEDULE_TZ``) y ``skip_existing_s3``
@@ -36,10 +36,19 @@ def _client():
 
 
 def _two_day_window_dates(tz_name: str) -> tuple[str, str]:
+    """Ventana [último día hábil previo, hoy] en SCHEDULE_TZ; el inicio retrocede saltando sáb/dom (AL-01)."""
     tz = ZoneInfo(tz_name)
     today = datetime.now(tz).date()
-    yesterday = today - timedelta(days=1)
-    return yesterday.isoformat(), today.isoformat()
+    prev = today - timedelta(days=1)
+    while prev.weekday() >= 5:
+        prev -= timedelta(days=1)
+    return prev.isoformat(), today.isoformat()
+
+
+def _is_business_day_local(tz_name: str) -> tuple[bool, datetime]:
+    """Lunes–viernes en tz_name (5= sábado, 6= domingo)."""
+    now = datetime.now(ZoneInfo(tz_name))
+    return now.weekday() < 5, now
 
 
 def _run_boletin() -> dict[str, Any]:
@@ -129,6 +138,32 @@ def _run_anmat() -> dict[str, Any]:
 
 
 def handler(event: dict[str, Any] | None, context: Any) -> dict[str, Any]:
+    tz_skip = os.environ.get("SCHEDULE_TZ", "America/Argentina/Buenos_Aires")
+    ok_day, now_local = _is_business_day_local(tz_skip)
+    if not ok_day:
+        dias_es = (
+            "lunes",
+            "martes",
+            "miércoles",
+            "jueves",
+            "viernes",
+            "sábado",
+            "domingo",
+        )
+        dia = dias_es[now_local.weekday()]
+        LOG.info(
+            "SKIP: ejecución en día no laborable (%s, %s)",
+            now_local.strftime("%Y-%m-%d"),
+            dia,
+        )
+        return {
+            "skipped": True,
+            "reason": "non_business_day",
+            "timezone": tz_skip,
+            "local_date": now_local.strftime("%Y-%m-%d"),
+            "local_weekday": dia,
+        }
+
     corpus = (event or {}).get("corpus") or os.environ.get("DEFAULT_CORPUS", "")
     corpus = str(corpus).strip().lower()
     if corpus == "boletin":

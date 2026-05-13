@@ -58,14 +58,14 @@ variable "sqs_env_suffix" {
 
 variable "schedule_cron_anmat" {
   type        = string
-  description = "Cron UTC EventBridge Scheduler. Default: 10:30 ART (UTC-3) → 13:30 UTC."
-  default     = "cron(30 13 * * ? *)"
+  description = "Cron UTC EventBridge Scheduler, solo lun–vie (AL-01). Default: 10:30 ART (UTC-3) → 13:30 UTC."
+  default     = "cron(30 13 ? * MON-FRI *)"
 }
 
 variable "schedule_cron_boletin" {
   type        = string
-  description = "Cron UTC. Default: 11:00 ART → 14:00 UTC."
-  default     = "cron(0 14 * * ? *)"
+  description = "Cron UTC, solo lun–vie (AL-01). Default: 11:00 ART → 14:00 UTC."
+  default     = "cron(0 14 ? * MON-FRI *)"
 }
 
 variable "task_cpu" {

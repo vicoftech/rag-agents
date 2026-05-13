@@ -125,7 +125,7 @@ resource "aws_scheduler_schedule" "boletin" {
 
   flexible_time_window { mode = "OFF" }
 
-  schedule_expression          = "cron(${var.boletin_cron_minute_hour} * * ? *)"
+  schedule_expression          = "cron(${var.boletin_cron_minute_hour} ? * MON-FRI *)"
   schedule_expression_timezone = var.schedule_timezone
 
   target {
@@ -141,7 +141,7 @@ resource "aws_scheduler_schedule" "anmat" {
 
   flexible_time_window { mode = "OFF" }
 
-  schedule_expression          = "cron(${var.anmat_cron_minute_hour} * * ? *)"
+  schedule_expression          = "cron(${var.anmat_cron_minute_hour} ? * MON-FRI *)"
   schedule_expression_timezone = var.schedule_timezone
 
   target {
