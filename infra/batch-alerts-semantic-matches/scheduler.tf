@@ -6,7 +6,7 @@ resource "aws_scheduler_schedule" "batch" {
   for_each = local.corridas_schedule
 
   name        = "${var.project_name}-${each.key}-${var.environment}"
-  description = "alerts_semantic_matches.py prod — ${each.key}; sin publicación SQS; trace opcional vía env (ver task definition)."
+  description = "alerts_semantic_matches.py prod — ${each.key}; SQS email + alert-creation según env en task definition; trace opcional."
   group_name  = aws_scheduler_schedule_group.batch.name
   state       = "ENABLED"
 

@@ -106,9 +106,21 @@ variable "batch_no_created_at_filter" {
 
 variable "batch_testing_email" {
   type        = string
-  description = "Si no vacío, el contenedor pasa --testing-email (reemplaza destinatarios en JSON/notificaciones). Vacío en prod normal."
-  default     = ""
+  description = "Si no vacío, el contenedor pasa --testing-email (reemplaza destinatarios). Prueba: viglesias@asap-consulting.net; luego \"\" para prod real."
+  default     = "viglesias@asap-consulting.net"
   sensitive   = true
+}
+
+variable "batch_publish_email_queue" {
+  type        = bool
+  description = "Si true, el contenedor pasa --publish-email-queue (SQS email-sender → envío)."
+  default     = true
+}
+
+variable "batch_publish_alert_creation_queue" {
+  type        = bool
+  description = "Si true, el contenedor pasa --publish-alert-creation-queue (SQS rag-alert-creation)."
+  default     = true
 }
 
 variable "task_cpu" {

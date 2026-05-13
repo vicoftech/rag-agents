@@ -9,13 +9,14 @@ Dos tareas diarias en **prod**:
 
 EventBridge Scheduler usa **UTC**: `13:30` y `14:00` UTC respectivamente (sin DST en Argentina).
 
-Parámetros del contenedor (equivalente al comando que pediste):
+Parámetros del contenedor (`batch/alerts-semantic-matches/entrypoint.sh` + env en `ecs.tf`):
 
 - `--profile ""` (credenciales del **task role**)
-- `--env prod`
-- `--no-created-at-filter`, `--parallel 5`
-- `--publish-email-queue`, `--publish-alert-creation-queue`
-- Salida en `/tmp/alerts_matches_prod_fullcorpus_<UTC>.json` dentro del contenedor
+- `--env prod`, `--corrida` según `BATCH_CORRIDA`, `--s3-bucket` desde `S3_DOCUMENTS_BUCKET`
+- `--parallel` desde `batch_parallel_*` en Terraform
+- Opcionales: `--no-created-at-filter`, `--trace-lambda-payloads`, `--include-zero-chunk-resultados`, `--testing-email` (si `batch_testing_email` no vacío)
+- **`--publish-email-queue` / `--publish-alert-creation-queue`** si `batch_publish_email_queue` / `batch_publish_alert_creation_queue` son `true` (default)
+- Salida en `/tmp/alerts_matches_prod_fullcorpus_<UTC>.json` dentro del contenedor (`-o` requerido para publicar a colas)
 
 ## Requisitos
 
