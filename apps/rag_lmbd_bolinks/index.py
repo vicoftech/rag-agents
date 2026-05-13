@@ -20,6 +20,39 @@ BOLETIN_BASE_URL = os.getenv('BOLETIN_BASE_URL', 'https://www.boletinoficial.gob
 DEFAULT_SECTION = os.getenv('DEFAULT_SECTION', 'primera')
 REQUEST_TIMEOUT = int(os.getenv('REQUEST_TIMEOUT', '30'))
 
+VALID_SECTIONS = frozenset({"primera", "segunda", "tercera"})
+
+
+def resolve_sections(section_param) -> list[str]:
+    """Normaliza el parámetro section a una lista de secciones válidas."""
+    if section_param is None:
+        return [DEFAULT_SECTION]
+    if section_param == "all":
+        return sorted(VALID_SECTIONS)
+    if isinstance(section_param, list):
+        if not section_param:
+            raise ValueError("Lista de secciones vacía.")
+        invalid = set(section_param) - VALID_SECTIONS
+        if invalid:
+            raise ValueError(
+                f"Secciones inválidas: {sorted(invalid)}. Válidas: {sorted(VALID_SECTIONS)}"
+            )
+        return [str(s) for s in section_param]
+    if isinstance(section_param, str):
+        if section_param not in VALID_SECTIONS:
+            raise ValueError(
+                f"Sección inválida: {section_param!r}. Válidas: {sorted(VALID_SECTIONS)} o 'all'"
+            )
+        return [section_param]
+    raise ValueError(f"Tipo inválido para section: {type(section_param).__name__}")
+
+
+def resolve_date_default_today(date_raw) -> tuple[str | None, str | None]:
+    """Usa HOY como default si no se pasa fecha (no modifica normalize_date_to_yyyymmdd)."""
+    if date_raw is None or (isinstance(date_raw, str) and not str(date_raw).strip()):
+        return datetime.now().strftime("%Y%m%d"), None
+    return normalize_date_to_yyyymmdd(str(date_raw).strip())
+
 
 def normalize_date_to_yyyymmdd(date_str: str | None) -> tuple[str | None, str | None]:
     """
@@ -141,36 +174,38 @@ def get_pdf_links(target_date: str, seccion: str = 'primera'):
     return pdf_links_dict
 
 def handler(event, context):
-    """Lambda handler: extrae enlaces PDF del Boletín Oficial por fecha y sección."""
-    # CORS headers
+    """Lambda handler: extrae enlaces PDF del Boletín Oficial por fecha y sección(es)."""
     CORS_HEADERS = {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Headers": "*",
         "Access-Control-Allow-Methods": "OPTIONS,POST,GET",
     }
-    
-    # Detectar si es un evento HTTP (API Gateway) o directo
+
     http_method = event.get("requestContext", {}).get("http", {}).get("method") or event.get("httpMethod")
-    
+
     if http_method == "OPTIONS":
         return {
             "statusCode": 200,
             "headers": {"Content-Type": "application/json", **CORS_HEADERS},
-            "body": ""
+            "body": "",
         }
-    
+
     try:
-        # Extraer parámetros del request
         if http_method:
-            # Request HTTP
             body = json.loads(event.get("body") or "{}")
         else:
-            # Invocación directa
             body = event
-        
-        section = body.get("section", "primera")
-        date_raw = body.get("date")
-        date_str, date_err = normalize_date_to_yyyymmdd(date_raw)
+
+        try:
+            sections = resolve_sections(body.get("section"))
+        except ValueError as e:
+            return {
+                "statusCode": 400,
+                "headers": {"Content-Type": "application/json", **CORS_HEADERS},
+                "body": json.dumps({"success": False, "message": str(e)}),
+            }
+
+        date_str, date_err = resolve_date_default_today(body.get("date"))
         if date_err:
             return {
                 "statusCode": 400,
@@ -179,8 +214,7 @@ def handler(event, context):
                     {
                         "success": False,
                         "message": date_err,
-                        "received_params": body,
-                        "pdf_links": [],
+                        "pdf_links": {},
                     }
                 ),
             }
@@ -195,8 +229,7 @@ def handler(event, context):
                     {
                         "success": False,
                         "message": f"Fecha inválida: {date_str}",
-                        "received_params": body,
-                        "pdf_links": [],
+                        "pdf_links": {},
                         "error": str(e),
                     }
                 ),
@@ -207,63 +240,79 @@ def handler(event, context):
                 f"Date {date_str} is weekend ({date_obj.strftime('%A')}), "
                 "returning empty PDF links"
             )
-            pdf_links = []
             result = {
                 "success": True,
                 "message": (
                     f"No hay boletín (fin de semana): {date_str} "
                     f"({date_obj.strftime('%A')})"
                 ),
-                "timestamp": datetime.now().isoformat(),
-                "received_params": body,
-                "pdf_links": pdf_links,
-                "is_weekend": True,
+                "date": date_str,
                 "day_of_week": date_obj.strftime("%A"),
-                "date_normalized": date_str,
+                "is_weekend": True,
+                "sections_processed": [],
+                "sections_failed": {},
+                "pdf_links": {},
+                "totals": {"total": 0},
+                "timestamp": datetime.now().isoformat(),
             }
         else:
             print(
                 f"Date {date_str} is weekday ({date_obj.strftime('%A')}), "
-                "extracting PDF links"
+                f"extracting PDF links for sections: {sections}"
             )
-            pdf_links = get_pdf_links(date_str, section)
+            pdf_links: dict[str, list] = {}
+            sections_failed: dict[str, str] = {}
+
+            for section in sections:
+                try:
+                    pdf_links[section] = get_pdf_links(date_str, section)
+                except Exception as e:
+                    sections_failed[section] = str(e)
+                    print(f"ERROR procesando sección {section!r}: {e}")
+
+            totals = {s: len(links) for s, links in pdf_links.items()}
+            totals["total"] = sum(v for k, v in totals.items() if k != "total")
+
+            all_ok = len(sections_failed) == 0
             result = {
-                "success": True,
-                "message": f"Extraídos {len(pdf_links)} enlaces PDF",
-                "timestamp": datetime.now().isoformat(),
-                "received_params": body,
-                "pdf_links": pdf_links,
-                "is_weekend": False,
+                "success": all_ok,
+                "message": (
+                    f"Procesadas {len(pdf_links)} secciones, {totals['total']} PDFs encontrados"
+                ),
+                "date": date_str,
                 "day_of_week": date_obj.strftime("%A"),
-                "date_normalized": date_str,
+                "is_weekend": False,
+                "sections_processed": list(pdf_links.keys()),
+                "sections_failed": sections_failed,
+                "pdf_links": pdf_links,
+                "totals": totals,
+                "timestamp": datetime.now().isoformat(),
             }
-        
-        # Preparar respuesta
-        response = {
+
+        return {
             "statusCode": 200,
             "headers": {"Content-Type": "application/json", **CORS_HEADERS},
-            "body": json.dumps(result)
+            "body": json.dumps(result),
         }
-        
-        return response
-        
+
     except json.JSONDecodeError:
         return {
             "statusCode": 400,
             "headers": {"Content-Type": "application/json", **CORS_HEADERS},
-            "body": json.dumps({"error": "Invalid JSON in request body"})
+            "body": json.dumps({"error": "Invalid JSON in request body"}),
         }
     except Exception as e:
         return {
             "statusCode": 500,
             "headers": {"Content-Type": "application/json", **CORS_HEADERS},
-            "body": json.dumps({"error": f"Internal server error: {str(e)}"})
+            "body": json.dumps({"error": f"Internal server error: {str(e)}"}),
         }
 
+
 if __name__ == "__main__":
-    # Para testing local
-    test_event = {
-        "date": "20260408",
-        "section": "primera"
-    }
-    print(handler(test_event, None))
+    import sys
+
+    if len(sys.argv) > 1 and sys.argv[1] == "all":
+        print(handler({"date": "20260408", "section": "all"}, None))
+    else:
+        print(handler({"date": "20260408", "section": "primera"}, None))

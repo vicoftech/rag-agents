@@ -2,7 +2,7 @@ import json
 import os
 import boto3
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 # AWS Session
 session_args = {'region_name': os.getenv('AWS_REGION', 'us-east-1')}
@@ -21,6 +21,20 @@ BOLINKS_FUNCTION = os.getenv('BOLINKS_FUNCTION_NAME', 'rag_lmbd_bolinks-dev')
 S3WRITER_FUNCTION = os.getenv('S3WRITER_FUNCTION_NAME', 'rag_lmbd_s3writer-dev')
 DBWRITER_FUNCTION = os.getenv('DBWRITER_FUNCTION_NAME', 'rag_lmbd_dbwriter-dev')
 NOTIFIER_FUNCTION = os.getenv('NOTIFIER_FUNCTION_NAME', 'rag_lmbd_notifier-dev')
+
+
+def flatten_bolinks_pdf_links(pdf_links_field: Any) -> List[Dict[str, Any]]:
+    """Lista plana desde pdf_links legacy o dict por sección (CD-01 / bolinks)."""
+    if isinstance(pdf_links_field, dict):
+        out: List[Dict[str, Any]] = []
+        for _sec, items in pdf_links_field.items():
+            if isinstance(items, list):
+                out.extend(items)
+        return out
+    if isinstance(pdf_links_field, list):
+        return pdf_links_field
+    return []
+
 
 def invoke_lambda(function_name: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -87,14 +101,16 @@ def execute_pipeline(date: str, section: str = 'primera') -> Dict[str, Any]:
         "section": section
     }
     bolinks_result = invoke_lambda(BOLINKS_FUNCTION, bolinks_payload)
-    
+
     execution_data['steps'].append({
         'step': 'bolinks',
         'success': bolinks_result.get('success', False),
         'result': bolinks_result
     })
-    
-    if not bolinks_result.get('success'):
+
+    pdf_links_flat = flatten_bolinks_pdf_links(bolinks_result.get('pdf_links', []))
+
+    if not bolinks_result.get('success', False) and not pdf_links_flat:
         # Pipeline falló en bolinks - notificar y salir
         execution_data['success'] = False
         execution_data['failed_step'] = 'bolinks'
@@ -112,9 +128,9 @@ def execute_pipeline(date: str, section: str = 'primera') -> Dict[str, Any]:
     # Step 2: S3Writer (procesar PDFs desde bolinks)
     print("Step 2: Processing PDF links from bolinks result")
     
-    # Extraer pdf_links del resultado de bolinks
-    pdf_links = bolinks_result.get('pdf_links', [])
-    
+    # Extraer pdf_links del resultado de bolinks (lista plana para s3writer)
+    pdf_links = pdf_links_flat
+
     # Crear payload para s3writer con los PDFs
     s3writer_payload = {
         "bolinks_output": bolinks_result,

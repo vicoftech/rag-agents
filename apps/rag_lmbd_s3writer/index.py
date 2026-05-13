@@ -8,7 +8,7 @@ import re
 import urllib3
 from urllib.parse import urlparse, unquote
 from datetime import datetime
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 import hashlib
 from botocore.exceptions import ClientError
 
@@ -56,6 +56,19 @@ DOWNLOAD_HEADERS = {
 }
 
 
+def flatten_bolinks_pdf_links(pdf_links_field: Any) -> List[Dict]:
+    """Soporta pdf_links como lista (legacy) o dict por sección (CD-01)."""
+    if isinstance(pdf_links_field, dict):
+        out: List[Dict] = []
+        for _sec, items in pdf_links_field.items():
+            if isinstance(items, list):
+                out.extend(items)
+        return out
+    if isinstance(pdf_links_field, list):
+        return pdf_links_field
+    return []
+
+
 def resolve_batch_date_yyyymmdd(
     bolinks_output: Dict,
     uploaded_files: List[Dict],
@@ -66,7 +79,7 @@ def resolve_batch_date_yyyymmdd(
     Prioriza received_params.date del bolinks, luego metadata de uploads.
     """
     rp = bolinks_output.get("received_params") or {}
-    raw = rp.get("date")
+    raw = rp.get("date") or bolinks_output.get("date")
     if raw:
         s = str(raw).strip()
         if len(s) == 10 and s[4] == "-" and s[7] == "-":
@@ -383,16 +396,16 @@ def process_bolinks_output(bolinks_output: Dict, tenant_id: str, agent_id: str) 
     Procesa el output de bolinks y sube los PDFs a S3
     """
     try:
-        # Validar que bolinks tuvo éxito
-        if not bolinks_output.get('success', False):
+        pdf_links = flatten_bolinks_pdf_links(bolinks_output.get("pdf_links", []))
+        # Fallo duro solo si no hay PDFs y bolinks reportó error (p. ej. secciones caídas).
+        if not bolinks_output.get("success", False) and not pdf_links:
             return {
-                'success': False,
-                'error': 'Bolinks output indicates failure',
-                'bolinks_output': bolinks_output
+                "success": False,
+                "error": "Bolinks output indicates failure",
+                "bolinks_output": bolinks_output,
             }
-        
+
         # Extraer información del contexto
-        pdf_links = bolinks_output.get('pdf_links', [])
         #date = bolinks_output.get('received_params', {}).get('date', '')
         #section = bolinks_output.get('received_params', {}).get('section', 'primera')
         
