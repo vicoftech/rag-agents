@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 # BATCH_CORRIDA: anmat | boletin (ECS task definition). Opciones vía env (Terraform): BATCH_PARALLEL,
-# BATCH_TRACE_LAMBDA_PAYLOADS, BATCH_INCLUDE_ZERO_CHUNK, BATCH_NO_CREATED_AT_FILTER.
+# BATCH_TRACE_LAMBDA_PAYLOADS, BATCH_INCLUDE_ZERO_CHUNK, BATCH_NO_CREATED_AT_FILTER, BATCH_TESTING_EMAIL.
 CORRIDA="${BATCH_CORRIDA:-}"
 case "$CORRIDA" in
   anmat)  CORRIDA_ARG="anmat=scripts/anmat_map.json" ;;
@@ -15,7 +15,7 @@ OUT="/tmp/alerts_matches_prod_fullcorpus_$(date -u +%Y%m%dT%H%M%SZ).json"
 export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-us-east-1}"
 
 cd /app
-echo "entrypoint: BATCH_CORRIDA=${CORRIDA} BATCH_PARALLEL=${PARALLEL} BATCH_TRACE_LAMBDA_PAYLOADS=${BATCH_TRACE_LAMBDA_PAYLOADS:-1} BATCH_INCLUDE_ZERO_CHUNK=${BATCH_INCLUDE_ZERO_CHUNK:-0} BATCH_NO_CREATED_AT_FILTER=${BATCH_NO_CREATED_AT_FILTER:-0} output=${OUT} trace=${TRACE_PATH}" >&2
+echo "entrypoint: BATCH_CORRIDA=${CORRIDA} BATCH_PARALLEL=${PARALLEL} BATCH_TRACE_LAMBDA_PAYLOADS=${BATCH_TRACE_LAMBDA_PAYLOADS:-1} BATCH_INCLUDE_ZERO_CHUNK=${BATCH_INCLUDE_ZERO_CHUNK:-0} BATCH_NO_CREATED_AT_FILTER=${BATCH_NO_CREATED_AT_FILTER:-0} BATCH_TESTING_EMAIL=${BATCH_TESTING_EMAIL:-} output=${OUT} trace=${TRACE_PATH}" >&2
 
 set -- python3 scripts/alerts_semantic_matches.py \
   --profile "" \
@@ -35,6 +35,10 @@ fi
 
 if [ "${BATCH_INCLUDE_ZERO_CHUNK:-0}" = "1" ]; then
   set -- "$@" --include-zero-chunk-resultados
+fi
+
+if [ -n "${BATCH_TESTING_EMAIL:-}" ]; then
+  set -- "$@" --testing-email "${BATCH_TESTING_EMAIL}"
 fi
 
 exec "$@"

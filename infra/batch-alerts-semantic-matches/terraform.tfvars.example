@@ -28,3 +28,4 @@ s3_documents_bucket = "rag-documents-prod-913123310997"
 # batch_include_zero_chunk_anmat    = false
 # batch_include_zero_chunk_boletin  = false
 # batch_no_created_at_filter        = false
+# batch_testing_email               = ""   # prueba puntual: viglesias@asap-consulting.net; luego "" y apply

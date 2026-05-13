@@ -57,6 +57,7 @@ resource "aws_ecs_task_definition" "batch" {
           )
         },
         { name = "BATCH_NO_CREATED_AT_FILTER", value = var.batch_no_created_at_filter ? "1" : "0" },
+        { name = "BATCH_TESTING_EMAIL", value = var.batch_testing_email },
       ]
       logConfiguration = {
         logDriver = "awslogs"

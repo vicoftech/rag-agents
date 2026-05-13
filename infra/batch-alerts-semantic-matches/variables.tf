@@ -104,6 +104,13 @@ variable "batch_no_created_at_filter" {
   default     = false
 }
 
+variable "batch_testing_email" {
+  type        = string
+  description = "Si no vacío, el contenedor pasa --testing-email (reemplaza destinatarios en JSON/notificaciones). Vacío en prod normal."
+  default     = ""
+  sensitive   = true
+}
+
 variable "task_cpu" {
   type        = number
   description = "Unidades CPU Fargate (1024 = 1 vCPU)."
