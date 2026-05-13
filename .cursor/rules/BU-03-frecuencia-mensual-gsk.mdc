@@ -1,0 +1,65 @@
+---
+description: Mejora para cambiar a frecuencia mensual el envío de emails de búsquedas sin resultados para cuentas con dominio GSK. Aplicar al trabajar en el scheduler de notificaciones o en la lógica de frecuencia de envío.
+globs: ["**/scheduler*", "**/notification*", "**/email*", "**/search*", "**/no_results*"]
+alwaysApply: false
+---
+
+# BU-03 — Frecuencia mensual de emails de búsquedas sin resultados (dominio GSK)
+
+## Contexto del proyecto
+
+Cuando una búsqueda guardada no genera resultados en un período, el sistema
+envía un email de notificación al usuario. La frecuencia actual de este email
+no es la adecuada para usuarios del dominio GSK, que prefieren recibirlo mensualmente.
+
+## Tarea concreta
+
+1. Agregar lógica de frecuencia configurable para el envío de "sin resultados":
+   - Frecuencia por defecto para todos los tenants: la actual (diaria o semanal)
+   - Frecuencia para cuentas con dominio `@gsk.com` (o `account.domain == "gsk"`): mensual
+2. Verificar que el scheduler o la función de envío consulte la configuración de frecuencia antes de enviar
+3. Registrar el último envío de "sin resultados" por `(search_id, user_id)` para poder calcular si corresponde enviar o no
+
+## Criterios de aceptación
+
+- [ ] Usuarios con email `@gsk.com` o pertenecientes a cuenta GSK reciben el email de "sin resultados" máximo 1 vez por mes
+- [ ] La fecha del último envío de "sin resultados" queda registrada en BD
+- [ ] El resto de los usuarios mantiene la frecuencia actual sin cambios
+- [ ] La configuración de frecuencia es extensible a otros dominios/tenants sin cambios de código (config en BD o en settings)
+
+## Restricciones
+
+- NO cambiar la frecuencia de envío para tenants distintos a GSK
+- NO modificar el contenido del email de "sin resultados"
+- NO hardcodear el dominio `gsk.com` en más de un lugar del código
+
+## Patrón de referencia
+
+```python
+from datetime import datetime, timedelta
+
+# Configuración extensible (idealmente en BD o en settings por tenant)
+NO_RESULTS_EMAIL_FREQUENCY = {
+    "gsk": timedelta(days=30),    # mensual para GSK
+    "default": timedelta(days=7), # semanal para el resto
+}
+
+def should_send_no_results_email(search_id: str, user: User, last_sent_at: datetime | None) -> bool:
+    # Determinar frecuencia según el dominio del usuario
+    domain = user.email.split("@")[-1].split(".")[0]  # ej: "gsk" de "user@gsk.com"
+    frequency = NO_RESULTS_EMAIL_FREQUENCY.get(domain, NO_RESULTS_EMAIL_FREQUENCY["default"])
+
+    if last_sent_at is None:
+        return True  # nunca se envió → enviar
+
+    return datetime.utcnow() - last_sent_at >= frequency
+
+
+def process_no_results_notifications():
+    searches_without_results = get_searches_with_no_recent_results()
+    for search in searches_without_results:
+        last_sent = get_last_no_results_email_date(search.id, search.user_id)
+        if should_send_no_results_email(search.id, search.user, last_sent):
+            send_no_results_email(search)
+            update_last_no_results_email_date(search.id, search.user_id)
+```

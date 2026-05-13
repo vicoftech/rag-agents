@@ -1,0 +1,1063 @@
+{
+  "meta": {
+    "obtener_alertas_lambda": "rag_lmbd_obtener_alertas-prod",
+    "query_lambda": "rag_lmbd_query-prod",
+    "aws_profile": "asap_main",
+    "aws_region": "us-east-1",
+    "max_semantic_distance": 0.32,
+    "retrieval_limit": 50,
+    "literal_keyword_overlap": true,
+    "literal_keyword_min_length": 3,
+    "exact_chunk_keyword_filter": true,
+    "exact_keyword_substantive_min_len": 5,
+    "exact_chunk_keywords_mode": "any",
+    "json_incluye_alertas_sin_match": false,
+    "query_parallel_workers": 10,
+    "lambda_invoke_read_timeout_seconds": 420,
+    "created_at_span_days": 2,
+    "created_at_start": "2026-05-12",
+    "created_at_end": "2026-05-13",
+    "testing_email_override": true,
+    "testing_email": "viglesias@asap-consulting.net"
+  },
+  "corridas": [
+    {
+      "label": "boletin",
+      "map_file": "boletin_map.json",
+      "summary": {
+        "total_alertas_filtradas": 82,
+        "matches_ok": 82,
+        "matches_error": 0,
+        "resultados_totales_procesados": 82,
+        "resultados_con_coincidencia_documental": 3
+      },
+      "resultados": [
+        {
+          "alerta_id": 89,
+          "nombre_busqueda": "Lo que sea",
+          "palabras_de_busqueda": "desde",
+          "estado_alerta": null,
+          "descripcion_disposicion_default": null,
+          "url_disposicion_default": null,
+          "nombre_pdf_disposicion_default": null,
+          "archivo_disposicion_default": null,
+          "fecha_de_aparicion_default": null,
+          "fecha_de_publicacion_default": null,
+          "destinatarios": "{\"to\": \"viglesias@asap-consulting.net\"}",
+          "cuenta": null,
+          "mail": "viglesias@asap-consulting.net",
+          "fuente_de_informacion": 0,
+          "tenant_id_usado": "boletin",
+          "agent_id_usado": "05032266-f6e1-48cb-9248-bc116652c7c7",
+          "query_text_usada": "desde",
+          "context_items": [
+            {
+              "rank": 0,
+              "chunk_id": 518720,
+              "document_name": "20260512/segunda/aviso_segunda_20260512_segunda_120233.pdf",
+              "distance": null,
+              "chunk_text_preview": "VALLEJOS, ALICIA EMILCE 13.028.792 Vocal CARBALLO VALLEJOS, ANTONIO 30.033.390\nMANDATO: Desde 03/04/2026 hasta 03/04/2030. Corrientes, de mayo de 2026. GUSTAVO DEL\nCORAZÓN FRESNEDA Juez - JUEZ FEDERAL SUBROGANTE DE 1º INSTANCIA CORRIENTES\n \ne. 12/05/2026 N° 31110/26 v. 12/05/2026\n \nFecha de publicacion: 12/05/2026\nhttp…",
+              "object_uri_canonical": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/segunda/aviso_segunda_20260512_segunda_120233.pdf"
+            },
+            {
+              "rank": 1,
+              "chunk_id": 518610,
+              "document_name": "20260512/primera/aviso_primera_20260512_primera_120149.pdf",
+              "distance": null,
+              "chunk_text_preview": "administrativos; otorgando un plazo de CINCO (5) días hábiles administrativos, contados desde el día siguiente al\nde la última publicación efectuada, para que, quién lo considere procedente, presente por escrito, ante el ENRE, un\nproyecto alternativo de Acceso que produzca una optimización del funcionamiento técnico-ec…",
+              "object_uri_canonical": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120149.pdf"
+            },
+            {
+              "rank": 2,
+              "chunk_id": 518603,
+              "document_name": "20260512/tercera/aviso_tercera_20260512_tercera_120148.pdf",
+              "distance": null,
+              "chunk_text_preview": "sebastian.gonzalezalvez@bcra.gob.ar, daniela.dasilva@bcra.gob.ar y lucio.monetti@bcra.gob.ar.\nPRESENTACIÓN DE LAS OFERTAS: Se deberá ingresar la oferta de manera electrónica, desde el\nPortal de Proveedores del BCRA en el sitio https://ps.bcra.gob.ar, en cualquier momento desde el inicio\nde la publicación del Evento y h…",
+              "object_uri_canonical": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/tercera/aviso_tercera_20260512_tercera_120148.pdf"
+            },
+            {
+              "rank": 3,
+              "chunk_id": 518593,
+              "document_name": "20260512/primera/aviso_primera_20260512_primera_120135.pdf",
+              "distance": null,
+              "chunk_text_preview": "https://www.boletinoficial.gob.ar/#!DetalleNorma/341827/QR\n5 de 5\nARTÍCULO 4°.- Fíjase el plazo para la suscripción del Contrato de Compraventa de Acciones del objeto del\nConcurso Público Nacional e Internacional de Etapa Múltiple N° 504/2-0002-CPU25, en los términos del artículo 17\ndel Pliego Único de Bases y Condicio…",
+              "object_uri_canonical": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120135.pdf"
+            },
+            {
+              "rank": 4,
+              "chunk_id": 519112,
+              "document_name": "20260511?anexos=1/primera/aviso_primera_20260511?anexos=1_primera_120318.pdf",
+              "distance": null,
+              "chunk_text_preview": "en el artículo precedente, en los términos de la delegación efectuada por las Autoridades Sanitarias Locales\nmediante los convenios suscriptos bajo el marco de la Resoluciones Nros. 199/2004 y 3685/2022 del MINISTERIO\nDE SALUD DE LA NACIÓN.\nARTÍCULO 3º.- Establécese que la facturación de los costos fijados en la presen…",
+              "object_uri_canonical": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260511?anexos=1/primera/aviso_primera_20260511?anexos=1_primera_120318.pdf"
+            },
+            {
+              "rank": 5,
+              "chunk_id": 518609,
+              "document_name": "20260512/primera/aviso_primera_20260512_primera_120149.pdf",
+              "distance": null,
+              "chunk_text_preview": "conectará a un alimentador de 33 kV denominado (CT23), jurisdicción de la EMPRESA DISTRIBUIDORA DE\nELECTRICIDAD DE SAN LUIS SOCIEDAD ANÓNIMA (EDESAL), quien actuará en calidad de Prestador Adicional\nde la Función Técnica de Transporte (PAFTT). 2.- Disponer que la publicación ordenada en el artículo 1 de este\nActo se re…",
+              "object_uri_canonical": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120149.pdf"
+            }
+          ],
+          "matched_chunk_ids": [
+            518720,
+            518610,
+            518603,
+            518593,
+            519112,
+            518609
+          ],
+          "matched_chunk_ids_por_documento": {
+            "20260512/segunda/aviso_segunda_20260512_segunda_120233.pdf": [
+              518720
+            ],
+            "20260512/primera/aviso_primera_20260512_primera_120149.pdf": [
+              518610,
+              518609
+            ],
+            "20260512/tercera/aviso_tercera_20260512_tercera_120148.pdf": [
+              518603
+            ],
+            "20260512/primera/aviso_primera_20260512_primera_120135.pdf": [
+              518593
+            ],
+            "20260511?anexos=1/primera/aviso_primera_20260511?anexos=1_primera_120318.pdf": [
+              519112
+            ]
+          },
+          "llm_response_preview": "En el texto aparecen dos referencias claras al término **«desde»**:\n\n| Contexto | «Desde» indica… | Fecha concreta |\n|----------|----------------|----------------|\n| **Mandato** del funcionario | El período de vigencia del mandato | **03 / 04 / 2026** (hasta 03 / 04 / 2030) |\n| **Plazo de 5 días hábiles administrativos…",
+          "chunks_count": 6,
+          "documents_unique": [
+            "20260511?anexos=1/primera/aviso_primera_20260511?anexos=1_primera_120318.pdf",
+            "20260512/primera/aviso_primera_20260512_primera_120135.pdf",
+            "20260512/primera/aviso_primera_20260512_primera_120149.pdf",
+            "20260512/segunda/aviso_segunda_20260512_segunda_120233.pdf",
+            "20260512/tercera/aviso_tercera_20260512_tercera_120148.pdf"
+          ],
+          "s3_uri_por_documento": {
+            "20260511?anexos=1/primera/aviso_primera_20260511?anexos=1_primera_120318.pdf": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260511?anexos=1/primera/aviso_primera_20260511?anexos=1_primera_120318.pdf",
+            "20260512/primera/aviso_primera_20260512_primera_120135.pdf": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120135.pdf",
+            "20260512/primera/aviso_primera_20260512_primera_120149.pdf": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120149.pdf",
+            "20260512/segunda/aviso_segunda_20260512_segunda_120233.pdf": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/segunda/aviso_segunda_20260512_segunda_120233.pdf",
+            "20260512/tercera/aviso_tercera_20260512_tercera_120148.pdf": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/tercera/aviso_tercera_20260512_tercera_120148.pdf"
+          },
+          "retrieval_config": {
+            "hybrid_search": true,
+            "retrieval_limit": 50,
+            "max_semantic_distance": 0.32,
+            "semantic_fallback_top_n": 8,
+            "retrieval_sql_row_count": 50,
+            "chunks_after_similarity_gate": 12,
+            "semantic_fallback_neighbor_used": false,
+            "literal_keyword_overlap_applied": true,
+            "literal_substring_leg_sql": true,
+            "literal_weight_applied": 0.35,
+            "literal_min_chars": 3,
+            "vector_weight": 0.45,
+            "lexical_weight": 0.35,
+            "rrf_k": 60,
+            "created_at_start": "2026-05-12",
+            "created_at_end": "2026-05-13",
+            "created_at_single_day": null
+          },
+          "tiene_fuente_documental_recuperada": true,
+          "exact_keyword_chunk_filter": {
+            "keywords": [
+              "desde"
+            ],
+            "keywords_mode": "any",
+            "substantive_min_normalized_len": 5,
+            "chunks_before": 12,
+            "chunks_after": 6
+          }
+        },
+        {
+          "alerta_id": 282,
+          "nombre_busqueda": "ministerio test",
+          "palabras_de_busqueda": "ministerio",
+          "estado_alerta": null,
+          "descripcion_disposicion_default": null,
+          "url_disposicion_default": null,
+          "nombre_pdf_disposicion_default": null,
+          "archivo_disposicion_default": null,
+          "fecha_de_aparicion_default": null,
+          "fecha_de_publicacion_default": null,
+          "destinatarios": "{\"to\": \"viglesias@asap-consulting.net\"}",
+          "cuenta": null,
+          "mail": "viglesias@asap-consulting.net",
+          "fuente_de_informacion": 0,
+          "tenant_id_usado": "boletin",
+          "agent_id_usado": "05032266-f6e1-48cb-9248-bc116652c7c7",
+          "query_text_usada": "ministerio",
+          "context_items": [
+            {
+              "rank": 0,
+              "chunk_id": 518581,
+              "document_name": "20260512/primera/aviso_primera_20260512_primera_120135.pdf",
+              "distance": null,
+              "chunk_text_preview": "denominado “DGMARKET” y del Ministerio de Economía, conforme a lo establecido en el artículo 4° de la\nmencionada resolución 2090/2025 del Ministerio de Economía; asimismo, el acto de convocatoria fue difundido en\nel Sistema CONTRAT.AR.\nQue, en el marco del citado procedimiento de selección se han emitido las Circulares…",
+              "object_uri_canonical": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120135.pdf"
+            },
+            {
+              "rank": 1,
+              "chunk_id": 518578,
+              "document_name": "20260512/primera/aviso_primera_20260512_primera_120135.pdf",
+              "distance": null,
+              "chunk_text_preview": "propiedad participada.\nQue a través de los artículos 3° y 4° del citado decreto 286/2025 se instruyó a este Ministerio de Economía a\nadoptar las medidas necesarias para dar cumplimiento a la venta dispuesta por el artículo 2° de dicha norma, y se\nfacultó a dicho ministerio al dictado de las normas operativas y compleme…",
+              "object_uri_canonical": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120135.pdf"
+            },
+            {
+              "rank": 2,
+              "chunk_id": 519084,
+              "document_name": "20260511?anexos=1/primera/aviso_primera_20260511?anexos=1_primera_120313.pdf",
+              "distance": null,
+              "chunk_text_preview": "DEL MINISTERIO DE CAPITAL HUMANO\nRESUELVE:\nARTÍCULO 1°: Apruébanse los “LINEAMIENTOS GENERALES DEL SISTEMA INTEGRADO DE INFORMACIÓN\nSOCIAL (SIIS)”, que como ANEXO (IF-2026-40547326-APN-SSCTYAI#CNCPS) forman parte integrante de la\npresente resolución, por los fundamentos expuestos en los considerandos de la presente med…",
+              "object_uri_canonical": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260511?anexos=1/primera/aviso_primera_20260511?anexos=1_primera_120313.pdf"
+            },
+            {
+              "rank": 3,
+              "chunk_id": 519080,
+              "document_name": "20260511?anexos=1/primera/aviso_primera_20260511?anexos=1_primera_120313.pdf",
+              "distance": null,
+              "chunk_text_preview": "de la Administración Pública Nacional.\nQue mediante Resolución del MINISTERIO DE CAPITAL HUMANO Nº RESOL-2024-652-APN-MCH del 20 de\nseptiembre de 2024 se creó el SISTEMA INTEGRADO DE INFORMACIÓN SOCIAL (SIIS) dentro del MINISTERIO\nDE CAPITAL HUMANO con el objeto de disponer de un repositorio de bases de datos que permi…",
+              "object_uri_canonical": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260511?anexos=1/primera/aviso_primera_20260511?anexos=1_primera_120313.pdf"
+            },
+            {
+              "rank": 4,
+              "chunk_id": 518526,
+              "document_name": "20260512/primera/aviso_primera_20260512_primera_120134.pdf",
+              "distance": null,
+              "chunk_text_preview": "https://www.boletinoficial.gob.ar/#!DetalleNorma/341826/QR\n1 de 3\nMINISTERIO DE ECONOMÍA\nResolución 636/2026\nRESOL-2026-636-APN-MEC\nCiudad de Buenos Aires, 07/05/2026\nVisto el expediente EX-2026-25302232- -APN-SA#SEGEMAR, la ley 27.798 de Presupuesto General de la\nAdministración Nacional para el ejercicio 2026, los dec…",
+              "object_uri_canonical": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120134.pdf"
+            },
+            {
+              "rank": 5,
+              "chunk_id": 518572,
+              "document_name": "20260512/primera/aviso_primera_20260512_primera_120135.pdf",
+              "distance": null,
+              "chunk_text_preview": "https://www.boletinoficial.gob.ar/#!DetalleNorma/341827/QR\n1 de 5\nMINISTERIO DE ECONOMÍA\nResolución 673/2026\nRESOL-2026-673-APN-MEC\nCiudad de Buenos Aires, 08/05/2026\nVisto el expediente EX-2025-141616003- -APN-UEETATEP#MEC, las leyes 23.696 y sus modificatorias y 27.742 y\nsus modificatorias, los decretos 695 del 2 de …",
+              "object_uri_canonical": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120135.pdf"
+            },
+            {
+              "rank": 6,
+              "chunk_id": 518585,
+              "document_name": "20260512/primera/aviso_primera_20260512_primera_120135.pdf",
+              "distance": null,
+              "chunk_text_preview": "para la apertura de las ofertas económicas (Sobre N° 2).\nQue se efectuaron las correspondientes publicaciones en el sitio web oficial de la Secretaría de Energía del\nMinisterio de Economía, en el sitio https://contratar.gob.ar y en el sitio web del Banco Mundial denominado\n“DGMARKET” en atención a lo dispuesto en el ar…",
+              "object_uri_canonical": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120135.pdf"
+            },
+            {
+              "rank": 7,
+              "chunk_id": 519137,
+              "document_name": "20260512/tercera/aviso_tercera_20260512_tercera_120136.pdf",
+              "distance": null,
+              "chunk_text_preview": "ARMADA ARGENTINA\n \nLicitación Pública 0083/2026\n \nUOC: 38/38 - MINISTERIO DE DEFENSA - ARMADA ARGENTINA - HOSPITAL NAVAL BUENOS\nAIRES CIRUJANO MAYOR DOCTOR PEDRO MALLO Ejercicio: 2026 Clase: Única Nacional Modalidad:\nOrden de compra abierta Expediente N°: EX-2026-31048690- -APN-DSA#ARA Objeto: ADQUISICIÓN\nDE REACTIVOS …",
+              "object_uri_canonical": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/tercera/aviso_tercera_20260512_tercera_120136.pdf"
+            },
+            {
+              "rank": 8,
+              "chunk_id": 518662,
+              "document_name": "20260512/primera/aviso_primera_20260512_primera_120147.pdf",
+              "distance": null,
+              "chunk_text_preview": "resolución conjunta 9 del 24 de enero de 2019 de la Secretaría de Finanzas y de la Secretaría de Hacienda, ambas\ndel ex Ministerio de Hacienda (RESFC-2019-9-APN-SECH#MHA), y\nCONSIDERANDO:\nQue en el Título III de la ley 24.156 de Administración Financiera y de los Sistemas de Control del Sector Público\nNacional se regul…",
+              "object_uri_canonical": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120147.pdf"
+            },
+            {
+              "rank": 9,
+              "chunk_id": 518675,
+              "document_name": "20260512/primera/aviso_primera_20260512_primera_120147.pdf",
+              "distance": null,
+              "chunk_text_preview": "https://www.boletinoficial.gob.ar/#!DetalleNorma/341833/QR\n4 de 5\nambas del Ministerio de Economía (RESFC-2025-63-APN-SH#MEC), por hasta el monto necesario para llevar a\ncabo la operación de conversión que se aprueba a través del artículo 4° de la presente norma, que no podrá\nsuperar la suma de valor nominal original p…",
+              "object_uri_canonical": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120147.pdf"
+            },
+            {
+              "rank": 10,
+              "chunk_id": 519174,
+              "document_name": "20260512/primera/aviso_primera_20260512_primera_120145.pdf",
+              "distance": null,
+              "chunk_text_preview": "descentralizado en la órbita de la SECRETARÍA DE AGRICULTURA, GANADERÍA y PESCA del MINISTERIO DE\nECONOMÍA, ha informado que se han cumplido los requisitos exigidos por los artículos 20 y 21 de la Ley de\nSemillas y Creaciones Fitogenéticas Nº 20.247, el artículo 6º del Convenio Internacional para la Protección de las\nO…",
+              "object_uri_canonical": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120145.pdf"
+            },
+            {
+              "rank": 11,
+              "chunk_id": 518673,
+              "document_name": "20260512/primera/aviso_primera_20260512_primera_120147.pdf",
+              "distance": null,
+              "chunk_text_preview": "resolución conjunta 6 del 29 de enero de 2025 de la Secretaría de Finanzas y de la Secretaría de Hacienda, ambas\ndel Ministerio de Economía (RESFC-2025-6-APN-SH#MEC), por hasta el monto necesario para llevar a cabo la\noperación de conversión que se aprueba a través del artículo 4° de la presente norma, que no podrá sup…",
+              "object_uri_canonical": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120147.pdf"
+            },
+            {
+              "rank": 12,
+              "chunk_id": 519112,
+              "document_name": "20260511?anexos=1/primera/aviso_primera_20260511?anexos=1_primera_120318.pdf",
+              "distance": null,
+              "chunk_text_preview": "en el artículo precedente, en los términos de la delegación efectuada por las Autoridades Sanitarias Locales\nmediante los convenios suscriptos bajo el marco de la Resoluciones Nros. 199/2004 y 3685/2022 del MINISTERIO\nDE SALUD DE LA NACIÓN.\nARTÍCULO 3º.- Establécese que la facturación de los costos fijados en la presen…",
+              "object_uri_canonical": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260511?anexos=1/primera/aviso_primera_20260511?anexos=1_primera_120318.pdf"
+            },
+            {
+              "rank": 13,
+              "chunk_id": 519148,
+              "document_name": "20260512/primera/aviso_primera_20260512_primera_120138.pdf",
+              "distance": null,
+              "chunk_text_preview": "N° 26.879 y sus modificatorias, la COMISIÓN NACIONAL DE HUELLAS GENÉTICAS estará integrada por SIETE\n(7) miembros titulares y sus respectivos suplentes, de los cuales DOS (2) serán representantes del MINISTERIO\nDE SEGURIDAD NACIONAL, DOS (2) miembros de reconocida calidad académica en materia de Derecho Penal y\nDerecho…",
+              "object_uri_canonical": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120138.pdf"
+            },
+            {
+              "rank": 14,
+              "chunk_id": 518669,
+              "document_name": "20260512/primera/aviso_primera_20260512_primera_120147.pdf",
+              "distance": null,
+              "chunk_text_preview": "pesos con vencimiento 31 de mayo de 2027”, en adelante BONCAP T31Y7, emitido originalmente mediante el\nartículo 3° resolución conjunta 63 del 11 de diciembre de 2025 de la Secretaría de Finanzas y de la Secretaría de\nHacienda, ambas del Ministerio de Economía (RESFC-2025-63-APN-SH#MEC).\nQue para llevar a cabo las conve…",
+              "object_uri_canonical": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120147.pdf"
+            },
+            {
+              "rank": 15,
+              "chunk_id": 519143,
+              "document_name": "20260512?anexos=1/primera/aviso_primera_20260512?anexos=1_primera_120137.pdf",
+              "distance": null,
+              "chunk_text_preview": "N° 26.879 y sus modificatorias, la COMISIÓN NACIONAL DE HUELLAS GENÉTICAS estará integrada por SIETE\n(7) miembros titulares y sus respectivos suplentes, de los cuales DOS (2) serán representantes del MINISTERIO\nDE SEGURIDAD NACIONAL, DOS (2) miembros de reconocida calidad académica en materia de Derecho Penal y\nDerecho…",
+              "object_uri_canonical": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512?anexos=1/primera/aviso_primera_20260512?anexos=1_primera_120137.pdf"
+            }
+          ],
+          "matched_chunk_ids": [
+            518581,
+            518578,
+            519084,
+            519080,
+            518526,
+            518572,
+            518585,
+            519137,
+            518662,
+            518675,
+            519174,
+            518673,
+            519112,
+            519148,
+            518669,
+            519143
+          ],
+          "matched_chunk_ids_por_documento": {
+            "20260512/primera/aviso_primera_20260512_primera_120135.pdf": [
+              518581,
+              518578,
+              518572,
+              518585
+            ],
+            "20260511?anexos=1/primera/aviso_primera_20260511?anexos=1_primera_120313.pdf": [
+              519084,
+              519080
+            ],
+            "20260512/primera/aviso_primera_20260512_primera_120134.pdf": [
+              518526
+            ],
+            "20260512/tercera/aviso_tercera_20260512_tercera_120136.pdf": [
+              519137
+            ],
+            "20260512/primera/aviso_primera_20260512_primera_120147.pdf": [
+              518662,
+              518675,
+              518673,
+              518669
+            ],
+            "20260512/primera/aviso_primera_20260512_primera_120145.pdf": [
+              519174
+            ],
+            "20260511?anexos=1/primera/aviso_primera_20260511?anexos=1_primera_120318.pdf": [
+              519112
+            ],
+            "20260512/primera/aviso_primera_20260512_primera_120138.pdf": [
+              519148
+            ],
+            "20260512?anexos=1/primera/aviso_primera_20260512?anexos=1_primera_120137.pdf": [
+              519143
+            ]
+          },
+          "llm_response_preview": "En el texto del Boletín Oficial aparecen referencias a varios ministerios y sus competencias:\n\n| Ministerio | Resoluciones / Decretos citados | Funciones o actos relevantes en el contexto |\n|-----------|--------------------------------|--------------------------------------------|\n| **Ministerio de Economía** | Resoluc…",
+          "chunks_count": 16,
+          "documents_unique": [
+            "20260511?anexos=1/primera/aviso_primera_20260511?anexos=1_primera_120313.pdf",
+            "20260511?anexos=1/primera/aviso_primera_20260511?anexos=1_primera_120318.pdf",
+            "20260512/primera/aviso_primera_20260512_primera_120134.pdf",
+            "20260512/primera/aviso_primera_20260512_primera_120135.pdf",
+            "20260512/primera/aviso_primera_20260512_primera_120138.pdf",
+            "20260512/primera/aviso_primera_20260512_primera_120145.pdf",
+            "20260512/primera/aviso_primera_20260512_primera_120147.pdf",
+            "20260512/tercera/aviso_tercera_20260512_tercera_120136.pdf",
+            "20260512?anexos=1/primera/aviso_primera_20260512?anexos=1_primera_120137.pdf"
+          ],
+          "s3_uri_por_documento": {
+            "20260511?anexos=1/primera/aviso_primera_20260511?anexos=1_primera_120313.pdf": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260511?anexos=1/primera/aviso_primera_20260511?anexos=1_primera_120313.pdf",
+            "20260511?anexos=1/primera/aviso_primera_20260511?anexos=1_primera_120318.pdf": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260511?anexos=1/primera/aviso_primera_20260511?anexos=1_primera_120318.pdf",
+            "20260512/primera/aviso_primera_20260512_primera_120134.pdf": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120134.pdf",
+            "20260512/primera/aviso_primera_20260512_primera_120135.pdf": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120135.pdf",
+            "20260512/primera/aviso_primera_20260512_primera_120138.pdf": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120138.pdf",
+            "20260512/primera/aviso_primera_20260512_primera_120145.pdf": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120145.pdf",
+            "20260512/primera/aviso_primera_20260512_primera_120147.pdf": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120147.pdf",
+            "20260512/tercera/aviso_tercera_20260512_tercera_120136.pdf": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/tercera/aviso_tercera_20260512_tercera_120136.pdf",
+            "20260512?anexos=1/primera/aviso_primera_20260512?anexos=1_primera_120137.pdf": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512?anexos=1/primera/aviso_primera_20260512?anexos=1_primera_120137.pdf"
+          },
+          "retrieval_config": {
+            "hybrid_search": true,
+            "retrieval_limit": 50,
+            "max_semantic_distance": 0.32,
+            "semantic_fallback_top_n": 8,
+            "retrieval_sql_row_count": 50,
+            "chunks_after_similarity_gate": 16,
+            "semantic_fallback_neighbor_used": false,
+            "literal_keyword_overlap_applied": true,
+            "literal_substring_leg_sql": true,
+            "literal_weight_applied": 0.35,
+            "literal_min_chars": 3,
+            "vector_weight": 0.45,
+            "lexical_weight": 0.35,
+            "rrf_k": 60,
+            "created_at_start": "2026-05-12",
+            "created_at_end": "2026-05-13",
+            "created_at_single_day": null
+          },
+          "tiene_fuente_documental_recuperada": true,
+          "exact_keyword_chunk_filter": {
+            "keywords": [
+              "ministerio"
+            ],
+            "keywords_mode": "any",
+            "substantive_min_normalized_len": 5,
+            "chunks_before": 16,
+            "chunks_after": 16
+          }
+        },
+        {
+          "alerta_id": 249,
+          "nombre_busqueda": "oficial",
+          "palabras_de_busqueda": "oficial",
+          "estado_alerta": null,
+          "descripcion_disposicion_default": null,
+          "url_disposicion_default": null,
+          "nombre_pdf_disposicion_default": null,
+          "archivo_disposicion_default": null,
+          "fecha_de_aparicion_default": null,
+          "fecha_de_publicacion_default": null,
+          "destinatarios": "{\"to\": \"viglesias@asap-consulting.net\"}",
+          "cuenta": null,
+          "mail": "viglesias@asap-consulting.net",
+          "fuente_de_informacion": 1,
+          "tenant_id_usado": "boletin",
+          "agent_id_usado": "05032266-f6e1-48cb-9248-bc116652c7c7",
+          "query_text_usada": "oficial",
+          "context_items": [
+            {
+              "rank": 0,
+              "chunk_id": 518717,
+              "document_name": "20260512/segunda/aviso_segunda_20260512_segunda_120233.pdf",
+              "distance": null,
+              "chunk_text_preview": "Oficial de la Nación (Art. 31, Ley 23298). III) Comunicar a la Excma. Cámara Nacional Electoral y\nDirección Nacional Electoral. IV) Regístrese y notifíquese.- Partido “UNION PARA EL DESARROLLO”\nDistrito Corrientes Domicilio Sede Partidaria: Uruguay Nº 384 Fecha reconocimiento de personería\ndefinitiva: 08/06/2015.- Apod…",
+              "object_uri_canonical": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/segunda/aviso_segunda_20260512_segunda_120233.pdf"
+            },
+            {
+              "rank": 1,
+              "chunk_id": 518525,
+              "document_name": "20260512/primera/aviso_primera_20260512_primera_120133.pdf",
+              "distance": null,
+              "chunk_text_preview": "https://www.boletinoficial.gob.ar/#!DetalleNorma/341825/QR\n3 de 3\nARTÍCULO 2°.- El gasto que demande el cumplimiento de la presente medida será atendido con cargo a las\npartidas específicas de la Jurisdicción 50 - Ministerio de Economía, Entidad 603 - Superintendencia de Seguros de\nla Nación.\nARTÍCULO 3°.- Comuníquese …",
+              "object_uri_canonical": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120133.pdf"
+            },
+            {
+              "rank": 2,
+              "chunk_id": 518659,
+              "document_name": "20260512/primera/aviso_primera_20260512_primera_120144.pdf",
+              "distance": null,
+              "chunk_text_preview": "https://www.boletinoficial.gob.ar/#!DetalleNorma/341831/QR\n2 de 2\nARTÍCULO 1º.- Ordénase la inscripción en el Registro Nacional de la Propiedad de Cultivares, de este INSTITUTO\nNACIONAL DE SEMILLAS, organismo descentralizado en la órbita de la SECRETARÍA DE AGRICULTURA,\nGANADERÍA y PESCA del MINISTERIO DE ECONOMÍA, cre…",
+              "object_uri_canonical": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120144.pdf"
+            },
+            {
+              "rank": 3,
+              "chunk_id": 518641,
+              "document_name": "20260512/primera/aviso_primera_20260512_primera_120141.pdf",
+              "distance": null,
+              "chunk_text_preview": "https://www.boletinoficial.gob.ar/#!DetalleNorma/341829/QR\n3 de 3\nARTÍCULO 2°.- Abrógase la Resolución N° RESOL-2024-453-APN-PRES#SENASA del 29 de abril de 2024 del\nSERVICIO NACIONAL DE SANIDAD Y CALIDAD AGROALIMENTARIA.\nARTÍCULO 3°.- Lo dispuesto en los Artículos 1° y 2° de la presente resolución entra en vigencia a p…",
+              "object_uri_canonical": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120141.pdf"
+            },
+            {
+              "rank": 4,
+              "chunk_id": 518585,
+              "document_name": "20260512/primera/aviso_primera_20260512_primera_120135.pdf",
+              "distance": null,
+              "chunk_text_preview": "para la apertura de las ofertas económicas (Sobre N° 2).\nQue se efectuaron las correspondientes publicaciones en el sitio web oficial de la Secretaría de Energía del\nMinisterio de Economía, en el sitio https://contratar.gob.ar y en el sitio web del Banco Mundial denominado\n“DGMARKET” en atención a lo dispuesto en el ar…",
+              "object_uri_canonical": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120135.pdf"
+            },
+            {
+              "rank": 5,
+              "chunk_id": 519161,
+              "document_name": "20260512?anexos=1/primera/aviso_primera_20260512?anexos=1_primera_120137.pdf",
+              "distance": null,
+              "chunk_text_preview": "LA MINISTRA DE SEGURIDAD NACIONAL\nRESUELVE:\nARTÍCULO 1°.- Desígnanse los miembros titulares y suplentes de la COMISIÓN NACIONAL DE HUELLAS\nGENÉTICAS, creada por el 12 quater de la Ley N° 26.879 y sus modificatorias, y reglamentada por el artículo 12\nquater del Anexo I del Decreto N° 709 del 2 de octubre de 2025, de con…",
+              "object_uri_canonical": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512?anexos=1/primera/aviso_primera_20260512?anexos=1_primera_120137.pdf"
+            },
+            {
+              "rank": 6,
+              "chunk_id": 519160,
+              "document_name": "20260512/primera/aviso_primera_20260512_primera_120138.pdf",
+              "distance": null,
+              "chunk_text_preview": "LA MINISTRA DE SEGURIDAD NACIONAL\nRESUELVE:\nARTÍCULO 1°.- Desígnanse los miembros titulares y suplentes de la COMISIÓN NACIONAL DE HUELLAS\nGENÉTICAS, creada por el 12 quater de la Ley N° 26.879 y sus modificatorias, y reglamentada por el artículo 12\nquater del Anexo I del Decreto N° 709 del 2 de octubre de 2025, de con…",
+              "object_uri_canonical": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120138.pdf"
+            },
+            {
+              "rank": 7,
+              "chunk_id": 518580,
+              "document_name": "20260512/primera/aviso_primera_20260512_primera_120135.pdf",
+              "distance": null,
+              "chunk_text_preview": "Internacional de Etapa Múltiple N° 504/2-0002-CPU25; b) se aprobó el Pliego Único de Bases y Condiciones\n(PLIEG-2025141690205-APN-SE#MEC); c) se ordenó la publicación de la convocatoria; d) se fijaron pautas para el\ndesarrollo del procedimiento de selección, entre las que se encuentra el cronograma que fijó la fecha de…",
+              "object_uri_canonical": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120135.pdf"
+            }
+          ],
+          "matched_chunk_ids": [
+            518717,
+            518525,
+            518659,
+            518641,
+            518585,
+            519161,
+            519160,
+            518580
+          ],
+          "matched_chunk_ids_por_documento": {
+            "20260512/segunda/aviso_segunda_20260512_segunda_120233.pdf": [
+              518717
+            ],
+            "20260512/primera/aviso_primera_20260512_primera_120133.pdf": [
+              518525
+            ],
+            "20260512/primera/aviso_primera_20260512_primera_120144.pdf": [
+              518659
+            ],
+            "20260512/primera/aviso_primera_20260512_primera_120141.pdf": [
+              518641
+            ],
+            "20260512/primera/aviso_primera_20260512_primera_120135.pdf": [
+              518585,
+              518580
+            ],
+            "20260512?anexos=1/primera/aviso_primera_20260512?anexos=1_primera_120137.pdf": [
+              519161
+            ],
+            "20260512/primera/aviso_primera_20260512_primera_120138.pdf": [
+              519160
+            ]
+          },
+          "llm_response_preview": "**“Oficial” en el contexto del Boletín Oficial**\n\nEn los fragmentos que aparecen en el contexto, la palabra **“oficial”** se utiliza para referirse al **Boletín Oficial de la República Argentina (BORA)**, que es el medio de publicación autorizado por el Estado para dar a conocer de forma pública y legal todas las norma…",
+          "chunks_count": 8,
+          "documents_unique": [
+            "20260512/primera/aviso_primera_20260512_primera_120133.pdf",
+            "20260512/primera/aviso_primera_20260512_primera_120135.pdf",
+            "20260512/primera/aviso_primera_20260512_primera_120138.pdf",
+            "20260512/primera/aviso_primera_20260512_primera_120141.pdf",
+            "20260512/primera/aviso_primera_20260512_primera_120144.pdf",
+            "20260512/segunda/aviso_segunda_20260512_segunda_120233.pdf",
+            "20260512?anexos=1/primera/aviso_primera_20260512?anexos=1_primera_120137.pdf"
+          ],
+          "s3_uri_por_documento": {
+            "20260512/primera/aviso_primera_20260512_primera_120133.pdf": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120133.pdf",
+            "20260512/primera/aviso_primera_20260512_primera_120135.pdf": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120135.pdf",
+            "20260512/primera/aviso_primera_20260512_primera_120138.pdf": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120138.pdf",
+            "20260512/primera/aviso_primera_20260512_primera_120141.pdf": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120141.pdf",
+            "20260512/primera/aviso_primera_20260512_primera_120144.pdf": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120144.pdf",
+            "20260512/segunda/aviso_segunda_20260512_segunda_120233.pdf": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/segunda/aviso_segunda_20260512_segunda_120233.pdf",
+            "20260512?anexos=1/primera/aviso_primera_20260512?anexos=1_primera_120137.pdf": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512?anexos=1/primera/aviso_primera_20260512?anexos=1_primera_120137.pdf"
+          },
+          "retrieval_config": {
+            "hybrid_search": true,
+            "retrieval_limit": 50,
+            "max_semantic_distance": 0.32,
+            "semantic_fallback_top_n": 8,
+            "retrieval_sql_row_count": 50,
+            "chunks_after_similarity_gate": 13,
+            "semantic_fallback_neighbor_used": false,
+            "literal_keyword_overlap_applied": true,
+            "literal_substring_leg_sql": true,
+            "literal_weight_applied": 0.35,
+            "literal_min_chars": 3,
+            "vector_weight": 0.45,
+            "lexical_weight": 0.35,
+            "rrf_k": 60,
+            "created_at_start": "2026-05-12",
+            "created_at_end": "2026-05-13",
+            "created_at_single_day": null
+          },
+          "tiene_fuente_documental_recuperada": true,
+          "exact_keyword_chunk_filter": {
+            "keywords": [
+              "oficial"
+            ],
+            "keywords_mode": "any",
+            "substantive_min_normalized_len": 5,
+            "chunks_before": 13,
+            "chunks_after": 8
+          }
+        }
+      ],
+      "errors": []
+    }
+  ],
+  "notificaciones": [
+    {
+      "alerta_id": 89,
+      "corrida_label": "boletin",
+      "chunks_count": 6,
+      "message": {
+        "body_payload": {
+          "keywords": [
+            "desde"
+          ],
+          "nombreUsuario": "",
+          "nombre_alerta": "Lo que sea",
+          "url": "https://alerts.wi-soft.net/#/search/historic-search/BOLETIN_OFICIAL/desde/2026-05-12/2026-05-13"
+        },
+        "from": "wisoft.soporte@asap-consulting.net",
+        "subject": "Lo que sea",
+        "template_name": "alert_aviso",
+        "to": "viglesias@asap-consulting.net"
+      }
+    },
+    {
+      "alerta_id": 282,
+      "corrida_label": "boletin",
+      "chunks_count": 16,
+      "message": {
+        "body_payload": {
+          "keywords": [
+            "ministerio"
+          ],
+          "nombreUsuario": "",
+          "nombre_alerta": "ministerio test",
+          "url": "https://alerts.wi-soft.net/#/search/historic-search/BOLETIN_OFICIAL/ministerio/2026-05-12/2026-05-13"
+        },
+        "from": "wisoft.soporte@asap-consulting.net",
+        "subject": "ministerio test",
+        "template_name": "alert_aviso",
+        "to": "viglesias@asap-consulting.net"
+      }
+    },
+    {
+      "alerta_id": 249,
+      "corrida_label": "boletin",
+      "chunks_count": 8,
+      "message": {
+        "body_payload": {
+          "keywords": [
+            "oficial"
+          ],
+          "nombreUsuario": "",
+          "nombre_alerta": "oficial",
+          "url": "https://alerts.wi-soft.net/#/search/historic-search/BOLETIN_OFICIAL/oficial/2026-05-12/2026-05-13"
+        },
+        "from": "wisoft.soporte@asap-consulting.net",
+        "subject": "oficial",
+        "template_name": "alert_aviso",
+        "to": "viglesias@asap-consulting.net"
+      }
+    }
+  ],
+  "alert_creation_messages": [
+    {
+      "busqueda_id": 89,
+      "estado_alerta": 1,
+      "fechayhora_ocurrencia": "2026-05-13T02:34:20+00:00",
+      "disposicion": {
+        "disposicion_id": "20260511?anexos=1/primera/aviso_primera_20260511?anexos=1_primera_120318.pdf",
+        "descripcion": "Lo que sea",
+        "url": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260511?anexos=1/primera/aviso_primera_20260511?anexos=1_primera_120318.pdf",
+        "nombre_pdf": "20260511?anexos=1/primera/aviso_primera_20260511?anexos=1_primera_120318.pdf",
+        "archivo": null,
+        "fecha_de_aparicion": "2026-05-13",
+        "fecha_de_publicacion": "2026-05-13"
+      },
+      "matched_chunk_ids": [
+        519112
+      ]
+    },
+    {
+      "busqueda_id": 89,
+      "estado_alerta": 1,
+      "fechayhora_ocurrencia": "2026-05-13T02:34:20+00:00",
+      "disposicion": {
+        "disposicion_id": "20260512/primera/aviso_primera_20260512_primera_120135.pdf",
+        "descripcion": "Lo que sea",
+        "url": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120135.pdf",
+        "nombre_pdf": "20260512/primera/aviso_primera_20260512_primera_120135.pdf",
+        "archivo": null,
+        "fecha_de_aparicion": "2026-05-13",
+        "fecha_de_publicacion": "2026-05-13"
+      },
+      "matched_chunk_ids": [
+        518593
+      ]
+    },
+    {
+      "busqueda_id": 89,
+      "estado_alerta": 1,
+      "fechayhora_ocurrencia": "2026-05-13T02:34:20+00:00",
+      "disposicion": {
+        "disposicion_id": "20260512/primera/aviso_primera_20260512_primera_120149.pdf",
+        "descripcion": "Lo que sea",
+        "url": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120149.pdf",
+        "nombre_pdf": "20260512/primera/aviso_primera_20260512_primera_120149.pdf",
+        "archivo": null,
+        "fecha_de_aparicion": "2026-05-13",
+        "fecha_de_publicacion": "2026-05-13"
+      },
+      "matched_chunk_ids": [
+        518610,
+        518609
+      ]
+    },
+    {
+      "busqueda_id": 89,
+      "estado_alerta": 1,
+      "fechayhora_ocurrencia": "2026-05-13T02:34:20+00:00",
+      "disposicion": {
+        "disposicion_id": "20260512/segunda/aviso_segunda_20260512_segunda_120233.pdf",
+        "descripcion": "Lo que sea",
+        "url": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/segunda/aviso_segunda_20260512_segunda_120233.pdf",
+        "nombre_pdf": "20260512/segunda/aviso_segunda_20260512_segunda_120233.pdf",
+        "archivo": null,
+        "fecha_de_aparicion": "2026-05-13",
+        "fecha_de_publicacion": "2026-05-13"
+      },
+      "matched_chunk_ids": [
+        518720
+      ]
+    },
+    {
+      "busqueda_id": 89,
+      "estado_alerta": 1,
+      "fechayhora_ocurrencia": "2026-05-13T02:34:20+00:00",
+      "disposicion": {
+        "disposicion_id": "20260512/tercera/aviso_tercera_20260512_tercera_120148.pdf",
+        "descripcion": "Lo que sea",
+        "url": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/tercera/aviso_tercera_20260512_tercera_120148.pdf",
+        "nombre_pdf": "20260512/tercera/aviso_tercera_20260512_tercera_120148.pdf",
+        "archivo": null,
+        "fecha_de_aparicion": "2026-05-13",
+        "fecha_de_publicacion": "2026-05-13"
+      },
+      "matched_chunk_ids": [
+        518603
+      ]
+    },
+    {
+      "busqueda_id": 282,
+      "estado_alerta": 1,
+      "fechayhora_ocurrencia": "2026-05-13T02:34:20+00:00",
+      "disposicion": {
+        "disposicion_id": "20260511?anexos=1/primera/aviso_primera_20260511?anexos=1_primera_120313.pdf",
+        "descripcion": "ministerio test",
+        "url": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260511?anexos=1/primera/aviso_primera_20260511?anexos=1_primera_120313.pdf",
+        "nombre_pdf": "20260511?anexos=1/primera/aviso_primera_20260511?anexos=1_primera_120313.pdf",
+        "archivo": null,
+        "fecha_de_aparicion": "2026-05-13",
+        "fecha_de_publicacion": "2026-05-13"
+      },
+      "matched_chunk_ids": [
+        519084,
+        519080
+      ]
+    },
+    {
+      "busqueda_id": 282,
+      "estado_alerta": 1,
+      "fechayhora_ocurrencia": "2026-05-13T02:34:20+00:00",
+      "disposicion": {
+        "disposicion_id": "20260511?anexos=1/primera/aviso_primera_20260511?anexos=1_primera_120318.pdf",
+        "descripcion": "ministerio test",
+        "url": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260511?anexos=1/primera/aviso_primera_20260511?anexos=1_primera_120318.pdf",
+        "nombre_pdf": "20260511?anexos=1/primera/aviso_primera_20260511?anexos=1_primera_120318.pdf",
+        "archivo": null,
+        "fecha_de_aparicion": "2026-05-13",
+        "fecha_de_publicacion": "2026-05-13"
+      },
+      "matched_chunk_ids": [
+        519112
+      ]
+    },
+    {
+      "busqueda_id": 282,
+      "estado_alerta": 1,
+      "fechayhora_ocurrencia": "2026-05-13T02:34:20+00:00",
+      "disposicion": {
+        "disposicion_id": "20260512/primera/aviso_primera_20260512_primera_120134.pdf",
+        "descripcion": "ministerio test",
+        "url": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120134.pdf",
+        "nombre_pdf": "20260512/primera/aviso_primera_20260512_primera_120134.pdf",
+        "archivo": null,
+        "fecha_de_aparicion": "2026-05-13",
+        "fecha_de_publicacion": "2026-05-13"
+      },
+      "matched_chunk_ids": [
+        518526
+      ]
+    },
+    {
+      "busqueda_id": 282,
+      "estado_alerta": 1,
+      "fechayhora_ocurrencia": "2026-05-13T02:34:20+00:00",
+      "disposicion": {
+        "disposicion_id": "20260512/primera/aviso_primera_20260512_primera_120135.pdf",
+        "descripcion": "ministerio test",
+        "url": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120135.pdf",
+        "nombre_pdf": "20260512/primera/aviso_primera_20260512_primera_120135.pdf",
+        "archivo": null,
+        "fecha_de_aparicion": "2026-05-13",
+        "fecha_de_publicacion": "2026-05-13"
+      },
+      "matched_chunk_ids": [
+        518581,
+        518578,
+        518572,
+        518585
+      ]
+    },
+    {
+      "busqueda_id": 282,
+      "estado_alerta": 1,
+      "fechayhora_ocurrencia": "2026-05-13T02:34:20+00:00",
+      "disposicion": {
+        "disposicion_id": "20260512/primera/aviso_primera_20260512_primera_120138.pdf",
+        "descripcion": "ministerio test",
+        "url": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120138.pdf",
+        "nombre_pdf": "20260512/primera/aviso_primera_20260512_primera_120138.pdf",
+        "archivo": null,
+        "fecha_de_aparicion": "2026-05-13",
+        "fecha_de_publicacion": "2026-05-13"
+      },
+      "matched_chunk_ids": [
+        519148
+      ]
+    },
+    {
+      "busqueda_id": 282,
+      "estado_alerta": 1,
+      "fechayhora_ocurrencia": "2026-05-13T02:34:20+00:00",
+      "disposicion": {
+        "disposicion_id": "20260512/primera/aviso_primera_20260512_primera_120145.pdf",
+        "descripcion": "ministerio test",
+        "url": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120145.pdf",
+        "nombre_pdf": "20260512/primera/aviso_primera_20260512_primera_120145.pdf",
+        "archivo": null,
+        "fecha_de_aparicion": "2026-05-13",
+        "fecha_de_publicacion": "2026-05-13"
+      },
+      "matched_chunk_ids": [
+        519174
+      ]
+    },
+    {
+      "busqueda_id": 282,
+      "estado_alerta": 1,
+      "fechayhora_ocurrencia": "2026-05-13T02:34:20+00:00",
+      "disposicion": {
+        "disposicion_id": "20260512/primera/aviso_primera_20260512_primera_120147.pdf",
+        "descripcion": "ministerio test",
+        "url": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120147.pdf",
+        "nombre_pdf": "20260512/primera/aviso_primera_20260512_primera_120147.pdf",
+        "archivo": null,
+        "fecha_de_aparicion": "2026-05-13",
+        "fecha_de_publicacion": "2026-05-13"
+      },
+      "matched_chunk_ids": [
+        518662,
+        518675,
+        518673,
+        518669
+      ]
+    },
+    {
+      "busqueda_id": 282,
+      "estado_alerta": 1,
+      "fechayhora_ocurrencia": "2026-05-13T02:34:20+00:00",
+      "disposicion": {
+        "disposicion_id": "20260512/tercera/aviso_tercera_20260512_tercera_120136.pdf",
+        "descripcion": "ministerio test",
+        "url": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/tercera/aviso_tercera_20260512_tercera_120136.pdf",
+        "nombre_pdf": "20260512/tercera/aviso_tercera_20260512_tercera_120136.pdf",
+        "archivo": null,
+        "fecha_de_aparicion": "2026-05-13",
+        "fecha_de_publicacion": "2026-05-13"
+      },
+      "matched_chunk_ids": [
+        519137
+      ]
+    },
+    {
+      "busqueda_id": 282,
+      "estado_alerta": 1,
+      "fechayhora_ocurrencia": "2026-05-13T02:34:20+00:00",
+      "disposicion": {
+        "disposicion_id": "20260512?anexos=1/primera/aviso_primera_20260512?anexos=1_primera_120137.pdf",
+        "descripcion": "ministerio test",
+        "url": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512?anexos=1/primera/aviso_primera_20260512?anexos=1_primera_120137.pdf",
+        "nombre_pdf": "20260512?anexos=1/primera/aviso_primera_20260512?anexos=1_primera_120137.pdf",
+        "archivo": null,
+        "fecha_de_aparicion": "2026-05-13",
+        "fecha_de_publicacion": "2026-05-13"
+      },
+      "matched_chunk_ids": [
+        519143
+      ]
+    },
+    {
+      "busqueda_id": 249,
+      "estado_alerta": 1,
+      "fechayhora_ocurrencia": "2026-05-13T02:34:20+00:00",
+      "disposicion": {
+        "disposicion_id": "20260512/primera/aviso_primera_20260512_primera_120133.pdf",
+        "descripcion": "oficial",
+        "url": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120133.pdf",
+        "nombre_pdf": "20260512/primera/aviso_primera_20260512_primera_120133.pdf",
+        "archivo": null,
+        "fecha_de_aparicion": "2026-05-13",
+        "fecha_de_publicacion": "2026-05-13"
+      },
+      "matched_chunk_ids": [
+        518525
+      ]
+    },
+    {
+      "busqueda_id": 249,
+      "estado_alerta": 1,
+      "fechayhora_ocurrencia": "2026-05-13T02:34:20+00:00",
+      "disposicion": {
+        "disposicion_id": "20260512/primera/aviso_primera_20260512_primera_120135.pdf",
+        "descripcion": "oficial",
+        "url": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120135.pdf",
+        "nombre_pdf": "20260512/primera/aviso_primera_20260512_primera_120135.pdf",
+        "archivo": null,
+        "fecha_de_aparicion": "2026-05-13",
+        "fecha_de_publicacion": "2026-05-13"
+      },
+      "matched_chunk_ids": [
+        518585,
+        518580
+      ]
+    },
+    {
+      "busqueda_id": 249,
+      "estado_alerta": 1,
+      "fechayhora_ocurrencia": "2026-05-13T02:34:20+00:00",
+      "disposicion": {
+        "disposicion_id": "20260512/primera/aviso_primera_20260512_primera_120138.pdf",
+        "descripcion": "oficial",
+        "url": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120138.pdf",
+        "nombre_pdf": "20260512/primera/aviso_primera_20260512_primera_120138.pdf",
+        "archivo": null,
+        "fecha_de_aparicion": "2026-05-13",
+        "fecha_de_publicacion": "2026-05-13"
+      },
+      "matched_chunk_ids": [
+        519160
+      ]
+    },
+    {
+      "busqueda_id": 249,
+      "estado_alerta": 1,
+      "fechayhora_ocurrencia": "2026-05-13T02:34:20+00:00",
+      "disposicion": {
+        "disposicion_id": "20260512/primera/aviso_primera_20260512_primera_120141.pdf",
+        "descripcion": "oficial",
+        "url": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120141.pdf",
+        "nombre_pdf": "20260512/primera/aviso_primera_20260512_primera_120141.pdf",
+        "archivo": null,
+        "fecha_de_aparicion": "2026-05-13",
+        "fecha_de_publicacion": "2026-05-13"
+      },
+      "matched_chunk_ids": [
+        518641
+      ]
+    },
+    {
+      "busqueda_id": 249,
+      "estado_alerta": 1,
+      "fechayhora_ocurrencia": "2026-05-13T02:34:20+00:00",
+      "disposicion": {
+        "disposicion_id": "20260512/primera/aviso_primera_20260512_primera_120144.pdf",
+        "descripcion": "oficial",
+        "url": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120144.pdf",
+        "nombre_pdf": "20260512/primera/aviso_primera_20260512_primera_120144.pdf",
+        "archivo": null,
+        "fecha_de_aparicion": "2026-05-13",
+        "fecha_de_publicacion": "2026-05-13"
+      },
+      "matched_chunk_ids": [
+        518659
+      ]
+    },
+    {
+      "busqueda_id": 249,
+      "estado_alerta": 1,
+      "fechayhora_ocurrencia": "2026-05-13T02:34:20+00:00",
+      "disposicion": {
+        "disposicion_id": "20260512/segunda/aviso_segunda_20260512_segunda_120233.pdf",
+        "descripcion": "oficial",
+        "url": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/segunda/aviso_segunda_20260512_segunda_120233.pdf",
+        "nombre_pdf": "20260512/segunda/aviso_segunda_20260512_segunda_120233.pdf",
+        "archivo": null,
+        "fecha_de_aparicion": "2026-05-13",
+        "fecha_de_publicacion": "2026-05-13"
+      },
+      "matched_chunk_ids": [
+        518717
+      ]
+    },
+    {
+      "busqueda_id": 249,
+      "estado_alerta": 1,
+      "fechayhora_ocurrencia": "2026-05-13T02:34:20+00:00",
+      "disposicion": {
+        "disposicion_id": "20260512?anexos=1/primera/aviso_primera_20260512?anexos=1_primera_120137.pdf",
+        "descripcion": "oficial",
+        "url": "s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512?anexos=1/primera/aviso_primera_20260512?anexos=1_primera_120137.pdf",
+        "nombre_pdf": "20260512?anexos=1/primera/aviso_primera_20260512?anexos=1_primera_120137.pdf",
+        "archivo": null,
+        "fecha_de_aparicion": "2026-05-13",
+        "fecha_de_publicacion": "2026-05-13"
+      },
+      "matched_chunk_ids": [
+        519161
+      ]
+    }
+  ],
+  "sqs_publish_preview": {
+    "email_queue_name": "email-sender-record-email-processor-prod",
+    "alert_creation_queue_name": "rag-alert-creation-prod",
+    "email_send_message_body_json": [
+      "{\"alerta_id\": 89, \"corrida_label\": \"boletin\", \"chunks_count\": 6, \"message\": {\"body_payload\": {\"keywords\": [\"desde\"], \"nombreUsuario\": \"\", \"nombre_alerta\": \"Lo que sea\", \"url\": \"https://alerts.wi-soft.net/#/search/historic-search/BOLETIN_OFICIAL/desde/2026-05-12/2026-05-13\"}, \"from\": \"wisoft.soporte@asap-consulting.net\", \"subject\": \"Lo que sea\", \"template_name\": \"alert_aviso\", \"to\": \"viglesias@asap-consulting.net\"}}",
+      "{\"alerta_id\": 282, \"corrida_label\": \"boletin\", \"chunks_count\": 16, \"message\": {\"body_payload\": {\"keywords\": [\"ministerio\"], \"nombreUsuario\": \"\", \"nombre_alerta\": \"ministerio test\", \"url\": \"https://alerts.wi-soft.net/#/search/historic-search/BOLETIN_OFICIAL/ministerio/2026-05-12/2026-05-13\"}, \"from\": \"wisoft.soporte@asap-consulting.net\", \"subject\": \"ministerio test\", \"template_name\": \"alert_aviso\", \"to\": \"viglesias@asap-consulting.net\"}}",
+      "{\"alerta_id\": 249, \"corrida_label\": \"boletin\", \"chunks_count\": 8, \"message\": {\"body_payload\": {\"keywords\": [\"oficial\"], \"nombreUsuario\": \"\", \"nombre_alerta\": \"oficial\", \"url\": \"https://alerts.wi-soft.net/#/search/historic-search/BOLETIN_OFICIAL/oficial/2026-05-12/2026-05-13\"}, \"from\": \"wisoft.soporte@asap-consulting.net\", \"subject\": \"oficial\", \"template_name\": \"alert_aviso\", \"to\": \"viglesias@asap-consulting.net\"}}"
+    ],
+    "alert_creation_send_message_body_json": [
+      "{\"busqueda_id\": 89, \"estado_alerta\": 1, \"fechayhora_ocurrencia\": \"2026-05-13T02:34:20+00:00\", \"disposicion\": {\"disposicion_id\": \"20260511?anexos=1/primera/aviso_primera_20260511?anexos=1_primera_120318.pdf\", \"descripcion\": \"Lo que sea\", \"url\": \"s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260511?anexos=1/primera/aviso_primera_20260511?anexos=1_primera_120318.pdf\", \"nombre_pdf\": \"20260511?anexos=1/primera/aviso_primera_20260511?anexos=1_primera_120318.pdf\", \"archivo\": null, \"fecha_de_aparicion\": \"2026-05-13\", \"fecha_de_publicacion\": \"2026-05-13\"}, \"matched_chunk_ids\": [519112]}",
+      "{\"busqueda_id\": 89, \"estado_alerta\": 1, \"fechayhora_ocurrencia\": \"2026-05-13T02:34:20+00:00\", \"disposicion\": {\"disposicion_id\": \"20260512/primera/aviso_primera_20260512_primera_120135.pdf\", \"descripcion\": \"Lo que sea\", \"url\": \"s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120135.pdf\", \"nombre_pdf\": \"20260512/primera/aviso_primera_20260512_primera_120135.pdf\", \"archivo\": null, \"fecha_de_aparicion\": \"2026-05-13\", \"fecha_de_publicacion\": \"2026-05-13\"}, \"matched_chunk_ids\": [518593]}",
+      "{\"busqueda_id\": 89, \"estado_alerta\": 1, \"fechayhora_ocurrencia\": \"2026-05-13T02:34:20+00:00\", \"disposicion\": {\"disposicion_id\": \"20260512/primera/aviso_primera_20260512_primera_120149.pdf\", \"descripcion\": \"Lo que sea\", \"url\": \"s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120149.pdf\", \"nombre_pdf\": \"20260512/primera/aviso_primera_20260512_primera_120149.pdf\", \"archivo\": null, \"fecha_de_aparicion\": \"2026-05-13\", \"fecha_de_publicacion\": \"2026-05-13\"}, \"matched_chunk_ids\": [518610, 518609]}",
+      "{\"busqueda_id\": 89, \"estado_alerta\": 1, \"fechayhora_ocurrencia\": \"2026-05-13T02:34:20+00:00\", \"disposicion\": {\"disposicion_id\": \"20260512/segunda/aviso_segunda_20260512_segunda_120233.pdf\", \"descripcion\": \"Lo que sea\", \"url\": \"s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/segunda/aviso_segunda_20260512_segunda_120233.pdf\", \"nombre_pdf\": \"20260512/segunda/aviso_segunda_20260512_segunda_120233.pdf\", \"archivo\": null, \"fecha_de_aparicion\": \"2026-05-13\", \"fecha_de_publicacion\": \"2026-05-13\"}, \"matched_chunk_ids\": [518720]}",
+      "{\"busqueda_id\": 89, \"estado_alerta\": 1, \"fechayhora_ocurrencia\": \"2026-05-13T02:34:20+00:00\", \"disposicion\": {\"disposicion_id\": \"20260512/tercera/aviso_tercera_20260512_tercera_120148.pdf\", \"descripcion\": \"Lo que sea\", \"url\": \"s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/tercera/aviso_tercera_20260512_tercera_120148.pdf\", \"nombre_pdf\": \"20260512/tercera/aviso_tercera_20260512_tercera_120148.pdf\", \"archivo\": null, \"fecha_de_aparicion\": \"2026-05-13\", \"fecha_de_publicacion\": \"2026-05-13\"}, \"matched_chunk_ids\": [518603]}",
+      "{\"busqueda_id\": 282, \"estado_alerta\": 1, \"fechayhora_ocurrencia\": \"2026-05-13T02:34:20+00:00\", \"disposicion\": {\"disposicion_id\": \"20260511?anexos=1/primera/aviso_primera_20260511?anexos=1_primera_120313.pdf\", \"descripcion\": \"ministerio test\", \"url\": \"s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260511?anexos=1/primera/aviso_primera_20260511?anexos=1_primera_120313.pdf\", \"nombre_pdf\": \"20260511?anexos=1/primera/aviso_primera_20260511?anexos=1_primera_120313.pdf\", \"archivo\": null, \"fecha_de_aparicion\": \"2026-05-13\", \"fecha_de_publicacion\": \"2026-05-13\"}, \"matched_chunk_ids\": [519084, 519080]}",
+      "{\"busqueda_id\": 282, \"estado_alerta\": 1, \"fechayhora_ocurrencia\": \"2026-05-13T02:34:20+00:00\", \"disposicion\": {\"disposicion_id\": \"20260511?anexos=1/primera/aviso_primera_20260511?anexos=1_primera_120318.pdf\", \"descripcion\": \"ministerio test\", \"url\": \"s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260511?anexos=1/primera/aviso_primera_20260511?anexos=1_primera_120318.pdf\", \"nombre_pdf\": \"20260511?anexos=1/primera/aviso_primera_20260511?anexos=1_primera_120318.pdf\", \"archivo\": null, \"fecha_de_aparicion\": \"2026-05-13\", \"fecha_de_publicacion\": \"2026-05-13\"}, \"matched_chunk_ids\": [519112]}",
+      "{\"busqueda_id\": 282, \"estado_alerta\": 1, \"fechayhora_ocurrencia\": \"2026-05-13T02:34:20+00:00\", \"disposicion\": {\"disposicion_id\": \"20260512/primera/aviso_primera_20260512_primera_120134.pdf\", \"descripcion\": \"ministerio test\", \"url\": \"s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120134.pdf\", \"nombre_pdf\": \"20260512/primera/aviso_primera_20260512_primera_120134.pdf\", \"archivo\": null, \"fecha_de_aparicion\": \"2026-05-13\", \"fecha_de_publicacion\": \"2026-05-13\"}, \"matched_chunk_ids\": [518526]}",
+      "{\"busqueda_id\": 282, \"estado_alerta\": 1, \"fechayhora_ocurrencia\": \"2026-05-13T02:34:20+00:00\", \"disposicion\": {\"disposicion_id\": \"20260512/primera/aviso_primera_20260512_primera_120135.pdf\", \"descripcion\": \"ministerio test\", \"url\": \"s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120135.pdf\", \"nombre_pdf\": \"20260512/primera/aviso_primera_20260512_primera_120135.pdf\", \"archivo\": null, \"fecha_de_aparicion\": \"2026-05-13\", \"fecha_de_publicacion\": \"2026-05-13\"}, \"matched_chunk_ids\": [518581, 518578, 518572, 518585]}",
+      "{\"busqueda_id\": 282, \"estado_alerta\": 1, \"fechayhora_ocurrencia\": \"2026-05-13T02:34:20+00:00\", \"disposicion\": {\"disposicion_id\": \"20260512/primera/aviso_primera_20260512_primera_120138.pdf\", \"descripcion\": \"ministerio test\", \"url\": \"s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120138.pdf\", \"nombre_pdf\": \"20260512/primera/aviso_primera_20260512_primera_120138.pdf\", \"archivo\": null, \"fecha_de_aparicion\": \"2026-05-13\", \"fecha_de_publicacion\": \"2026-05-13\"}, \"matched_chunk_ids\": [519148]}",
+      "{\"busqueda_id\": 282, \"estado_alerta\": 1, \"fechayhora_ocurrencia\": \"2026-05-13T02:34:20+00:00\", \"disposicion\": {\"disposicion_id\": \"20260512/primera/aviso_primera_20260512_primera_120145.pdf\", \"descripcion\": \"ministerio test\", \"url\": \"s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120145.pdf\", \"nombre_pdf\": \"20260512/primera/aviso_primera_20260512_primera_120145.pdf\", \"archivo\": null, \"fecha_de_aparicion\": \"2026-05-13\", \"fecha_de_publicacion\": \"2026-05-13\"}, \"matched_chunk_ids\": [519174]}",
+      "{\"busqueda_id\": 282, \"estado_alerta\": 1, \"fechayhora_ocurrencia\": \"2026-05-13T02:34:20+00:00\", \"disposicion\": {\"disposicion_id\": \"20260512/primera/aviso_primera_20260512_primera_120147.pdf\", \"descripcion\": \"ministerio test\", \"url\": \"s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120147.pdf\", \"nombre_pdf\": \"20260512/primera/aviso_primera_20260512_primera_120147.pdf\", \"archivo\": null, \"fecha_de_aparicion\": \"2026-05-13\", \"fecha_de_publicacion\": \"2026-05-13\"}, \"matched_chunk_ids\": [518662, 518675, 518673, 518669]}",
+      "{\"busqueda_id\": 282, \"estado_alerta\": 1, \"fechayhora_ocurrencia\": \"2026-05-13T02:34:20+00:00\", \"disposicion\": {\"disposicion_id\": \"20260512/tercera/aviso_tercera_20260512_tercera_120136.pdf\", \"descripcion\": \"ministerio test\", \"url\": \"s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/tercera/aviso_tercera_20260512_tercera_120136.pdf\", \"nombre_pdf\": \"20260512/tercera/aviso_tercera_20260512_tercera_120136.pdf\", \"archivo\": null, \"fecha_de_aparicion\": \"2026-05-13\", \"fecha_de_publicacion\": \"2026-05-13\"}, \"matched_chunk_ids\": [519137]}",
+      "{\"busqueda_id\": 282, \"estado_alerta\": 1, \"fechayhora_ocurrencia\": \"2026-05-13T02:34:20+00:00\", \"disposicion\": {\"disposicion_id\": \"20260512?anexos=1/primera/aviso_primera_20260512?anexos=1_primera_120137.pdf\", \"descripcion\": \"ministerio test\", \"url\": \"s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512?anexos=1/primera/aviso_primera_20260512?anexos=1_primera_120137.pdf\", \"nombre_pdf\": \"20260512?anexos=1/primera/aviso_primera_20260512?anexos=1_primera_120137.pdf\", \"archivo\": null, \"fecha_de_aparicion\": \"2026-05-13\", \"fecha_de_publicacion\": \"2026-05-13\"}, \"matched_chunk_ids\": [519143]}",
+      "{\"busqueda_id\": 249, \"estado_alerta\": 1, \"fechayhora_ocurrencia\": \"2026-05-13T02:34:20+00:00\", \"disposicion\": {\"disposicion_id\": \"20260512/primera/aviso_primera_20260512_primera_120133.pdf\", \"descripcion\": \"oficial\", \"url\": \"s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120133.pdf\", \"nombre_pdf\": \"20260512/primera/aviso_primera_20260512_primera_120133.pdf\", \"archivo\": null, \"fecha_de_aparicion\": \"2026-05-13\", \"fecha_de_publicacion\": \"2026-05-13\"}, \"matched_chunk_ids\": [518525]}",
+      "{\"busqueda_id\": 249, \"estado_alerta\": 1, \"fechayhora_ocurrencia\": \"2026-05-13T02:34:20+00:00\", \"disposicion\": {\"disposicion_id\": \"20260512/primera/aviso_primera_20260512_primera_120135.pdf\", \"descripcion\": \"oficial\", \"url\": \"s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120135.pdf\", \"nombre_pdf\": \"20260512/primera/aviso_primera_20260512_primera_120135.pdf\", \"archivo\": null, \"fecha_de_aparicion\": \"2026-05-13\", \"fecha_de_publicacion\": \"2026-05-13\"}, \"matched_chunk_ids\": [518585, 518580]}",
+      "{\"busqueda_id\": 249, \"estado_alerta\": 1, \"fechayhora_ocurrencia\": \"2026-05-13T02:34:20+00:00\", \"disposicion\": {\"disposicion_id\": \"20260512/primera/aviso_primera_20260512_primera_120138.pdf\", \"descripcion\": \"oficial\", \"url\": \"s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120138.pdf\", \"nombre_pdf\": \"20260512/primera/aviso_primera_20260512_primera_120138.pdf\", \"archivo\": null, \"fecha_de_aparicion\": \"2026-05-13\", \"fecha_de_publicacion\": \"2026-05-13\"}, \"matched_chunk_ids\": [519160]}",
+      "{\"busqueda_id\": 249, \"estado_alerta\": 1, \"fechayhora_ocurrencia\": \"2026-05-13T02:34:20+00:00\", \"disposicion\": {\"disposicion_id\": \"20260512/primera/aviso_primera_20260512_primera_120141.pdf\", \"descripcion\": \"oficial\", \"url\": \"s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120141.pdf\", \"nombre_pdf\": \"20260512/primera/aviso_primera_20260512_primera_120141.pdf\", \"archivo\": null, \"fecha_de_aparicion\": \"2026-05-13\", \"fecha_de_publicacion\": \"2026-05-13\"}, \"matched_chunk_ids\": [518641]}",
+      "{\"busqueda_id\": 249, \"estado_alerta\": 1, \"fechayhora_ocurrencia\": \"2026-05-13T02:34:20+00:00\", \"disposicion\": {\"disposicion_id\": \"20260512/primera/aviso_primera_20260512_primera_120144.pdf\", \"descripcion\": \"oficial\", \"url\": \"s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/primera/aviso_primera_20260512_primera_120144.pdf\", \"nombre_pdf\": \"20260512/primera/aviso_primera_20260512_primera_120144.pdf\", \"archivo\": null, \"fecha_de_aparicion\": \"2026-05-13\", \"fecha_de_publicacion\": \"2026-05-13\"}, \"matched_chunk_ids\": [518659]}",
+      "{\"busqueda_id\": 249, \"estado_alerta\": 1, \"fechayhora_ocurrencia\": \"2026-05-13T02:34:20+00:00\", \"disposicion\": {\"disposicion_id\": \"20260512/segunda/aviso_segunda_20260512_segunda_120233.pdf\", \"descripcion\": \"oficial\", \"url\": \"s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512/segunda/aviso_segunda_20260512_segunda_120233.pdf\", \"nombre_pdf\": \"20260512/segunda/aviso_segunda_20260512_segunda_120233.pdf\", \"archivo\": null, \"fecha_de_aparicion\": \"2026-05-13\", \"fecha_de_publicacion\": \"2026-05-13\"}, \"matched_chunk_ids\": [518717]}",
+      "{\"busqueda_id\": 249, \"estado_alerta\": 1, \"fechayhora_ocurrencia\": \"2026-05-13T02:34:20+00:00\", \"disposicion\": {\"disposicion_id\": \"20260512?anexos=1/primera/aviso_primera_20260512?anexos=1_primera_120137.pdf\", \"descripcion\": \"oficial\", \"url\": \"s3://rag-documents-prod-913123310997/tenant_boletin/05032266-f6e1-48cb-9248-bc116652c7c7/documents/20260512?anexos=1/primera/aviso_primera_20260512?anexos=1_primera_120137.pdf\", \"nombre_pdf\": \"20260512?anexos=1/primera/aviso_primera_20260512?anexos=1_primera_120137.pdf\", \"archivo\": null, \"fecha_de_aparicion\": \"2026-05-13\", \"fecha_de_publicacion\": \"2026-05-13\"}, \"matched_chunk_ids\": [519161]}"
+    ],
+    "nota": "Cada string es el MessageBody de SQS SendMessage (mismo json.dumps que al publicar). notificaciones y alert_creation_messages repiten el contenido como objetos."
+  }
+}

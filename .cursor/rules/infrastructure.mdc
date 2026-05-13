@@ -1,0 +1,43 @@
+---
+description: Terraform, backends, CI batch ECR y convenciones de despliegue AWS.
+globs:
+  - "terraform/**/*.tf"
+  - "infra/**/*.tf"
+  - ".github/workflows/**/*.yml"
+alwaysApply: false
+---
+
+# Infraestructura y despliegue
+
+## Terraform (raíz `terraform/`)
+
+- **Versión:** `required_version >= 1.5.0`; providers según `terraform/main.tf` (AWS `>= 6.35.0`).
+- **Backend:** S3 + DynamoDB lock; el bloque `backend "s3"` en `main.tf` puede apuntar a una cuenta por defecto — **reconfigurar** con `-backend-config=environments/backend-<env>.hcl` antes de `plan/apply` en otra cuenta.
+- **Variables:** `terraform/environments/*.tfvars`; no commitear secretos. Usar `prod.tfvars.example` como plantilla.
+- **Workspaces:** usados en documentación (`dev`, `qa`, `prod`); alinear `terraform workspace select` con el estado remoto correcto.
+
+## Módulos
+
+- Reutilizar **`terraform/modules/lambda`**, **`aurora_postgres`**, **`s3_documents`**, etc.
+- Nuevos recursos: preferir **módulo** si hay duplicación; si no, recurso en el `.tf` apropiado con `tags = merge(local.common_tags, {...})` cuando exista `local.common_tags`.
+
+## Infra autocontenida (`infra/`)
+
+Proyectos como `infra/batch-alerts-semantic-matches/` tienen su propio `terraform init/apply` y estado (o backend dedicado según README de esa carpeta). No mezclar recursos del batch en `terraform/main.tf` sin decisión de arquitectura.
+
+## CI/CD
+
+- **GitHub Actions:** `.github/workflows/batch-alerts-semantic-docker.yml` — build Docker desde raíz con `batch/alerts-semantic-matches/Dockerfile`, push a **ECR** vía **OIDC** (`AWS_BATCH_ECR_ROLE_ARN`).
+- **Paths trigger:** cambios en `scripts/alerts_semantic_matches.py` y `batch/alerts-semantic-matches/**` (ver workflow actual).
+
+## Orden típico de operaciones
+
+1. `terraform init` (-reconfigure si cambia backend).
+2. `terraform plan -var-file=environments/<env>.tfvars`.
+3. `terraform apply` tras revisión.
+4. Para Lambdas con paquete zip: seguir `build_lambda.sh` / pipeline existente de la app.
+
+## Nombres en la nube
+
+- Incluir **entorno** (`prod`, `qa`, `dev`) en nombres de recursos donde el módulo lo exija.
+- ECR repos y clusters ECS: nombres acordados con el equipo (p. ej. `rag-batch-alerts-prod`).

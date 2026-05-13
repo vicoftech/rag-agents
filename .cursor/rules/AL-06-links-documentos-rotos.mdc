@@ -1,0 +1,88 @@
+---
+description: Spec para corregir los links a documentos ANMAT desde las alertas que no funcionan. Aplicar al trabajar en generación de URLs de documentos o en la integración con almacenamiento de archivos.
+globs: ["**/document*", "**/url*", "**/storage*", "**/s3*", "**/links*", "**/alerts*"]
+alwaysApply: false
+---
+
+# AL-06 — Links a documentos desde alertas no funcionan
+
+## Contexto del proyecto
+
+Las alertas incluyen links que deben llevar al usuario directamente al documento
+ANMAT correspondiente (PDF o página en el sitio de ANMAT). Estos documentos
+pueden estar almacenados en S3 o referenciados por URL externa.
+
+## Problema
+
+Los links hacia documentos desde las alertas no funcionan. Puede deberse a:
+- URLs mal construidas (path incorrecto, parámetros faltantes)
+- Presigned URLs de S3 expiradas o mal generadas
+- URLs externas de ANMAT que cambiaron de estructura
+- Falta de permisos en el bucket S3 para acceso público o firmado
+
+## Tarea concreta
+
+1. Identificar si los documentos se sirven desde S3 o se linkea directo a ANMAT
+2. Si es S3: verificar que las presigned URLs se generan con TTL adecuado y que el bucket permite las operaciones necesarias
+3. Si es URL externa: verificar que el patrón de URL de ANMAT no cambió
+4. Agregar validación al generar el link: si la URL es inaccesible, loggearlo y no incluir el link (mejor que un link roto)
+5. Testear el link generado con una request HEAD antes de incluirlo en el email
+
+## Criterios de aceptación
+
+- [ ] Los links en el email abren el documento correctamente
+- [ ] Las presigned URLs de S3 tienen TTL de al menos 7 días (o el período definido por el equipo)
+- [ ] Si un documento no tiene URL válida, el email lo indica claramente en lugar de mostrar un link roto
+- [ ] El campo `document_url` en BD no contiene URLs locales o de entorno de desarrollo
+
+## Restricciones
+
+- NO modificar el bucket policy de S3 sin revisión de infraestructura
+- NO hardcodear credenciales AWS en el código
+- NO cambiar el template de email en más de lo necesario para este fix
+
+## Patrón de referencia
+
+```python
+import boto3
+from botocore.exceptions import ClientError
+
+s3_client = boto3.client("s3")
+
+def generate_document_url(bucket: str, key: str, expiration_days: int = 7) -> str | None:
+    """
+    Genera una presigned URL para un documento en S3.
+    Retorna None si el objeto no existe o hay error de permisos.
+    """
+    try:
+        url = s3_client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": bucket, "Key": key},
+            ExpiresIn=expiration_days * 86400
+        )
+        return url
+    except ClientError as e:
+        logger.error(f"DOC_URL_ERROR: bucket={bucket} key={key} error={e}")
+        return None
+
+
+def build_alert_content(alert: Alert) -> dict:
+    doc_url = generate_document_url(
+        bucket=os.environ["DOCUMENTS_BUCKET"],
+        key=alert.document_s3_key
+    )
+    return {
+        "alert_id": alert.id,
+        "document_url": doc_url,  # Puede ser None → el template debe manejarlo
+        "has_document_link": doc_url is not None,
+    }
+```
+
+```html
+<!-- En el template: manejar el caso sin URL -->
+{% if has_document_link %}
+  <a href="{{ document_url }}">Ver Documento</a>
+{% else %}
+  <p>El documento no está disponible en este momento.</p>
+{% endif %}
+```

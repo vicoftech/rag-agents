@@ -1,0 +1,51 @@
+---
+description: Cómo y dónde escribir tests en este monorepo Python multi-Lambda.
+globs:
+  - "**/test_*.py"
+  - "**/tests/**/*.py"
+  - "**/tests_unit/**/*.py"
+  - "**/*_test.py"
+alwaysApply: false
+---
+
+# Testing
+
+## Frameworks
+
+- **`pytest`** donde exista `pytest.ini` (p. ej. `apps/agent`).
+- Otras apps usan **`pytest`** o tests ejecutables como script en archivos `test_*.py` / `tests_unit/`; al añadir tests, **replicar el estilo de la misma carpeta `apps/<lambda>/`**.
+
+## Ubicación
+
+| Tipo | Ubicación típica |
+|------|------------------|
+| Unit | `apps/<lambda>/tests_unit/`, `test_unit.py`, `tests/unit/` |
+| Handler / integración ligera | `test_handler.py` al lado del handler |
+| Transversal | `tests/` en raíz |
+
+## Convenciones
+
+- Nombres: `test_<funcionalidad>.py`; clases `Test*` si se usan clases de test.
+- **Marcadores** (`apps/agent/pytest.ini`): `unit`, `integration`, `slow` — usarlos para filtrar en CI local.
+- **Mocks:** boto3 clients (S3, Bedrock, Lambda) con `unittest.mock` o fixtures pytest; no llamar AWS real en unit tests.
+
+## Cobertura
+
+No hay umbral global documentado. Añadir tests que cubran **regresiones** y **ramas críticas** (validación de entrada, parsing de respuestas Bedrock, filtros `created_at`, etc.).
+
+## Esqueleto pytest
+
+```python
+import pytest
+
+@pytest.mark.unit
+def test_normalize_rejects_empty():
+    from mymodule import normalize
+    with pytest.raises(ValueError):
+        normalize("")
+```
+
+## Qué no hacer
+
+- Tests que dependan del orden global o de credenciales en `~/.aws` sin marcar `integration` o `slow`.
+- Duplicar suites enteras entre `tests_unit/` y `tests/` sin motivo.

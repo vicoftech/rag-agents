@@ -1,0 +1,87 @@
+---
+description: Spec de análisis y estimación para incorporar dos nuevas fuentes de información: Trámites a Distancia (TAD) y Noticias ANMAT. No implica implementación inmediata sino una estimación de esfuerzo.
+globs: ["**/sources*", "**/connectors*", "**/scrapers*", "**/ingestion*", "**/tad*", "**/noticias*"]
+alwaysApply: false
+---
+
+# CD-02 — Estimación de plazos: nuevas fuentes TAD y Noticias ANMAT
+
+## Contexto del proyecto
+
+Un nuevo cliente solicitó la incorporación de dos nuevas fuentes de información:
+1. **Trámites a Distancia (TAD)**: fuente seleccionable para el sistema de ALERTAS
+2. **Noticias ANMAT**: gadget/widget que muestra las últimas noticias publicadas por ANMAT
+
+No se pide implementación inmediata sino una **estimación de esfuerzo y plazos** para planificar.
+
+## Tarea concreta
+
+Realizar un análisis técnico de ambas fuentes y documentar:
+
+### 1. TAD (Trámites a Distancia)
+
+- Investigar si TAD tiene API pública o si requiere scraping
+  - URL base: `https://tramitesadistancia.gob.ar`
+  - Verificar si hay un endpoint de búsqueda o feed de novedades
+- Estimar el volumen de documentos/trámites disponibles
+- Evaluar si el pipeline de ingesta actual (download → chunk → embed → index) es reutilizable para TAD
+- Identificar qué campos son relevantes: título, descripción, organismo, fecha, URL del trámite
+- Estimar tiempo de desarrollo:
+  - Conector/scraper para TAD
+  - Adaptación del pipeline de ingesta
+  - UI para que el usuario pueda seleccionar TAD como fuente de alertas
+
+### 2. Noticias ANMAT
+
+- Identificar el feed de noticias de ANMAT:
+  - RSS si existe: `https://www.anmat.gov.ar/rss` o similar
+  - API pública o scraping de la sección de noticias
+- Evaluar frecuencia de actualización (¿diaria? ¿tiempo real?)
+- Diseñar el gadget/widget: ¿dónde vive en la UI? ¿cómo se actualiza?
+- Estimar tiempo de desarrollo:
+  - Conector de noticias ANMAT
+  - Endpoint de API para el frontend
+  - Componente de UI del gadget
+
+## Criterios de aceptación (del análisis, no de la implementación)
+
+- [ ] Documento de estimación con desglose de tareas y horas por cada fuente
+- [ ] Identificados los riesgos técnicos principales (ej: TAD no tiene API pública → depende de scraping frágil)
+- [ ] Propuesta de arquitectura para cada fuente (diagrama de flujo básico)
+- [ ] Timeline estimado con hitos: `[semana X] Conector listo`, `[semana Y] Pipeline integrado`, etc.
+- [ ] Confirmación de si TAD usa estructura compatible con pgvector o requiere adaptaciones
+
+## Preguntas a resolver antes de estimar
+
+```
+1. ¿TAD tiene API REST pública o requiere scraping?
+2. ¿Qué tipos de trámites son relevantes para el cliente? (¿todos o un subconjunto?)
+3. ¿El gadget de Noticias ANMAT es solo lectura o también genera alertas?
+4. ¿Hay un SLA de tiempo de respuesta prometido al cliente nuevo?
+5. ¿Se puede reutilizar el mismo modelo de embeddings para TAD o requiere fine-tuning?
+```
+
+## Template de estimación
+
+```markdown
+## Estimación TAD
+
+| Tarea | Responsable | Días estimados | Riesgo |
+|-------|-------------|----------------|--------|
+| Análisis de fuente TAD (API vs scraping) | TBD | 1d | Bajo |
+| Conector/scraper TAD | TBD | 3-5d | Medio |
+| Adaptación pipeline ingesta | TBD | 2d | Bajo |
+| UI: selector de fuente TAD en alertas | TBD | 2d | Bajo |
+| Testing y QA | TBD | 1d | Bajo |
+| **Total TAD** | | **9-11 días** | |
+
+## Estimación Noticias ANMAT
+
+| Tarea | Responsable | Días estimados | Riesgo |
+|-------|-------------|----------------|--------|
+| Análisis feed/RSS ANMAT | TBD | 0.5d | Bajo |
+| Conector de noticias | TBD | 1-2d | Bajo |
+| Endpoint API para gadget | TBD | 1d | Bajo |
+| Componente UI gadget | TBD | 2d | Bajo |
+| **Total Noticias ANMAT** | | **4-5 días** | |
+```

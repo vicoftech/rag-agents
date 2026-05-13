@@ -1,0 +1,31 @@
+---
+description: Qué es rag-agents, dominio de negocio y prioridades para decisiones de código e infra.
+alwaysApply: true
+---
+
+# Producto — rag-agents
+
+## Propósito
+
+Repositorio de **agentes y pipelines RAG** sobre documentos en **AWS**: ingesta (PDF → chunks/embeddings), búsqueda semántica e híbrida (vectores + texto), respuestas con LLM, flujos por fuente (p. ej. ANMAT, boletín oficial), **alertas por búsqueda** y jobs batch (p. ej. `alerts_semantic_matches` en ECS Fargate).
+
+## Usuarios típicos
+
+- Equipos internos / producto que operan **documentación regulada o sectorial** y necesitan **monitoreo por palabras clave** y notificaciones.
+- Desarrolladores que despliegan y mantienen **Lambdas**, **Terraform** y **jobs programados**.
+
+## Alcance funcional (alto nivel)
+
+- **Corpus documental** en S3, metadatos y vectores en **Aurora PostgreSQL (pgvector)**.
+- **Consulta** vía Lambdas (p. ej. `rag_lmbd_query`) y APIs HTTP donde aplique.
+- **Alertas y colas** (SQS, notificaciones) para acciones posteriores a coincidencias.
+
+## Compliance y datos sensibles (confirmar con el equipo)
+
+No hay en el repo un requisito explícito tipo HIPAA/SOC2/PCI. Si el despliegue atiende **normativa sectorial** o **PII**, documentarlo aquí y reflejarlo en `security.mdc` (retención de logs, campos prohibidos en logs, residencia de datos).
+
+## Prioridad en cambios
+
+1. **Correctitud** del pipeline RAG y de los datos (no degradar retrieval ni permisos).
+2. **Costo y latencia** (Bedrock, concurrencia Lambda, batch paralelo vs carga en Aurora).
+3. **Operabilidad** (Terraform idempotente, CI de imagen batch, observabilidad en CloudWatch).

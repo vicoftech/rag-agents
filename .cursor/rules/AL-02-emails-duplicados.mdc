@@ -1,0 +1,64 @@
+---
+description: Spec para corregir el envío de emails duplicados de una misma alerta usando distintos templates. Aplicar al trabajar en el pipeline de envío de notificaciones o en la gestión de templates de email.
+globs: ["**/email*", "**/notification*", "**/mailer*", "**/templates*", "**/send*"]
+alwaysApply: false
+---
+
+# AL-02 — Emails duplicados de alertas
+
+## Contexto del proyecto
+
+Sistema de alertas ANMAT que notifica por email a usuarios cuando hay matches semánticos
+con sus búsquedas guardadas. Cada alerta debe generar exactamente un email por destinatario.
+
+## Problema
+
+Los usuarios reciben múltiples emails de la misma alerta, y cada uno usa un template
+distinto. Esto indica que el proceso de envío se está ejecutando más de una vez por alerta,
+o que hay múltiples rutas de código que disparan el envío para el mismo evento.
+
+## Tarea concreta
+
+Identificar y corregir la causa raíz de la duplicación:
+
+1. Auditar todos los puntos del código donde se llama a la función de envío de email
+2. Implementar un mecanismo de idempotencia: registrar cada envío con `(alert_id, user_id, sent_at_date)` y verificar antes de enviar
+3. Si el registro ya existe para el día, omitir el envío y loggearlo
+4. Unificar los templates: una alerta → un template. Eliminar rutas de código que usen templates alternativos para el mismo tipo de alerta
+
+## Criterios de aceptación
+
+- [ ] Existe una tabla o registro de emails enviados con al menos `(alert_id, recipient_id, template_name, sent_at)`
+- [ ] Antes de cada envío se verifica que no exista un registro previo para esa combinación en el mismo día
+- [ ] El sistema solo tiene un template activo por tipo de alerta
+- [ ] Un usuario no puede recibir más de un email por alerta por día
+- [ ] Los duplicados omitidos se registran en el log con nivel WARNING
+
+## Restricciones
+
+- NO modificar el contenido de los templates existentes (solo consolidar cuál usar)
+- NO cambiar la estructura de la tabla de alertas
+- NO alterar el scheduler de ejecución
+
+## Patrón de referencia
+
+```python
+def send_alert_email(alert_id: str, recipient_id: str, template: str) -> bool:
+    # Verificar idempotencia antes de enviar
+    already_sent = db.query(
+        "SELECT 1 FROM alert_emails_sent WHERE alert_id = %s AND recipient_id = %s AND sent_date = CURRENT_DATE",
+        (alert_id, recipient_id)
+    ).fetchone()
+
+    if already_sent:
+        logger.warning(f"SKIP_DUPLICATE: alert={alert_id} recipient={recipient_id} ya enviado hoy")
+        return False
+
+    # Enviar y registrar
+    _send_via_ses(recipient_id, template, alert_id)
+    db.execute(
+        "INSERT INTO alert_emails_sent (alert_id, recipient_id, template_name, sent_date) VALUES (%s, %s, %s, CURRENT_DATE)",
+        (alert_id, recipient_id, template)
+    )
+    return True
+```

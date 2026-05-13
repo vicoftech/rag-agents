@@ -1,0 +1,54 @@
+---
+description: Estilo Python, naming y patrones alineados con el código existente del repo.
+alwaysApply: true
+---
+
+# Convenciones de código
+
+## Idioma y comentarios
+
+- Comentarios y mensajes de usuario/log **en español** cuando el archivo ya usa ese idioma; no mezclar inglés arbitrario en el mismo módulo sin motivo.
+- Docstrings útiles en APIs públicas y flujos no obvios; evitar ruido en getters triviales.
+
+## Python
+
+- **Tipado:** preferir `from __future__ import annotations` y hints (`dict[str, Any]`, `| None`) donde ya se usen en el archivo.
+- **Imports:** stdlib → terceros → locales; sin importaciones circulares.
+- **Errores:** en Lambdas HTTP, devolver cuerpo JSON con `statusCode` y mensaje claro; no tragar excepciones sin log en handlers.
+
+## Formato
+
+- No hay **ruff/black** global en raíz: **seguir el archivo tocado** (indentación, comillas, longitud de línea).
+- Cuatro espacios de indentación; evitar tabs.
+
+## Naming
+
+- Funciones y variables: **`snake_case`**.
+- Constantes de módulo: **`MAYUS_CON_GUIONES`** solo si el archivo ya lo hace para env vars.
+- Clases: **`PascalCase`** si aparecen (p. ej. clientes SDK).
+
+## Patrones Lambda (handler)
+
+```python
+def handler(event, context):
+    # Normalizar event (API Gateway vs invoke directo)
+    # Validar entrada temprano → 400 con JSON
+    # Llamar lógica principal
+    return {"statusCode": 200, "body": json.dumps({...})}
+```
+
+## Anti‑patrones
+
+- **No** refactors masivos “de paso” en el mismo PR que un bugfix.
+- **No** secretos, passwords ni ARNs de secretos reales en código commiteado.
+- **No** duplicar la misma query SQL en tres sitios; extraer con cuidado si reduce riesgo.
+
+## Ejemplo mínimo de cambio acotado
+
+```python
+# Correcto: una función pequeña, tipada, testeable
+def normalize_query(q: str | None) -> str:
+    if not q or not str(q).strip():
+        raise ValueError("query vacía")
+    return str(q).strip()
+```

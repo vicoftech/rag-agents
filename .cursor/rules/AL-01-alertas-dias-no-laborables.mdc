@@ -1,0 +1,58 @@
+---
+description: Spec para corregir alertas erróneas que se disparan en días no laborables (sábados, domingos). Aplicar al trabajar en schedulers, lógica de ejecución o filtros de alertas.
+globs: ["**/scheduler*", "**/alerts*", "**/tasks*", "**/cron*", "**/celery*", "**/prefect*"]
+alwaysApply: false
+---
+
+# AL-01 — Alertas erróneas en días no laborables
+
+## Contexto del proyecto
+
+Sistema de alertas ANMAT que notifica a usuarios cuando aparecen disposiciones relevantes.
+Las alertas deben dispararse únicamente en días laborables (lunes a viernes), nunca en fines de semana.
+
+## Problema
+
+Se recibieron múltiples alertas erróneas que no correspondían a disposiciones del día,
+incluyendo ejecuciones en sábado y domingo. Esto genera ruido para los usuarios y
+desconfianza en el sistema.
+
+## Tarea concreta
+
+Corregir la lógica de scheduling y filtrado para que:
+
+- Las ejecuciones programadas solo ocurran de lunes a viernes
+- Si el scheduler se ejecuta un sábado o domingo (por error o desfase), aborte inmediatamente sin procesar ni enviar alertas
+- Los logs registren explícitamente cuando una ejecución es omitida por ser día no laborable
+- Los filtros de disposiciones validen que la fecha del documento corresponda al día hábil actual, no a días anteriores
+
+## Criterios de aceptación
+
+- [ ] El scheduler tiene una guard que verifica `weekday()` antes de procesar
+- [ ] Ninguna alerta se genera si `datetime.today().weekday() >= 5`
+- [ ] El log emite `SKIP: ejecución en día no laborable ({fecha}, {día})` cuando se omite
+- [ ] Los documentos procesados tienen fecha igual o posterior al último día hábil
+
+## Restricciones
+
+- NO modificar la lógica de matching semántico de alertas
+- NO cambiar el esquema de la tabla de alertas en la base de datos
+- NO alterar el flujo de envío de emails (solo el trigger de ejecución)
+
+## Patrón de referencia
+
+```python
+from datetime import datetime
+
+def should_run_today() -> bool:
+    today = datetime.today()
+    if today.weekday() >= 5:  # 5=Saturday, 6=Sunday
+        logger.info(f"SKIP: ejecución en día no laborable ({today.strftime('%Y-%m-%d')}, {today.strftime('%A')})")
+        return False
+    return True
+
+def run_alert_pipeline():
+    if not should_run_today():
+        return
+    # ... resto del pipeline
+```

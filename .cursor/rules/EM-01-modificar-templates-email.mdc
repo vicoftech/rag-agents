@@ -1,0 +1,94 @@
+---
+description: Spec para modificar el contenido de los templates de email actualmente en uso. Aplicar al trabajar en templates HTML de emails o en el sistema de notificaciones.
+globs: ["**/templates/**/*.html", "**/email*", "**/mailer*", "**/notification*"]
+alwaysApply: false
+---
+
+# EM-01 — Modificar contenido de emails actualmente enviados
+
+## Contexto del proyecto
+
+El sistema envía varios tipos de emails a los usuarios: alertas encontradas,
+búsquedas sin resultados, notificaciones de cuenta, etc. Los templates actuales
+requieren ajustes de contenido.
+
+## Tarea concreta
+
+1. Identificar y listar todos los templates de email activos en el sistema
+2. Documentar los cambios específicos requeridos por cada template (a definir con el equipo de producto)
+3. Aplicar los cambios en los archivos de template correspondientes
+4. Verificar que los cambios se renderizan correctamente en los principales clientes de mail (Gmail, Outlook)
+5. Si hay variables dinámicas en el template, verificar que siguen siendo correctamente pasadas desde el código
+
+## Criterios de aceptación
+
+- [ ] Los templates actualizados están aprobados por el equipo de producto antes del deploy
+- [ ] Los cambios son solo de contenido: no se modifica la lógica de envío
+- [ ] Los templates se ven correctamente en Gmail y Outlook (probar con herramienta tipo Litmus o envío manual)
+- [ ] No hay variables `{{ undefined }}` ni placeholders vacíos en los emails enviados
+- [ ] Los templates tienen un subject de email actualizado si corresponde
+
+## Restricciones
+
+- NO modificar la lógica de envío de emails
+- NO cambiar los nombres de las variables de contexto del template sin actualizar el código que las pasa
+- NO eliminar secciones del template sin aprobación del equipo de producto
+
+## Inventario de templates a revisar
+
+> Completar esta lista con los archivos reales del proyecto antes de iniciar:
+
+```
+templates/
+├── email/
+│   ├── alert_notification.html      # Email de alerta encontrada
+│   ├── no_results_notification.html # Email de búsqueda sin resultados
+│   ├── welcome.html                 # Email de bienvenida (si existe)
+│   └── ...
+```
+
+## Patrón de referencia
+
+```html
+<!-- Estructura base de template de email compatible con la mayoría de clientes -->
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ email_subject }}</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f4f4f4;">
+  <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+    <tr>
+      <td align="center" style="padding: 20px 0;">
+        <table role="presentation" cellpadding="0" cellspacing="0" width="600" style="background-color: #ffffff; border-radius: 8px;">
+          <!-- Header -->
+          <tr>
+            <td style="padding: 24px; background-color: #1a1a2e; border-radius: 8px 8px 0 0;">
+              <h1 style="color: #ffffff; margin: 0; font-size: 20px;">{{ email_title }}</h1>
+            </td>
+          </tr>
+          <!-- Body -->
+          <tr>
+            <td style="padding: 24px;">
+              {{ email_body_content }}
+            </td>
+          </tr>
+          <!-- CTA Button -->
+          <tr>
+            <td style="padding: 0 24px 24px;">
+              <a href="{{ cta_url }}" style="display: inline-block; padding: 12px 24px; background-color: #0066cc; color: #ffffff; text-decoration: none; border-radius: 4px;">
+                {{ cta_label }}
+              </a>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+```
+
+> **Nota**: Antes de modificar cualquier template, hacer un backup del archivo original y registrar el cambio en el PR con capturas del antes/después.

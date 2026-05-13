@@ -1,0 +1,51 @@
+---
+description: Layout del monorepo, límites entre apps y dónde colocar código nuevo.
+alwaysApply: true
+---
+
+# Estructura del proyecto
+
+## Raíz
+
+```
+apps/                    # Una carpeta por Lambda (rag_lmbd_* , agent)
+batch/                   # Dockerfile + entrypoint del job ECS batch
+infra/                   # Terraform autocontenido (p. ej. batch ECS + scheduler)
+scripts/                 # Scripts operativos y alerts_semantic_matches.py
+terraform/               # IaC principal: Lambdas, VPC endpoints, S3, API, etc.
+tests/                   # Tests transversales (p. ej. hybrid search)
+.github/workflows/       # CI (p. ej. build/push imagen batch)
+terraform/bootstrap/     # Bucket estado + locks (una vez por cuenta)
+terraform/modules/       # Módulos reutilizables (lambda, aurora, s3, …)
+terraform/environments/  # tfvars y backend-*.hcl por cuenta/entorno
+```
+
+## Convención `apps/rag_lmbd_<nombre>/`
+
+- **`index.py`**: handler principal de Lambda (entrada event/context).
+- **`requirements.txt`**: dependencias aisladas de esa función.
+- **`lib/`**: utilidades compartidas dentro de la misma Lambda.
+- **Tests**: `test_*.py`, `test_handler.py`, o `tests_unit/` según la app existente.
+- **Build**: scripts tipo `build_lambda.sh` si la app los define.
+
+No mezclar lógica de una Lambda en otra carpeta; si hay código común real, valorar paquete interno o capa Lambda (decisión de equipo), no imports cruzados frágiles entre `apps/*`.
+
+## `scripts/`
+
+Scripts de línea de comandos y utilidades. **`alerts_semantic_matches.py`** es el batch principal invocado desde ECS; mantener compatibilidad con flags documentados en el docstring del archivo.
+
+## `terraform/` vs `infra/`
+
+- **`terraform/`**: stack “core” RAG (Lambdas, redes, endpoints, etc.).
+- **`infra/<subproyecto>/`**: stacks acotados (p. ej. solo batch ECS + ECR + scheduler). No duplicar recursos ya gestionados en root sin coordinación.
+
+## Nombres
+
+- Funciones Lambda en AWS: patrón `rag_lmbd_<servicio>-<env>` (sufijo `prod`/`qa`/`dev` desde `var.environment`).
+- Recursos Terraform: prefijos con `var.project_name` / `var.environment` donde aplique el módulo.
+
+## Nuevos archivos
+
+- Nueva Lambda → nueva carpeta bajo `apps/` con el mismo patrón que hermanas.
+- Nueva regla de negocio batch → `scripts/` o `batch/` según sea solo script vs imagen.
+- Nuevo recurso cloud compartido → `terraform/` (o módulo en `terraform/modules/`).

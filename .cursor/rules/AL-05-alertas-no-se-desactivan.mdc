@@ -1,0 +1,74 @@
+---
+description: Spec para corregir el flujo de actualización de estado de alertas que no se desactivan correctamente luego de dispararse. Aplicar al trabajar en el ciclo de vida de alertas o actualizaciones de estado.
+globs: ["**/alerts*", "**/status*", "**/state*", "**/pipeline*"]
+alwaysApply: false
+---
+
+# AL-05 — Alertas que no se desactivan luego de dispararse
+
+## Contexto del proyecto
+
+Las alertas en el sistema tienen un ciclo de vida. Una vez que se disparan
+(se envía el email de notificación), su estado debe actualizarse para reflejar
+que ya fueron procesadas. Si esto no ocurre, la alerta puede volver a dispararse
+en la próxima ejecución del scheduler, generando envíos repetidos.
+
+## Problema
+
+Las alertas no se desactivan correctamente luego de dispararse. El flujo de
+actualización de estado post-envío está fallando silenciosamente o simplemente
+no existe para algún caso.
+
+## Tarea concreta
+
+1. Identificar cuál es el estado esperado de una alerta luego de dispararse (ej: `FIRED`, `INACTIVE`, `SENT`)
+2. Verificar que el pipeline de alertas actualiza el estado de cada alerta procesada **después** de confirmar el envío del email
+3. Asegurarse de que la actualización de estado ocurre dentro de la misma transacción que el registro del envío, o que existe un mecanismo de rollback si el update falla
+4. Verificar que el scheduler filtra alertas ya disparadas (por estado o por fecha de último disparo)
+
+## Criterios de aceptación
+
+- [ ] Después de procesar una alerta, su estado en BD es `FIRED` (o el estado correspondiente)
+- [ ] El scheduler no vuelve a procesar alertas en estado `FIRED` en la misma jornada
+- [ ] Si el envío falla, el estado NO se actualiza (se mantiene pendiente para reintento)
+- [ ] El campo `last_fired_at` o equivalente se actualiza con el timestamp del disparo
+- [ ] Existe un log de nivel INFO: `ALERT_FIRED: alert_id={id} status actualizado a FIRED`
+
+## Restricciones
+
+- NO modificar la lógica de matching semántico
+- NO cambiar el esquema de alertas sin coordinar con el equipo
+- NO desactivar alertas que fallaron en el envío
+
+## Patrón de referencia
+
+```python
+def process_and_fire_alert(alert: Alert, recipients: list[str]) -> bool:
+    try:
+        # 1. Enviar emails
+        for recipient in recipients:
+            send_alert_email(alert.id, recipient, template="alert_notification")
+
+        # 2. Solo actualizar estado si el envío fue exitoso
+        db.execute(
+            "UPDATE alerts SET status = 'FIRED', last_fired_at = NOW() WHERE id = %s",
+            (alert.id,)
+        )
+        logger.info(f"ALERT_FIRED: alert_id={alert.id} status actualizado a FIRED")
+        return True
+
+    except Exception as e:
+        logger.error(f"ALERT_SEND_FAILED: alert_id={alert.id} error={e}")
+        return False  # El status NO se actualiza → reintento en próxima ejecución
+
+
+def get_pending_alerts() -> list[Alert]:
+    # El scheduler solo trae alertas que no se dispararon hoy
+    return db.query(
+        """
+        SELECT * FROM alerts
+        WHERE status = 'ACTIVE'
+          AND (last_fired_at IS NULL OR last_fired_at::date < CURRENT_DATE)
+        """
+    ).fetchall()
+```

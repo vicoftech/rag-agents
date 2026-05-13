@@ -1,0 +1,36 @@
+---
+description: Secretos, auth, logs y datos sensibles en Lambdas, scripts y Terraform.
+alwaysApply: true
+---
+
+# Seguridad
+
+## Secretos y credenciales
+
+- **Nunca** commitear passwords, API keys, tokens ni `terraform.tfvars` con secretos reales.
+- Usar **Secrets Manager** (`DB_SECRET_ID`, etc.) o variables de entorno inyectadas por Terraform/CI, no literales en código.
+- Perfiles AWS (`aws_profile`) solo en tfvars de ejemplo o documentación; la cuenta efectiva debe quedar clara en comentarios de deploy.
+
+## Autenticación y autorización
+
+- APIs expuestas: respetar **Cognito / JWT** según la configuración existente en `terraform/`.
+- Lambdas con **resource policies** y roles IAM mínimos (principio de menor privilegio).
+
+## Logs y observabilidad
+
+- No loguear: **passwords**, **secret strings completos**, **tokens de sesión**, **PII innecesaria** (emails completos salvo que sea requerido y acordado).
+- OK: `request_id`, `tenant_id`, ids de recurso, conteos, duraciones, mensajes de error **sin** datos sensibles.
+
+## Entrada y datos
+
+- Validar y normalizar **entrada externa** (query strings, JSON body, paths S3) antes de SQL o llamadas a Bedrock.
+- SQL: **parametrizado** (`%s` con psycopg2); prohibido concatenar SQL con valores de usuario.
+
+## Red
+
+- Lambdas en VPC: security groups y rutas documentados en Terraform; no abrir `0.0.0.0/0` **ingress** sin revisión explícita.
+- VPC endpoints (S3, ECR, Logs, etc.) cuando subnets privadas lo requieran.
+
+## Compliance (pendiente de confirmación)
+
+Si aplica GDPR/HIPAA u otra norma, añadir aquí: retención de logs, cifrado obligatorio, campos prohibidos en exports. Hasta entonces, tratar **datos de salud o personales** como sensibles por defecto.

@@ -1,0 +1,1404 @@
+{
+  "lambda_invoke_trace": [
+    {
+      "seq": 1,
+      "kind": "rag_lmbd_obtener_alertas",
+      "function": "rag_lmbd_obtener_alertas-prod",
+      "payload": {}
+    },
+    {
+      "seq": 2,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "Axatilimab, Knight",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 18
+    },
+    {
+      "seq": 3,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "Relidas, Migalastat, Gador",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 21
+    },
+    {
+      "seq": 4,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "Agalsidasa, beta, Biosidus, Fabrazyme",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 22
+    },
+    {
+      "seq": 5,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "Glurazyme, Biosidus, Cerezyme",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 23
+    },
+    {
+      "seq": 6,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "Lactorel, Migalastat, Elea, Phenix",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 24
+    },
+    {
+      "seq": 7,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "Elfabrio, pegunigalsidase, alfa",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 25
+    },
+    {
+      "seq": 8,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "Axatilimab, Niktimvo",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 28
+    },
+    {
+      "seq": 9,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "Axatilimab, Incyte",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 29
+    },
+    {
+      "seq": 10,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "Axatilimab, Syndax",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 30
+    },
+    {
+      "seq": 11,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "Axatilimab, Pint, Pharma",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 31
+    },
+    {
+      "seq": 12,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "Axatilimab, Biotoscana",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 32
+    },
+    {
+      "seq": 13,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "Biosidus, fabrazyme",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 33
+    },
+    {
+      "seq": 14,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "glurazyme, biosidus",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 34
+    },
+    {
+      "seq": 15,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "vacuna, antineumocócica",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 35
+    },
+    {
+      "seq": 16,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "taliglucerasa, alfa",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 38
+    },
+    {
+      "seq": 17,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "Uplyso",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 39
+    },
+    {
+      "seq": 18,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "elelyso",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 40
+    },
+    {
+      "seq": 19,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "trilexa, Elexacaftor, Ivacaftor, Tezacaftor, tuteur",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 43
+    },
+    {
+      "seq": 20,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "ibuprofeno, 600",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 44
+    },
+    {
+      "seq": 21,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "experimento",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 45
+    },
+    {
+      "seq": 22,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "agabio, biosidus, agalsidasa",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 46
+    },
+    {
+      "seq": 23,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "agalzyme, biosidus",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 47
+    },
+    {
+      "seq": 24,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "agalzyme",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 50
+    },
+    {
+      "seq": 25,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "RONTAG",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 51
+    },
+    {
+      "seq": 26,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "LAFEDAR",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 52
+    },
+    {
+      "seq": 27,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "PASSINI",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 53
+    },
+    {
+      "seq": 28,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "Pegunigalsidasa, alfa, innovative, labs",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 54
+    },
+    {
+      "seq": 29,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "paracetamol",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 55
+    },
+    {
+      "seq": 30,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "GSK, vacuna",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 56
+    },
+    {
+      "seq": 31,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "abbott, vacuna",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 57
+    },
+    {
+      "seq": 32,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "Seqirus, vacuna",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 58
+    },
+    {
+      "seq": 33,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "AstraZeneca, vacuna",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 59
+    },
+    {
+      "seq": 34,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "Sinergium, Biotech, vacuna",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 60
+    },
+    {
+      "seq": 35,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "pfizer, vacuna",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 61
+    },
+    {
+      "seq": 36,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "merck, vacuna",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 62
+    },
+    {
+      "seq": 37,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "moderna, vacuna",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 63
+    },
+    {
+      "seq": 38,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "SII, vacuna",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 64
+    },
+    {
+      "seq": 39,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "clesrovimab",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 65
+    },
+    {
+      "seq": 40,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "fibromialgia",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 66
+    },
+    {
+      "seq": 41,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "abrysvo, pfizer",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 76
+    },
+    {
+      "seq": 42,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "lebrikizumab",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 77
+    },
+    {
+      "seq": 43,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "lebrikizumab2",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 88
+    },
+    {
+      "seq": 44,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "desde",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 89
+    },
+    {
+      "seq": 45,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "lebrikizumab",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 90
+    },
+    {
+      "seq": 46,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "dupilumab",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 91
+    },
+    {
+      "seq": 47,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "ensifentrina",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 92
+    },
+    {
+      "seq": 48,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "nemolizumab",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 93
+    },
+    {
+      "seq": 49,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "tanimilast",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 94
+    },
+    {
+      "seq": 50,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "Ibuprofeno",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 95
+    },
+    {
+      "seq": 51,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "lebrikizumab",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 96
+    },
+    {
+      "seq": 52,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "ensifentrina",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 97
+    },
+    {
+      "seq": 53,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "nemolizumab",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 98
+    },
+    {
+      "seq": 54,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "tanimilast",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 99
+    },
+    {
+      "seq": 55,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "axatilimab",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 100
+    },
+    {
+      "seq": 56,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "xcccffff",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 101
+    },
+    {
+      "seq": 57,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "Celltrion",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 102
+    },
+    {
+      "seq": 58,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "omlyclo",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 103
+    },
+    {
+      "seq": 59,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "omalizumab",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 104
+    },
+    {
+      "seq": 60,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "Abrysvo, pfizer",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 105
+    },
+    {
+      "seq": 61,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "Diclofenac",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 106
+    },
+    {
+      "seq": 62,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "ornitorrinco",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 107
+    },
+    {
+      "seq": 63,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "ñanduu",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 108
+    },
+    {
+      "seq": 64,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "belantamab, mafodotin, blenrep",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 109
+    },
+    {
+      "seq": 65,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "shingrix, arexvy",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 110
+    },
+    {
+      "seq": 66,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "clesrovimab, enflonsia, merck",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 111
+    },
+    {
+      "seq": 67,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "elfabrio, pegunigalsidasa, alfa, daxley",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 113
+    },
+    {
+      "seq": 68,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "ibuprofeno, forte",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 114
+    },
+    {
+      "seq": 69,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "tezepelumab",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 115
+    },
+    {
+      "seq": 70,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "oninutuzumab, Roche, nefritis",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 119
+    },
+    {
+      "seq": 71,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "ibuprofeno",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 150
+    },
+    {
+      "seq": 72,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "GSK",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 184
+    },
+    {
+      "seq": 73,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "ADMINISTRACIÓN NACIONAL DE MEDICAMENTOS ALIMENTOS Y TECNOLOGÍA MÉDICA",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 183
+    },
+    {
+      "seq": 74,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "ADMINISTRACIÓN NACIONAL DE MEDICAMENTOS ALIMENTOS Y TECNOLOGIA MÉDICA",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 216
+    },
+    {
+      "seq": 75,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "Decreto 930/2012",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 218
+    },
+    {
+      "seq": 76,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "hola",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 116
+    },
+    {
+      "seq": 77,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "Fresenius Medical Care Argentina S.A",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 217
+    },
+    {
+      "seq": 78,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "oficial",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 249
+    },
+    {
+      "seq": 79,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "anmat",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 250
+    },
+    {
+      "seq": 80,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "ministerio",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 282
+    },
+    {
+      "seq": 81,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "anmat",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 283
+    },
+    {
+      "seq": 82,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "aniflolumab, astra",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 315
+    },
+    {
+      "seq": 83,
+      "kind": "rag_lmbd_query",
+      "function": "rag_lmbd_query-prod",
+      "payload": {
+        "tenant_id": "boletin",
+        "agent_id": "05032266-f6e1-48cb-9248-bc116652c7c7",
+        "query": "aspirineta",
+        "max_semantic_distance": 0.32,
+        "retrieval_limit": 50,
+        "literal_keyword_overlap": true,
+        "literal_keyword_min_length": 3,
+        "created_at_start": "2026-05-12",
+        "created_at_end": "2026-05-13"
+      },
+      "alerta_id": 316
+    }
+  ]
+}

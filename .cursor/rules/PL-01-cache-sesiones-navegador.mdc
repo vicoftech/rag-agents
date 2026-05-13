@@ -1,0 +1,78 @@
+---
+description: Spec para corregir el problema de acceso que requiere borrar caché y reiniciar el navegador periódicamente. Aplicar al trabajar en gestión de sesiones, autenticación o frontend.
+globs: ["**/session*", "**/auth*", "**/middleware*", "**/frontend/**", "**/cache*", "**/cookie*"]
+alwaysApply: false
+---
+
+# PL-01 — Acceso requiere borrar caché y reiniciar navegador
+
+## Contexto del proyecto
+
+Plataforma web con autenticación. Los usuarios acceden con sesiones gestionadas
+posiblemente mediante JWT, cookies de sesión, o tokens de Keycloak/Cognito.
+
+## Problema
+
+Periódicamente es necesario borrar la caché del navegador y reiniciarlo para
+poder acceder correctamente. Esto indica un problema con la gestión de sesiones
+o tokens: tokens expirados no se renuevan correctamente, cookies con atributos
+incorrectos, o estado inconsistente entre el frontend y el backend.
+
+## Tarea concreta
+
+1. Identificar el mecanismo de autenticación actual (JWT, session cookie, OAuth token)
+2. Verificar que el refresh de tokens funciona correctamente cuando el access token expira
+3. Si se usan cookies: verificar `SameSite`, `Secure`, `HttpOnly` y `Max-Age` correctamente configurados
+4. Agregar manejo de errores 401 en el frontend que dispare automáticamente el refresh o redirect al login
+5. Verificar que no haya estado de auth cacheado en el cliente que sobreviva entre sesiones de usuario diferentes
+
+## Criterios de aceptación
+
+- [ ] Un usuario puede permanecer autenticado durante la sesión sin necesidad de borrar caché manualmente
+- [ ] Cuando el token expira, el sistema renueva automáticamente o redirige al login con un mensaje claro
+- [ ] Las cookies tienen atributos `Secure`, `HttpOnly`, y `SameSite=Lax` (o `Strict`) correctamente configurados
+- [ ] El frontend maneja respuestas 401 con refresh automático (max 1 intento) antes de redirigir al login
+- [ ] No existe estado de autenticación en `localStorage` sin TTL explícito
+
+## Restricciones
+
+- NO modificar el proveedor de identidad (Keycloak/Cognito) sin coordinación con infraestructura
+- NO cambiar el flujo de login visible para el usuario
+- NO almacenar tokens sensibles en `localStorage` (usar `httpOnly cookies` o `sessionStorage` con TTL)
+
+## Patrón de referencia
+
+```typescript
+// Interceptor de Axios para refresh automático de token
+axios.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const originalRequest = error.config;
+
+    if (error.response?.status === 401 && !originalRequest._retry) {
+      originalRequest._retry = true;
+      try {
+        await refreshAccessToken(); // llama al endpoint de refresh
+        return axios(originalRequest); // reintenta la request original
+      } catch (refreshError) {
+        // El refresh también falló → redirigir al login
+        window.location.href = "/login?reason=session_expired";
+        return Promise.reject(refreshError);
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+```
+
+```python
+# Verificar configuración de cookies en el backend
+response.set_cookie(
+    key="session_token",
+    value=token,
+    httponly=True,       # no accesible desde JS
+    secure=True,         # solo HTTPS
+    samesite="Lax",      # protección CSRF básica
+    max_age=3600,        # 1 hora
+)
+```

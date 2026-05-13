@@ -1,0 +1,60 @@
+---
+description: Spec para corregir el botón/link del template de email de alertas que no funciona correctamente. Aplicar al trabajar en templates HTML de email o en la generación de URLs.
+globs: ["**/templates/**/*.html", "**/email*", "**/url_generator*", "**/links*"]
+alwaysApply: false
+---
+
+# AL-03 — Link roto en template de mail de alerta
+
+## Contexto del proyecto
+
+Los emails de alerta incluyen un botón o link que debería llevar al usuario
+directamente al documento o a la alerta dentro de la plataforma web.
+
+## Problema
+
+El botón/link presente en el template HTML del mail de alerta no está funcionando
+correctamente. Puede ser un problema de generación de URL (URL mal formada, dominio
+incorrecto, parámetros faltantes) o un problema en el HTML del template
+(href vacío, redirección rota, URL sin encodear).
+
+## Tarea concreta
+
+1. Revisar el template HTML del email e identificar cómo se genera el href del botón/link
+2. Verificar que la URL generada sea válida, apunte al entorno correcto (prod) y contenga todos los parámetros necesarios
+3. Testear el link generado manualmente antes de confirmar el fix
+4. Si la URL depende de variables de entorno (dominio base), asegurarse de que estén correctamente configuradas en prod
+
+## Criterios de aceptación
+
+- [ ] El link del email abre la página correcta en el navegador
+- [ ] La URL está correctamente formada: `https://{BASE_URL}/alerts/{alert_id}` o similar
+- [ ] El template usa la variable de entorno `BASE_URL` o equivalente (no hardcodea el dominio)
+- [ ] La URL está correctamente encodeada (sin espacios ni caracteres especiales sin escapar)
+- [ ] El link funciona tanto desde el cliente de mail como desde un navegador directamente
+
+## Restricciones
+
+- NO cambiar el diseño visual del template de email
+- NO modificar la lógica de envío de emails
+- NO hardcodear URLs de producción en el código fuente
+
+## Patrón de referencia
+
+```python
+import os
+from urllib.parse import urljoin, urlencode
+
+BASE_URL = os.environ["APP_BASE_URL"]  # ej: "https://alerts.tudominio.com"
+
+def build_alert_link(alert_id: str, search_id: str) -> str:
+    params = urlencode({"alert_id": alert_id, "search_id": search_id})
+    return f"{BASE_URL}/alerts?{params}"
+```
+
+```html
+<!-- En el template HTML -->
+<a href="{{ alert_link }}" style="...">Ver Alerta</a>
+```
+
+> Verificar que `alert_link` se esté pasando correctamente al contexto del template.

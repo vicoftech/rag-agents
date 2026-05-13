@@ -1,0 +1,71 @@
+---
+description: Mejora de UX para eliminar el estado tipo "CARD" de "Alerta Encontrada" y reemplazarlo por la palabra clave de búsqueda. Aplicar al trabajar en la capa de presentación o componentes de alertas.
+globs: ["**/components/**", "**/views/**", "**/frontend/**", "**/ui/**", "**/alerts*"]
+alwaysApply: false
+---
+
+# AL-07 — Reemplazar label "CARD" por palabra clave en alertas encontradas
+
+## Contexto del proyecto
+
+La interfaz de usuario muestra un listado de alertas encontradas. Actualmente
+cada item muestra un estado o badge genérico tipo "CARD" o "Alerta Encontrada"
+que no aporta información útil al usuario.
+
+## Problema
+
+El estado tipo "CARD" de "Alerta Encontrada" no es informativo. El usuario
+necesita ver **qué búsqueda guardada** disparó la alerta, no un label genérico.
+Reemplazar ese label por la palabra clave o nombre de la búsqueda guardada
+mejora significativamente la usabilidad.
+
+## Tarea concreta
+
+1. Identificar el componente o template que renderiza el badge/estado "CARD" o "Alerta Encontrada"
+2. Reemplazarlo por el campo `keyword` o `search_name` de la búsqueda guardada asociada a la alerta
+3. Asegurarse de que ese campo esté disponible en el objeto/respuesta de la API que alimenta la vista
+4. Si el campo no viene en la respuesta actual, agregar el join necesario en el endpoint
+
+## Criterios de aceptación
+
+- [ ] El badge/label ya no muestra "CARD" ni "Alerta Encontrada"
+- [ ] Muestra el nombre o keyword de la búsqueda guardada que disparó la alerta
+- [ ] Si el campo es nulo o vacío, mostrar "Sin nombre" como fallback
+- [ ] El cambio es solo visual: no modifica lógica de negocio ni datos en BD
+
+## Restricciones
+
+- NO modificar la lógica de matching ni el pipeline de alertas
+- NO cambiar la estructura de la respuesta de la API si no es necesario
+- NO alterar otros componentes de la interfaz
+
+## Patrón de referencia
+
+```tsx
+// ANTES — badge genérico sin información
+<Badge variant="outline">Alerta Encontrada</Badge>
+
+// DESPUÉS — muestra la keyword de la búsqueda guardada
+<Badge variant="outline">
+  {alert.search_keyword ?? alert.search_name ?? "Sin nombre"}
+</Badge>
+```
+
+```python
+# Si la API no incluye el campo, agregar al serializer/endpoint:
+# ANTES
+{
+    "alert_id": alert.id,
+    "status": alert.status,
+    "fired_at": alert.fired_at,
+}
+
+# DESPUÉS
+{
+    "alert_id": alert.id,
+    "status": alert.status,
+    "fired_at": alert.fired_at,
+    "search_keyword": alert.saved_search.keyword,   # agregar este campo
+    "search_name": alert.saved_search.name,         # y/o este
+}
+```

@@ -1,0 +1,60 @@
+---
+description: Formato de API HTTP Lambda proxy y convenciones de payload/error.
+globs:
+  - "apps/**/index.py"
+  - "apps/**/*handler*.py"
+  - "terraform/**/*api*.tf"
+  - "terraform/**/*gateway*.tf"
+alwaysApply: false
+---
+
+# Estándares de API (HTTP + Lambda)
+
+## Patrón API Gateway → Lambda
+
+Las funciones detrás de HTTP suelen devolver:
+
+```python
+{
+    "statusCode": 200,  # o 400, 401, 403, 500
+    "headers": {"Content-Type": "application/json", ...},  # CORS si aplica
+    "body": json.dumps({"clave": "valor"}),
+}
+```
+
+## Cuerpo de error (JSON)
+
+Preferir forma estable:
+
+```json
+{
+  "error": "código o categoría legible",
+  "message": "detalle opcional para logs / cliente"
+}
+```
+
+En cliente interno, no asumir `message` siempre presente.
+
+## Códigos HTTP
+
+| Código | Uso |
+|--------|-----|
+| 200 | Éxito con payload |
+| 400 | Validación de entrada, parámetros faltantes |
+| 401 / 403 | Auth (JWT/Cognito) cuando aplique la ruta |
+| 500 | Error no controlado (evitar filtrar stack interno al cliente) |
+
+## Autenticación
+
+Rutas públicas vs protegidas están definidas en Terraform (Cognito, rutas API Gateway). Al tocar handlers:
+
+- Validar claims JWT según el patrón ya usado en la misma API.
+- No exponer **tokens completos** en logs.
+
+## Versionado
+
+Sin `/v1` global explícito en todas las rutas: evolucionar payloads con **campos opcionales** y compatibilidad hacia atrás cuando sea posible.
+
+## Invoke directo (no HTTP)
+
+Payload plano JSON; mismas validaciones que el cuerpo HTTP parseado para no bifurcar lógica innecesariamente.

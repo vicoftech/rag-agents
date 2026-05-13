@@ -1,0 +1,76 @@
+---
+description: Spec crítica para corregir la fuga de alertas entre cuentas: usuarios reciben alertas de otras cuentas donde no son destinatarios. Aplicar al trabajar en lógica de destinatarios, queries de alertas o cualquier filtro por tenant/cuenta.
+globs: ["**/alerts*", "**/recipients*", "**/tenant*", "**/account*", "**/queries*"]
+alwaysApply: false
+---
+
+# AL-04 — Alertas cross-tenant (fuga entre cuentas)
+
+## Contexto del proyecto
+
+Sistema multitenant de alertas ANMAT. Cada alerta pertenece a una cuenta (`tenant`),
+y cada cuenta tiene sus propios usuarios destinatarios. Un usuario de la cuenta A
+jamás debe recibir alertas de la cuenta B.
+
+## Problema
+
+Usuarios están recibiendo alertas de otras cuentas donde no son destinatarios.
+Este es un bug crítico de seguridad y privacidad. Implica que alguna query o
+lógica de filtrado no está aplicando correctamente el filtro por `account_id`
+o `tenant_id` al momento de determinar los destinatarios de una alerta.
+
+## Tarea concreta
+
+1. Auditar **todas** las queries que obtienen destinatarios de alertas y verificar que incluyan filtro por `account_id` / `tenant_id`
+2. Auditar el join entre alertas, búsquedas guardadas y usuarios — verificar que el tenant se propague correctamente en toda la cadena
+3. Agregar un test de integración que verifique que un usuario del tenant B no aparece como destinatario de una alerta del tenant A
+4. Revisar si hay algún caché de destinatarios que no esté particionado por tenant
+
+## Criterios de aceptación
+
+- [ ] Toda query de destinatarios incluye `WHERE account_id = :account_id` o equivalente
+- [ ] El test `test_no_cross_tenant_alert_recipients` pasa correctamente
+- [ ] El campo `account_id` está indexado en la tabla de destinatarios
+- [ ] No existe ninguna ruta de código que haga un `SELECT` de destinatarios sin filtrar por tenant
+
+## Restricciones
+
+- NO cambiar el esquema de tablas sin documentarlo
+- NO modificar la lógica de matching semántico
+- NO alterar el scheduler
+
+## Patrón de referencia
+
+```python
+# MAL — sin filtro de tenant (esto causa el bug)
+def get_alert_recipients(alert_id: str) -> list[str]:
+    return db.query(
+        "SELECT user_email FROM alert_recipients WHERE alert_id = %s",
+        (alert_id,)
+    ).fetchall()
+
+# BIEN — con filtro de tenant obligatorio
+def get_alert_recipients(alert_id: str, account_id: str) -> list[str]:
+    return db.query(
+        """
+        SELECT ar.user_email
+        FROM alert_recipients ar
+        JOIN alerts a ON a.id = ar.alert_id
+        WHERE ar.alert_id = %s
+          AND a.account_id = %s
+          AND ar.account_id = %s
+        """,
+        (alert_id, account_id, account_id)
+    ).fetchall()
+```
+
+```python
+# Test de no-cross-tenant que debe existir
+def test_no_cross_tenant_alert_recipients():
+    recipients_tenant_a = get_alert_recipients(alert_id="alert-A1", account_id="tenant-A")
+    recipients_tenant_b = get_alert_recipients(alert_id="alert-B1", account_id="tenant-B")
+    overlap = set(recipients_tenant_a) & set(recipients_tenant_b)
+    assert len(overlap) == 0, f"Cross-tenant leak detectado: {overlap}"
+```
+
+> **Nota de seguridad**: este bug debe tratarse con urgencia. Documentar el fix con fecha y versión de deploy.

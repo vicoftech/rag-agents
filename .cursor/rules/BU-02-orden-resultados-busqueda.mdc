@@ -1,0 +1,70 @@
+---
+description: Mejora para cambiar el criterio de ordenamiento de los resultados de búsqueda semántica. Aplicar al trabajar en la query de búsqueda o en el ranking de resultados.
+globs: ["**/search*", "**/query*", "**/ranking*", "**/retrieval*"]
+alwaysApply: false
+---
+
+# BU-02 — Cambiar criterio de ordenamiento de resultados de búsqueda
+
+## Contexto del proyecto
+
+Sistema de búsqueda semántica sobre documentos ANMAT. Los resultados se ordenan
+actualmente por un criterio que no satisface las expectativas del usuario.
+
+## Problema
+
+El orden actual de los resultados de búsqueda no es el esperado. Se debe definir
+y aplicar un nuevo criterio de ordenamiento que sea más relevante para el usuario.
+
+## Tarea concreta
+
+1. Definir con el equipo/producto cuál es el nuevo criterio de ordenamiento deseado.
+   Opciones típicas:
+   - Por **similaridad semántica** descendente (más relevante primero) — suele ser el default esperado
+   - Por **fecha del documento** descendente (más reciente primero)
+   - Por **combinación**: score de similaridad ponderado con fecha (boosting por recencia)
+2. Implementar el nuevo ordenamiento en la query de búsqueda
+3. Exponer opcionalmente un parámetro `sort_by` en el endpoint para permitir distintos criterios
+
+## Criterios de aceptación
+
+- [ ] Los resultados aparecen en el orden definido por el equipo
+- [ ] El criterio de ordenamiento está documentado en el código con un comentario explicativo
+- [ ] Si se implementa `sort_by`, los valores aceptados están validados (no acepta valores arbitrarios)
+- [ ] El cambio de ordenamiento no impacta el tiempo de respuesta más de 15%
+
+## Restricciones
+
+- NO cambiar el modelo de embeddings
+- NO modificar la interfaz del endpoint si no es necesario
+- NO aplicar un ordenamiento que no haya sido validado con el equipo de producto
+
+## Patrón de referencia
+
+```python
+from enum import Enum
+
+class SearchSortBy(str, Enum):
+    RELEVANCE = "relevance"       # por similaridad semántica DESC
+    DATE_DESC = "date_desc"       # por fecha del documento DESC
+    HYBRID = "hybrid"             # score = 0.7 * similarity + 0.3 * recency_score
+
+def search_documents(
+    query_embedding: list[float],
+    sort_by: SearchSortBy = SearchSortBy.RELEVANCE,
+    limit: int = 10
+) -> list[dict]:
+    if sort_by == SearchSortBy.RELEVANCE:
+        order_clause = "ORDER BY similarity_score DESC"
+    elif sort_by == SearchSortBy.DATE_DESC:
+        order_clause = "ORDER BY document_date DESC, similarity_score DESC"
+    elif sort_by == SearchSortBy.HYBRID:
+        # Normalizar recencia: documentos de los últimos 30 días obtienen boost
+        order_clause = """
+            ORDER BY (
+                0.7 * similarity_score +
+                0.3 * GREATEST(0, 1 - EXTRACT(DAY FROM NOW() - document_date) / 30.0)
+            ) DESC
+        """
+    ...
+```

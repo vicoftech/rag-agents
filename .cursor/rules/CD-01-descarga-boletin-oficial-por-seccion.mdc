@@ -1,0 +1,267 @@
+---
+description: Spec para extender el handler Lambda de descarga del Boletín Oficial para soportar múltiples secciones (primera, segunda, tercera) por fecha o por defecto la del día. Aplicar al trabajar en el scraper del Boletín Oficial, el handler Lambda o el pipeline de ingesta.
+globs: ["**/boletin*", "**/handler*", "**/scraper*", "**/ingestion*", "**/pipeline*", "**/lambda*"]
+alwaysApply: false
+---
+
+# CD-01 — Descarga del Boletín Oficial por sección y fecha
+
+## Contexto del proyecto
+
+Existe un Lambda handler (`handler.py`) que extrae enlaces PDF del Boletín Oficial
+(`https://www.boletinoficial.gob.ar`) para una fecha y sección dadas.
+
+El sitio funciona con sesión stateful: primero hay que establecer la fecha con
+`GET /edicion/actualizar/{DD-MM-YYYY}` y luego scrapear `/seccion/{nombre_seccion}`.
+Los PDFs individuales se sirven desde `https://www.boletinoficial.gob.ar/pdf/aviso/{seccion}/{id_aviso}/{fecha}`.
+
+El handler actual ya maneja:
+- Normalización de fecha (YYYYMMDD o YYYY-MM-DD -> YYYYMMDD)
+- Guard de fin de semana (retorna vacío sin procesar)
+- Validación de Content-Type para confirmar que el link es un PDF real
+- Invocación directa (Step Function / testing local) y via HTTP (API Gateway)
+
+## Problema
+
+El handler recibe `section` como parámetro pero solo puede procesar una sección por invocación.
+La descarga completa de un día requiere las tres secciones del Boletín Oficial:
+- `primera` — Legislación y Avisos Oficiales
+- `segunda` — Sociedades y Asociaciones
+- `tercera` — Contrataciones del Estado
+
+Además, cuando no se pasa fecha, el default es `ayer` (incorrecto) — debe ser `hoy`.
+
+## Tarea concreta
+
+### 1. Soporte multi-sección en una invocación
+
+Permitir que el campo `section` acepte:
+- Un string simple: `"primera"` (comportamiento actual — mantener compatibilidad)
+- Una lista: `["primera", "segunda", "tercera"]`
+- El valor especial `"all"` para descargar las tres secciones
+
+### 2. Fecha del día como default
+
+Cuando no se pasa `date`, usar la fecha del día actual (no ayer).
+
+El Boletín se publica el mismo día. El default debe ser hoy.
+Si se necesita reprocesar el día anterior, se pasa la fecha explícitamente.
+
+```python
+# ANTES (incorrecto para el caso de uso diario):
+yesterday = datetime.now() - timedelta(days=1)
+return yesterday.strftime("%Y%m%d"), None
+
+# DESPUÉS:
+today = datetime.now()
+return today.strftime("%Y%m%d"), None
+```
+
+### 3. Resultado agregado por sección
+
+La respuesta debe incluir los PDFs agrupados por sección:
+
+```json
+{
+  "success": true,
+  "date": "20260408",
+  "day_of_week": "Wednesday",
+  "is_weekend": false,
+  "sections_processed": ["primera", "segunda", "tercera"],
+  "sections_failed": {},
+  "pdf_links": {
+    "primera": [
+      {"url": "https://www.boletinoficial.gob.ar/pdf/aviso/primera/123456/20260408", "section": "primera", "date": "20260408"}
+    ],
+    "segunda": [],
+    "tercera": []
+  },
+  "totals": {
+    "primera": 42,
+    "segunda": 18,
+    "tercera": 7,
+    "total": 67
+  }
+}
+```
+
+### 4. Manejo de errores por sección
+
+Si una sección falla, no abortar toda la invocación. Continuar con las demás
+y reportar el error en `sections_failed`. `success: false` solo si al menos una falló.
+
+## Criterios de aceptación
+
+- [ ] `{"section": "all"}` procesa primera, segunda y tercera
+- [ ] `{"section": ["primera", "tercera"]}` procesa solo las indicadas
+- [ ] `{}` (sin parámetros) usa la fecha de HOY y sección `"primera"` por defecto
+- [ ] La respuesta incluye `pdf_links` como objeto keyed por sección (no lista plana)
+- [ ] Si una sección falla, las demás se procesan y el error queda en `sections_failed`
+- [ ] El guard de fin de semana se evalúa antes de procesar cualquier sección
+- [ ] El campo `totals` incluye conteo por sección y `total` agregado
+- [ ] Una sección inválida retorna 400 con mensaje descriptivo
+
+## Restricciones
+
+- NO modificar la función `get_pdf_links(target_date, seccion)` — solo procesa una sección a la vez. El loop multi-sección va en el handler.
+- NO modificar la función `normalize_date_to_yyyymmdd` — ya funciona correctamente.
+- NO cambiar la lógica de validación de Content-Type de los PDFs.
+- NO modificar los CORS headers.
+- Mantener retrocompatibilidad: si `section` es un string simple y válido, comportarse como hasta ahora.
+
+## Patrón de referencia
+
+```python
+VALID_SECTIONS = {"primera", "segunda", "tercera"}
+DEFAULT_SECTION = "primera"
+
+
+def resolve_sections(section_param) -> list[str]:
+    """Normaliza el parámetro section a una lista de secciones válidas."""
+    if section_param is None:
+        return [DEFAULT_SECTION]
+    if section_param == "all":
+        return sorted(VALID_SECTIONS)
+    if isinstance(section_param, list):
+        invalid = set(section_param) - VALID_SECTIONS
+        if invalid:
+            raise ValueError(f"Secciones inválidas: {invalid}. Válidas: {VALID_SECTIONS}")
+        return section_param
+    if isinstance(section_param, str):
+        if section_param not in VALID_SECTIONS:
+            raise ValueError(f"Sección inválida: {section_param!r}. Válidas: {VALID_SECTIONS}")
+        return [section_param]
+    raise ValueError(f"Tipo inválido para section: {type(section_param)}")
+
+
+def resolve_date_default_today(date_raw) -> tuple[str | None, str | None]:
+    """Usa HOY como default si no se pasa fecha."""
+    if not date_raw:
+        return datetime.now().strftime("%Y%m%d"), None
+    return normalize_date_to_yyyymmdd(date_raw)  # función existente, no modificar
+
+
+def handler(event, context):
+    CORS_HEADERS = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Headers": "*",
+        "Access-Control-Allow-Methods": "OPTIONS,POST,GET",
+    }
+
+    http_method = event.get("requestContext", {}).get("http", {}).get("method") or event.get("httpMethod")
+
+    if http_method == "OPTIONS":
+        return {"statusCode": 200, "headers": {"Content-Type": "application/json", **CORS_HEADERS}, "body": ""}
+
+    try:
+        body = json.loads(event.get("body") or "{}") if http_method else event
+
+        # Resolver secciones y fecha
+        try:
+            sections = resolve_sections(body.get("section"))
+        except ValueError as e:
+            return {
+                "statusCode": 400,
+                "headers": {"Content-Type": "application/json", **CORS_HEADERS},
+                "body": json.dumps({"success": False, "message": str(e)}),
+            }
+
+        date_str, date_err = resolve_date_default_today(body.get("date"))
+        if date_err:
+            return {
+                "statusCode": 400,
+                "headers": {"Content-Type": "application/json", **CORS_HEADERS},
+                "body": json.dumps({"success": False, "message": date_err}),
+            }
+
+        date_obj = datetime.strptime(date_str, "%Y%m%d")
+
+        # Guard de fin de semana — antes de cualquier scraping
+        if date_obj.weekday() in (5, 6):
+            return {
+                "statusCode": 200,
+                "headers": {"Content-Type": "application/json", **CORS_HEADERS},
+                "body": json.dumps({
+                    "success": True,
+                    "message": f"No hay boletín (fin de semana): {date_str} ({date_obj.strftime('%A')})",
+                    "is_weekend": True,
+                    "day_of_week": date_obj.strftime("%A"),
+                    "date": date_str,
+                    "pdf_links": {},
+                    "totals": {"total": 0},
+                }),
+            }
+
+        # Procesar cada sección de forma independiente
+        pdf_links = {}
+        sections_failed = {}
+
+        for section in sections:
+            try:
+                links = get_pdf_links(date_str, section)  # función existente, no modificar
+                pdf_links[section] = links
+            except Exception as e:
+                sections_failed[section] = str(e)
+                print(f"ERROR procesando sección {section!r}: {e}")
+
+        totals = {s: len(links) for s, links in pdf_links.items()}
+        totals["total"] = sum(v for k, v in totals.items())
+
+        all_ok = len(sections_failed) == 0
+        result = {
+            "success": all_ok,
+            "message": f"Procesadas {len(pdf_links)} secciones, {totals['total']} PDFs encontrados",
+            "date": date_str,
+            "day_of_week": date_obj.strftime("%A"),
+            "is_weekend": False,
+            "sections_processed": list(pdf_links.keys()),
+            "sections_failed": sections_failed,
+            "pdf_links": pdf_links,
+            "totals": totals,
+            "timestamp": datetime.now().isoformat(),
+        }
+
+        return {
+            "statusCode": 200,
+            "headers": {"Content-Type": "application/json", **CORS_HEADERS},
+            "body": json.dumps(result),
+        }
+
+    except json.JSONDecodeError:
+        return {
+            "statusCode": 400,
+            "headers": {"Content-Type": "application/json", **CORS_HEADERS},
+            "body": json.dumps({"error": "Invalid JSON in request body"}),
+        }
+    except Exception as e:
+        return {
+            "statusCode": 500,
+            "headers": {"Content-Type": "application/json", **CORS_HEADERS},
+            "body": json.dumps({"error": f"Internal server error: {str(e)}"}),
+        }
+```
+
+## Casos de prueba locales
+
+```python
+# Caso 1: sin parámetros -> hoy, sección primera
+handler({}, None)
+
+# Caso 2: todas las secciones, fecha explícita
+handler({"date": "20260408", "section": "all"}, None)
+
+# Caso 3: lista de secciones
+handler({"date": "20260408", "section": ["primera", "tercera"]}, None)
+
+# Caso 4: string simple (retrocompatibilidad)
+handler({"date": "20260408", "section": "segunda"}, None)
+
+# Caso 5: fin de semana -> retorna vacío sin scraping
+handler({"date": "20260412"}, None)  # sábado
+
+# Caso 6: sección inválida -> 400
+handler({"date": "20260408", "section": "cuarta"}, None)
+
+# Caso 7: fecha en formato YYYY-MM-DD
+handler({"date": "2026-04-08", "section": "all"}, None)
+```

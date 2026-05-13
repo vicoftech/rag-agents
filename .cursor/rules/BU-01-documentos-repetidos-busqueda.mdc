@@ -1,0 +1,72 @@
+---
+description: Spec para corregir la aparición de documentos duplicados en los resultados de búsqueda semántica. Aplicar al trabajar en la lógica de búsqueda, indexación o deduplicación de resultados.
+globs: ["**/search*", "**/query*", "**/retrieval*", "**/index*", "**/pgvector*"]
+alwaysApply: false
+---
+
+# BU-01 — Documentos repetidos en resultados de búsqueda
+
+## Contexto del proyecto
+
+Sistema de búsqueda semántica sobre documentos ANMAT usando pgvector en Aurora PostgreSQL.
+Los usuarios realizan búsquedas y esperan ver resultados únicos, ordenados por relevancia.
+
+## Problema
+
+Los resultados de búsqueda muestran documentos repetidos. Esto puede ocurrir por:
+- Múltiples chunks del mismo documento que aparecen como resultados separados
+- Documentos indexados más de una vez (duplicación en la tabla de embeddings)
+- Ausencia de deduplicación post-query
+
+## Tarea concreta
+
+1. Verificar si la tabla de embeddings tiene entradas duplicadas para el mismo `document_id`
+2. Implementar deduplicación en la query de búsqueda: si hay múltiples chunks del mismo documento, retornar solo el chunk con mayor similaridad
+3. Si el problema es en la indexación, agregar una constraint `UNIQUE` en `(document_id, chunk_index)` para prevenir duplicados futuros
+4. Agregar un `DISTINCT ON (document_id)` o equivalente en la query final si se agrupan por documento
+
+## Criterios de aceptación
+
+- [ ] Una búsqueda no retorna el mismo `document_id` más de una vez en los resultados
+- [ ] La tabla de embeddings tiene constraint `UNIQUE (document_id, chunk_index)`
+- [ ] El score de similaridad mostrado corresponde al chunk más relevante del documento
+- [ ] El tiempo de respuesta de búsqueda no aumenta más de 20% con la deduplicación
+
+## Restricciones
+
+- NO modificar el modelo de embeddings ni regenerar los embeddings existentes
+- NO cambiar el endpoint de búsqueda (solo la lógica interna)
+- NO agregar constraints que rompan datos existentes sin un script de limpieza previo
+
+## Patrón de referencia
+
+```sql
+-- Búsqueda con deduplicación por document_id, tomando el chunk de mayor similaridad
+SELECT DISTINCT ON (document_id)
+    document_id,
+    chunk_text,
+    1 - (embedding <=> query_embedding) AS similarity_score,
+    metadata
+FROM document_embeddings
+ORDER BY document_id, similarity_score DESC
+LIMIT 10;
+
+-- Si se quiere un resultado final ordenado por score:
+SELECT * FROM (
+    SELECT DISTINCT ON (document_id)
+        document_id,
+        chunk_text,
+        1 - (embedding <=> query_embedding) AS similarity_score,
+        metadata
+    FROM document_embeddings
+    ORDER BY document_id, (embedding <=> query_embedding)
+) ranked
+ORDER BY similarity_score DESC
+LIMIT 10;
+```
+
+```python
+# Constraint para prevenir duplicados en indexación
+# Agregar en la migración correspondiente:
+# ALTER TABLE document_embeddings ADD CONSTRAINT uq_doc_chunk UNIQUE (document_id, chunk_index);
+```

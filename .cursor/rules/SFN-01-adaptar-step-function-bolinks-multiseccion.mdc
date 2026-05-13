@@ -1,0 +1,229 @@
+---
+description: Spec para adaptar la Step Function del pipeline Boletín Oficial (bolinks → s3writer → dbwriter) al nuevo shape de output de rag_lmbd_bolinks definido en CD-01. Aplicar al trabajar en la definición JSON de la SFN o en su módulo Terraform.
+globs: ["**/sfn*", "**/step_function*", "**/statemachine*", "**/boletin*", "**/bolinks*"]
+alwaysApply: false
+---
+
+# SFN-01 — Adaptar Step Function al nuevo output multi-sección de rag_lmbd_bolinks
+
+## Contexto del proyecto
+
+La Step Function `bolinks → s3writer → dbwriter` orquesta el pipeline de ingesta
+del Boletín Oficial. Usa JSONata como query language. Los ARNs de las Lambdas se
+inyectan por Terraform como `${bolinks_qualified}`, `${s3writer_qualified}` y `${dbwriter_qualified}`.
+
+Las tres Lambdas involucradas:
+- `rag_lmbd_bolinks` — extrae links PDF del sitio del Boletín Oficial
+- `rag_lmbd_s3writer` — descarga los PDFs y los sube a S3
+- `rag_lmbd_dbwriter` — escribe metadata en BD
+
+## Análisis de impacto
+
+### rag_lmbd_s3writer — NO requiere cambios
+
+El s3writer ya tiene `flatten_bolinks_pdf_links()` que maneja ambos shapes nativamente:
+
+```python
+def flatten_bolinks_pdf_links(pdf_links_field: Any) -> List[Dict]:
+    """Soporta pdf_links como lista (legacy) o dict por sección (CD-01)."""
+    if isinstance(pdf_links_field, dict):
+        out: List[Dict] = []
+        for _sec, items in pdf_links_field.items():
+            if isinstance(items, list):
+                out.extend(items)
+        return out
+    if isinstance(pdf_links_field, list):
+        return pdf_links_field
+    return []
+```
+
+Lo invoca sobre `bolinks_output.get("pdf_links", [])` en `process_bolinks_output`.
+Recibe `bolinks_output` como objeto completo — no necesita ningún aplanado previo en la SFN.
+
+### rag_lmbd_dbwriter — requiere verificación
+
+No se tiene el código del dbwriter en este análisis. Verificar que también
+consume `bolinks_output` o `s3writer_output` y no accede directamente a
+`pdf_links` como lista plana. Si lo hace, crear spec S3W-01 para él.
+
+### SFN — requiere 3 cambios puntuales
+
+Solo se tocan `Elección` (primer Choice node) y se agregan dos estados terminales.
+`ParseLinksResponse` no cambia si ya genera `bolinks_output` como clave raíz.
+
+#### Cambio 1 — Verificar `ParseLinksResponse`
+
+Confirmar que el Output actual envuelve el body en `bolinks_output`:
+
+```jsonata
+// CORRECTO — lo que debe estar:
+{% {
+  "bolinks_output": $parse($states.input.body)
+} %}
+
+// INCORRECTO — si estuviera así, corregir:
+{% $parse($states.input.body) %}
+```
+
+Si ya está correcto, no modificar. El s3writer consume `event.get("bolinks_output")`
+y con el nuevo shape de bolinks eso incluye `pdf_links` como dict keyed por sección,
+que `flatten_bolinks_pdf_links` resuelve solo.
+
+#### Cambio 2 — `Elección`: agregar ramas para `is_weekend` y `totals.total = 0`
+
+El nuevo output de `rag_lmbd_bolinks` incluye dos casos que retornan `statusCode: 200`
+pero no deben continuar al s3writer:
+
+**`is_weekend: true`**: fin de semana — `pdf_links` es `{}`, `totals.total` es `0`.
+Retornar 200 es correcto (no es error), pero el s3writer devuelve 400 si recibe
+`bolinks_output` sin PDFs porque `process_bolinks_output` valida `success: false and not pdf_links`.
+
+**`totals.total = 0` en día hábil**: feriado no configurado en el scheduler o error
+del sitio. El s3writer retorna `success: True, processed_count: 0` pero invocar
+una Lambda innecesariamente desperdicia tiempo de ejecución y puede generar alarmas.
+
+```json
+"Elección": {
+  "Type": "Choice",
+  "Choices": [
+    {
+      "Next": "Error",
+      "Condition": "{% $states.input.statusCode != 200 %}"
+    },
+    {
+      "Next": "Fin de semana - Sin procesamiento",
+      "Condition": "{% $parse($states.input.body).is_weekend = true %}"
+    },
+    {
+      "Next": "Sin PDFs - Finalizar",
+      "Condition": "{% $parse($states.input.body).totals.total = 0 %}"
+    }
+  ],
+  "Default": "ParseLinksResponse"
+}
+```
+
+#### Cambio 3 — dos estados terminales nuevos
+
+```json
+"Fin de semana - Sin procesamiento": {
+  "Type": "Succeed"
+},
+"Sin PDFs - Finalizar": {
+  "Type": "Succeed"
+}
+```
+
+## SFN completa actualizada
+
+Solo los estados que cambian respecto a la versión actual. El resto permanece intacto.
+
+```json
+{
+  "Comment": "Boletín Oficial: bolinks → s3writer → dbwriter (JSONata)",
+  "StartAt": "Boletin Oficial - Get links",
+  "QueryLanguage": "JSONata",
+  "States": {
+    "Boletin Oficial - Get links": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Output": "{% $states.result.Payload %}",
+      "Arguments": {
+        "FunctionName": "${bolinks_qualified}",
+        "Payload": "{% $states.input %}"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 3,
+          "BackoffRate": 2,
+          "JitterStrategy": "FULL"
+        }
+      ],
+      "Next": "Elección"
+    },
+    "Elección": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Next": "Error",
+          "Condition": "{% $states.input.statusCode != 200 %}"
+        },
+        {
+          "Next": "Fin de semana - Sin procesamiento",
+          "Condition": "{% $parse($states.input.body).is_weekend = true %}"
+        },
+        {
+          "Next": "Sin PDFs - Finalizar",
+          "Condition": "{% $parse($states.input.body).totals.total = 0 %}"
+        }
+      ],
+      "Default": "ParseLinksResponse"
+    },
+    "Error": {
+      "Type": "Fail",
+      "Error": "Fallo en extraer links"
+    },
+    "Fin de semana - Sin procesamiento": {
+      "Type": "Succeed"
+    },
+    "Sin PDFs - Finalizar": {
+      "Type": "Succeed"
+    },
+    "ParseLinksResponse": {
+      "Type": "Pass",
+      "Next": "Descarga Pdf a S3",
+      "Output": "{% {\n  \"bolinks_output\": $parse($states.input.body)\n} %}"
+    },
+    "Descarga Pdf a S3": { "...": "sin cambios" },
+    "Elección (1)": { "...": "sin cambios" },
+    "Error al descargar en S3": { "...": "sin cambios" },
+    "Transferir": { "...": "sin cambios" },
+    "Escribir en BD": { "...": "sin cambios" },
+    "Elección (2)": { "...": "sin cambios" },
+    "Error al escribir en BD": { "...": "sin cambios" },
+    "Realizado correctamente": { "...": "sin cambios" }
+  }
+}
+```
+
+> Los estados marcados `"sin cambios"` deben copiarse tal cual de la definición actual.
+> Se listan solo para claridad del flujo completo.
+
+## Criterios de aceptación
+
+- [ ] `is_weekend: true` en output de bolinks termina en `Succeed` sin invocar s3writer ni dbwriter
+- [ ] `totals.total = 0` en día hábil termina en `Succeed` sin invocar s3writer ni dbwriter
+- [ ] `statusCode != 200` de bolinks termina en `Fail`
+- [ ] Un día hábil con PDFs en múltiples secciones pasa al s3writer y este los procesa todos (via `flatten_bolinks_pdf_links`)
+- [ ] `ParseLinksResponse` genera `bolinks_output` como clave raíz en su Output
+- [ ] Retry blocks de todos los estados Task permanecen sin cambios
+- [ ] Las variables Terraform `${bolinks_qualified}`, `${s3writer_qualified}`, `${dbwriter_qualified}` no se modifican
+
+## Restricciones
+
+- NO modificar `rag_lmbd_s3writer` — ya maneja el nuevo shape nativamente
+- NO tocar `Descarga Pdf a S3`, `Transferir`, `Escribir en BD`, `Elección (1)`, `Elección (2)` ni sus Retry blocks
+- NO hardcodear ARNs de Lambda — mantener las variables Terraform
+
+## Routing completo post-cambio
+
+```
+bolinks
+  ├── statusCode != 200                     → Fail ("Fallo en extraer links")
+  ├── is_weekend = true                     → Succeed ("Fin de semana - Sin procesamiento")
+  ├── totals.total = 0                      → Succeed ("Sin PDFs - Finalizar")
+  └── statusCode 200, día hábil, total > 0  → ParseLinksResponse
+                                                  ↓
+                                             s3writer (bolinks_output completo)
+                                                  ├── statusCode != 200  → Fail
+                                                  └── statusCode 200     → dbwriter
+                                                                               ├── statusCode != 200  → Fail
+                                                                               └── statusCode 200     → Succeed
+```

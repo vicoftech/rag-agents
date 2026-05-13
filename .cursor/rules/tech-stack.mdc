@@ -1,0 +1,43 @@
+---
+description: Lenguajes, runtimes AWS, Terraform y dependencias clave del monorepo rag-agents.
+alwaysApply: true
+---
+
+# Stack tecnológico
+
+## Lenguajes y runtime
+
+- **Python 3.12** para Lambdas (módulo `terraform/modules/lambda`), scripts y contenedor batch (`python:3.12-slim`).
+- **Shell** para entrypoints y scripts de deploy donde existan.
+
+## Nube — AWS (preferencias)
+
+| Uso | Servicio típico |
+|-----|-------------------|
+| Cómputo síncrono | **Lambda** (handler `index.handler` o equivalente por app) |
+| Cómputo batch | **ECS Fargate** + **ECR** (imagen batch bajo `batch/alerts-semantic-matches/`) |
+| Datos tabulares / vectores | **Aurora PostgreSQL** + **pgvector** (`psycopg2`, `pgvector`) |
+| Objetos | **S3** |
+| Colas / async | **SQS** |
+| Notificaciones | **SNS** / email según módulo |
+| Estado jobs async | **DynamoDB** (p. ej. query async) |
+| Modelos | **Amazon Bedrock** (embeddings + LLM; modelos vía env en Lambdas) |
+| Secretos / DB | **Secrets Manager** + env vars en Lambda |
+| API HTTP | **API Gateway HTTP API (v2)** + **Cognito** donde esté cableado en Terraform |
+| Orquestación | **EventBridge**, **Step Functions** según `terraform/*.tf` |
+| IaC | **Terraform** `>= 1.5`, provider **hashicorp/aws** `>= 6.35` (+ `awscc`, `archive`, `null`, `random`, `time`) |
+
+## Dependencias Python (por app)
+
+Cada Lambda bajo `apps/<nombre>/` lleva su **`requirements.txt`**. No centralizar versiones en un solo `pyproject` salvo que el proyecto migre a eso.
+
+## Herramientas locales
+
+- **AWS CLI v2**, **Docker** (build batch / agent), **Terraform**.
+- Perfiles y cuentas: ver `terraform/environments/*.tfvars` y `environments/backend-*.hcl` (varias cuentas: p. ej. dev vs QA/prod).
+
+## Qué evitar
+
+- Introducir **Node/Java** como runtime de Lambda sin decisión explícita del equipo.
+- Asumir **una sola cuenta AWS**; siempre verificar `var.aws_profile` / backend del estado.
+- Depender de **credenciales hardcodeadas** en código o tfvars commiteados con secretos reales.
