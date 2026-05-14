@@ -26,6 +26,11 @@ output "github_actions_ecr_role_arn" {
   value       = aws_iam_role.github_ecr_batch.arn
 }
 
+output "github_actions_lambda_deploy_role_arn" {
+  description = "Mismo ARN que AWS_BATCH_ECR_ROLE_ARN — rol con ECR + Lambda deploy (policy lambda-deploy-rag-lmbd)."
+  value       = aws_iam_role.github_ecr_batch.arn
+}
+
 output "github_oidc_provider_arn" {
   value = aws_iam_openid_connect_provider.github.arn
 }

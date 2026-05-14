@@ -27,7 +27,7 @@ Proyectos como `infra/batch-alerts-semantic-matches/` tienen su propio `terrafor
 
 ## CI/CD
 
-- **GitHub Actions:** `.github/workflows/batch-alerts-semantic-docker.yml` — build Docker desde raíz con `batch/alerts-semantic-matches/Dockerfile`, push a **ECR** vía **OIDC** (`AWS_BATCH_ECR_ROLE_ARN`).
+- **GitHub Actions:** `.github/workflows/batch-alerts-semantic-docker.yml` — build Docker desde raíz con `batch/alerts-semantic-matches/Dockerfile`, push a **ECR** vía **OIDC** (`AWS_BATCH_ECR_ROLE_ARN`). El mismo rol puede incluir permisos Lambda deploy (`iam_github_oidc.tf`, policy `lambda-deploy-rag-lmbd`; ver CI-02).
 - **Paths trigger:** cambios en `scripts/alerts_semantic_matches.py` y `batch/alerts-semantic-matches/**` (ver workflow actual).
 
 ## Orden típico de operaciones

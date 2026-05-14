@@ -33,6 +33,14 @@
         {
           "Next": "Error",
           "Condition": "{% $states.input.statusCode != 200 %}"
+        },
+        {
+          "Next": "Fin de semana - Sin procesamiento",
+          "Condition": "{% $parse($states.input.body).is_weekend = true %}"
+        },
+        {
+          "Next": "Sin PDFs - Finalizar",
+          "Condition": "{% $parse($states.input.body).totals.total = 0 %}"
         }
       ],
       "Default": "ParseLinksResponse"
@@ -41,10 +49,16 @@
       "Type": "Fail",
       "Error": "Fallo en extraer links"
     },
+    "Fin de semana - Sin procesamiento": {
+      "Type": "Succeed"
+    },
+    "Sin PDFs - Finalizar": {
+      "Type": "Succeed"
+    },
     "ParseLinksResponse": {
       "Type": "Pass",
       "Next": "Descarga Pdf a S3",
-      "Output": "{% {\n  \"bolinks_output\": $parse($states.input.body)\n} %}"
+      "Output": "{% {\n  \"bolinks_output\": $parse($states.input.body),\n  \"tenant_id\": $parse($states.input.body).received_params.tenant_id,\n  \"agent_id\": $parse($states.input.body).received_params.agent_id\n} %}"
     },
     "Descarga Pdf a S3": {
       "Type": "Task",

@@ -289,8 +289,34 @@ def _download_pdf_via_resolved_tls(
 def download_pdf(url: str) -> Optional[bytes]:
     """
     Descarga un PDF desde una URL (serie; no hay paralelismo aquí).
-    Prioriza resolución IPv4 + HTTPS con SNI para evitar NameResolutionError en Lambda.
+    Soporta ``s3://bucket/key`` (p. ej. staging escrito por bolinks para edición histórica).
+    Prioriza resolución IPv4 + HTTPS con SNI para URLs HTTPS públicas.
     """
+    if url.startswith("s3://"):
+        rest = url[5:]
+        idx = rest.find("/")
+        if idx <= 0:
+            print(f"Invalid s3 URL: {url!r}")
+            return None
+        bucket, key = rest[:idx], rest[idx + 1 :]
+        if not bucket or not key:
+            print(f"Invalid s3 URL (missing bucket or key): {url!r}")
+            return None
+        print(f"Downloading PDF from S3: s3://{bucket}/{key}")
+        try:
+            r = s3_client.get_object(Bucket=bucket, Key=key)
+            content = r["Body"].read()
+            if len(content) > MAX_FILE_SIZE:
+                print(f"File too large: {len(content)} bytes")
+                return None
+            if not content.startswith(b"%PDF"):
+                print("Warning: S3 object may not be a valid PDF")
+            print(f"Successfully read {len(content)} bytes from S3")
+            return content
+        except Exception as e:
+            print(f"S3 get_object error: {e}")
+            return None
+
     clean_url = url.split('?')[0]
     print(f"Downloading PDF from: {url}")
     print(f"Clean URL for download: {clean_url}")
@@ -405,7 +431,10 @@ def generate_filename_from_url(pdf_url: str, index: int, date_str: str, section:
         return f"aviso_{stem_anmat}_{date_str}_{section}.pdf"
 
     dd = _normalize_yyyymmdd_for_s3_key(date_str)
-    if _is_boletin_arsat_edition_pdf_url(pdf_url) and dd:
+    if dd and (
+        _is_boletin_arsat_edition_pdf_url(pdf_url)
+        or ("staging/bolinks-ingest" in (pdf_url or ""))
+    ):
         sec = re.sub(r"[^\w\-]+", "_", (section or "seccion").lower())[:40]
         # Sin timestamp: misma corrida / re-ejecución SFN → misma key S3 (idempotente).
         return f"edicion_completa_{sec}_{dd}.pdf"
@@ -468,7 +497,9 @@ def process_bolinks_output(bolinks_output: Dict, tenant_id: str, agent_id: str) 
         )
 
         for index, pdf in enumerate(pdf_links_to_process):
-            if not pdf.get("url"):
+            b64_inline = pdf.get("pdf_base64")
+            url = (pdf.get("url") or "").strip()
+            if not url and not b64_inline:
                 continue
 
             if index > 0 and S3WRITER_PDF_DOWNLOAD_DELAY_SEC > 0:
@@ -482,24 +513,36 @@ def process_bolinks_output(bolinks_output: Dict, tenant_id: str, agent_id: str) 
                 failed_count += 1
                 continue
 
-            print(f"Processing PDF {index + 1}/{len(pdf_links_to_process)}: {pdf['url']}")
-            
-            # Descargar PDF
-            pdf_content = download_pdf(pdf["url"])
-            if not pdf_content:
-                print(f"Failed to download PDF {index + 1}")
-                failed_count += 1
-                continue
-            
-            # Generar nombre de archivo
-            filename = generate_filename_from_url(pdf["url"], index, date_key, section)
+            if b64_inline:
+                print(f"Processing PDF {index + 1}/{len(pdf_links_to_process)}: inline base64")
+                try:
+                    import base64 as _b64
+
+                    pdf_content = _b64.b64decode(str(b64_inline), validate=False)
+                except Exception as e:
+                    print(f"Failed to decode inline base64: {e}")
+                    failed_count += 1
+                    continue
+                if not pdf_content.startswith(b"%PDF"):
+                    print("Inline base64 does not look like a PDF")
+                    failed_count += 1
+                    continue
+            else:
+                print(f"Processing PDF {index + 1}/{len(pdf_links_to_process)}: {url}")
+                pdf_content = download_pdf(url)
+                if not pdf_content:
+                    print(f"Failed to download PDF {index + 1}")
+                    failed_count += 1
+                    continue
+
+            filename = generate_filename_from_url(url or "s3://inline/", index, date_key, section)
             # Subir a S3
             s3_key = f"{site_id}/{date_key}/{section}/{filename}"
             if upload_to_s3(pdf_content, S3_BUCKET, s3_key):
                 s3_uri = f"s3://{S3_BUCKET}/{s3_key}" if S3_BUCKET else ""
                 uploaded_files.append({
-                    'url': pdf["url"],
-                    'original_url': pdf["url"],
+                    'url': url or 'inline://bolinks',
+                    'original_url': url or 'inline://bolinks',
                     's3_key': s3_key,
                     's3_uri': s3_uri,
                     'filename': filename,

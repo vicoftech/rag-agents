@@ -71,3 +71,26 @@ resource "aws_iam_role_policy" "github_ecr_push" {
     ]
   })
 }
+
+# Permisos para que GitHub Actions actualice el código de las Lambdas rag_lmbd_*.
+# Policy separada; no tocar github_ecr_push ni el rol.
+resource "aws_iam_role_policy" "github_lambda_deploy" {
+  name = "lambda-deploy-rag-lmbd"
+  role = aws_iam_role.github_ecr_batch.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "LambdaUpdateCode"
+        Effect = "Allow"
+        Action = [
+          "lambda:UpdateFunctionCode",
+          "lambda:GetFunction",
+          "lambda:GetFunctionConfiguration",
+        ]
+        Resource = "arn:aws:lambda:${var.aws_region}:${data.aws_caller_identity.current.account_id}:function:rag_lmbd_*"
+      }
+    ]
+  })
+}

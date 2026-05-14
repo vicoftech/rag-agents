@@ -9,12 +9,16 @@ from decimal import Decimal
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from index import handler, generate_partition_key, generate_sort_key, create_document_item, create_site_item, process_s3writer_output
+import index as dbw_index
 
 class TestRAGDBWriter(unittest.TestCase):
     """Unit tests for rag_lmbd_dbwriter Lambda function"""
     
     def setUp(self):
         """Set up test fixtures"""
+        self._dt_patcher = patch.object(dbw_index, 'DYNAMODB_TABLE', 'rag-documents-dev')
+        self._dt_patcher.start()
+        self.addCleanup(self._dt_patcher.stop)
         self.test_s3writer_output = {
             "success": True,
             "site_id": "boletinoficial_gob_ar",
@@ -72,11 +76,11 @@ class TestRAGDBWriter(unittest.TestCase):
         file_info = self.test_s3writer_output["uploaded_files"][0]
         item = create_document_item(self.test_s3writer_output, file_info)
         
-        self.assertEqual(item['PK'], "boletinoficial_gob_ar#2026-03-06")
+        self.assertEqual(item['PK'], "boletinoficial_gob_ar#20260306")
         self.assertEqual(item['SK'], "Boletín_Completo.pdf")
         self.assertEqual(item['entity_type'], "document")
         self.assertEqual(item['site_id'], "boletinoficial_gob_ar")
-        self.assertEqual(item['date'], "2026-03-06")
+        self.assertEqual(item['date'], "20260306")
         self.assertEqual(item['filename'], "Boletín_Completo.pdf")
         self.assertEqual(item['original_url'], file_info['original_url'])
         self.assertEqual(item['s3_key'], file_info['s3_key'])
@@ -150,7 +154,7 @@ class TestRAGDBWriter(unittest.TestCase):
         result = process_s3writer_output(self.test_s3writer_output)
         
         self.assertFalse(result['success'])
-        self.assertIn('Error processing s3writer output', result['error'])
+        self.assertEqual(result.get('error'), 'DynamoDB error')
     
     def test_process_s3writer_output_s3writer_failure(self):
         """Test processing when s3writer output indicates failure"""

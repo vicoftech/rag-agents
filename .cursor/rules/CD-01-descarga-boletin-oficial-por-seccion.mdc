@@ -1,275 +1,128 @@
 ---
-description: Spec para extender el handler Lambda de descarga del Boletín Oficial para soportar múltiples secciones (primera, segunda, tercera) por fecha o por defecto la del día. Aplicar al trabajar en el scraper del Boletín Oficial, el handler Lambda o el pipeline de ingesta.
-globs: ["**/boletin*", "**/handler*", "**/scraper*", "**/ingestion*", "**/pipeline*", "**/lambda*"]
+description: Spec Boletín Oficial por sección y fecha — multi-sección, sesión stateful, hoy vs histórico (CDN vs POST), pipeline bolinks→s3writer. Aplicar al scraper, rag_lmbd_bolinks, SFN e ingesta.
+globs: ["**/bolinks/**", "**/boletin*", "**/rag_lmbd_bolinks/**", "**/handler*", "**/scraper*", "**/ingestion*", "**/pipeline*", "**/lambda*"]
 alwaysApply: false
 ---
 
 # CD-01 — Descarga del Boletín Oficial por sección y fecha
 
-## Contexto del proyecto
+## Contexto
 
-Existe un Lambda handler (`handler.py`) que extrae enlaces PDF del Boletín Oficial
-(`https://www.boletinoficial.gob.ar`) para una fecha y sección dadas.
+El Boletín Oficial (`https://www.boletinoficial.gob.ar`) requiere **sesión stateful**:
 
-El sitio funciona con sesión stateful: primero hay que establecer la fecha con
-`GET /edicion/actualizar/{DD-MM-YYYY}` y luego scrapear `/seccion/{nombre_seccion}`.
+1. `GET /edicion/actualizar/{DD-MM-YYYY}` fija la fecha en cookies.
+2. Luego se obtiene el PDF de **edición completa** por sección (`primera`, `segunda`, `tercera`).
 
-**PDF de edición por sección (el que debe exponer el Lambda):** en el HTML de cada
-sección aparece **un solo enlace** al PDF completo del día para esa sección, servido
-en CDN (p. ej. `https://s3.arsat.com.ar/cdn-bo-001/pdf-del-dia/primera.pdf` para
-`primera`; análogo `segunda.pdf` / `tercera.pdf`). Ese es el archivo agregado de
-muchas páginas — **no** enumerar los PDFs por aviso (`/pdf/aviso/{seccion}/{id}/{fecha}`),
-que son decenas de archivos sueltos y no sustituyen al boletín completo de la sección.
+**No** enumerar PDFs por aviso (`/pdf/aviso/{seccion}/{id}/{fecha}`): son muchos archivos sueltos y no sustituyen al boletín completo de la sección.
 
-El handler actual ya maneja:
-- Normalización de fecha (YYYYMMDD o YYYY-MM-DD -> YYYYMMDD)
-- Guard de fin de semana (retorna vacío sin procesar)
-- Validación de Content-Type para confirmar que el link es un PDF real
-- Invocación directa (Step Function / testing local) y via HTTP (API Gateway)
+Implementación de referencia en el repo: `apps/rag_lmbd_bolinks/index.py` (`get_pdf_links`, `handler`).
 
-## Problema
+---
 
-El handler recibe `section` como parámetro pero solo puede procesar una sección por invocación.
-La descarga completa de un día requiere las tres secciones del Boletín Oficial:
-- `primera` — Legislación y Avisos Oficiales
-- `segunda` — Sociedades y Asociaciones
-- `tercera` — Contrataciones del Estado
+## Diagnóstico: dos mecanismos distintos (hoy vs histórico)
 
-Además, cuando no se pasa fecha, el default es `ayer` (incorrecto) — debe ser `hoy`.
+### Problema fundamental
 
-## Tarea concreta
+El recurso público del CDN:
 
-### 1. Soporte multi-sección en una invocación
+`https://s3.arsat.com.ar/cdn-bo-001/pdf-del-dia/{seccion}.pdf`
 
-Permitir que el campo `section` acepte:
-- Un string simple: `"primera"` (comportamiento actual — mantener compatibilidad)
-- Una lista: `["primera", "segunda", "tercera"]`
-- El valor especial `"all"` para descargar las tres secciones
+corresponde a la **edición del día corriente** tal como la expone el sitio en modo “hoy”. **No** depende de la fecha que se haya fijado en sesión con `/edicion/actualizar/…`: si solo se busca ese `href` en el HTML, las **fechas históricas** suelen devolver **lista vacía** aunque la sesión esté bien posicionada.
 
-### 2. Fecha del día como default
+### Cómo se comporta el sitio (resumen)
 
-Cuando no se pasa `date`, usar la fecha del día actual (no ayer).
+| Situación | Comportamiento real en el HTML / API | Enfoque del scraper |
+|-----------|--------------------------------------|----------------------|
+| **Fecha = “hoy”** (calendario del BO alineado con la ingesta) | En la columna de descarga suele aparecer un `<a href="…/pdf-del-dia/{seccion}.pdf">` hacia el CDN. | Tras `GET /seccion/{seccion}`, regex o parseo del `href` del CDN + validación (p. ej. `HEAD` `Content-Type: application/pdf`). |
+| **Fecha histórica** | Suele **no** aparecer el `href` `pdf-del-dia`; en su lugar un control (p. ej. botón) que dispara la descarga vía **`POST /pdf/download_section`** con el cuerpo de formulario acorde (p. ej. `nombreSeccion` = sección), **en la misma sesión** ya creada por `/edicion/actualizar/{DD-MM-YYYY}`. La respuesta es **JSON** con el PDF en **Base64** (p. ej. campo `pdfBase64`). | Tras fijar fecha, `POST` a `/pdf/download_section`, decodificar Base64, validar PDF (`%PDF`), y exponer el resultado al pipeline (ver “Contrato downstream”). |
 
-El Boletín se publica el mismo día. El default debe ser hoy.
-Si se necesita reprocesar el día anterior, se pasa la fecha explícitamente.
+El flujo `GET /edicion/actualizar/{fecha}` **sí** es necesario y correcto: mantiene la cookie de edición. El error típico es **asumir** que para cualquier fecha el HTML siempre tendrá el link CDN `pdf-del-dia`.
 
-```python
-# ANTES (incorrecto para el caso de uso diario):
-yesterday = datetime.now() - timedelta(days=1)
-return yesterday.strftime("%Y%m%d"), None
+### Zona horaria para “hoy”
 
-# DESPUÉS:
-today = datetime.now()
-return today.strftime("%Y%m%d"), None
-```
+Para decidir si la fecha pedida es **“hoy”** respecto del calendario del BO, conviene **no** usar solo `datetime.now()` naive en UTC (Lambda): alinear con **`America/Argentina/Buenos_Aires`** (o la misma regla que el scheduler AL-01) evita cortes de día distintos entre “hoy BO” y “hoy UTC”.
+
+---
+
+## Tareas funcionales
+
+### 1. Multi-sección en una invocación
+
+El campo `section` debe aceptar:
+
+- String: `"primera"` | `"segunda"` | `"tercera"` (retrocompatibilidad).
+- Lista de strings subset de las válidas.
+- `"all"` → procesar las tres en orden estable (p. ej. orden lexicográfico).
+
+### 2. Fecha por defecto
+
+Si no se envía `date`, usar **hoy** (según política de zona horaria acordada), **no** “ayer”.
 
 ### 3. Resultado agregado por sección
 
-La respuesta debe incluir los PDFs agrupados por sección:
+`pdf_links` como **objeto** keyed por sección; `sections_failed`, `totals` (por sección + `total`), `received_params` eco para SFN → s3writer cuando aplique.
 
-```json
-{
-  "success": true,
-  "date": "20260408",
-  "day_of_week": "Wednesday",
-  "is_weekend": false,
-  "sections_processed": ["primera", "segunda", "tercera"],
-  "sections_failed": {},
-  "pdf_links": {
-    "primera": [
-      {"url": "https://s3.arsat.com.ar/cdn-bo-001/pdf-del-dia/primera.pdf", "section": "primera", "date": "20260408"}
-    ],
-    "segunda": [],
-    "tercera": []
-  },
-  "totals": {
-    "primera": 1,
-    "segunda": 0,
-    "tercera": 0,
-    "total": 1
-  }
-}
-```
+### 4. `get_pdf_links(target_date, seccion)` — lógica esperada
 
-### 4. Manejo de errores por sección
+- `target_date` en **YYYYMMDD** (tras normalización existente del handler).
+- Siempre: `GET …/edicion/actualizar/{DD-MM-YYYY}` con sesión `requests.Session()` y headers de navegador razonables.
+- **Rama “hoy”** (según criterio de calendario): `GET …/seccion/{seccion}`, buscar URL CDN `pdf-del-dia`, validar PDF (p. ej. `HEAD`).
+- **Rama “histórico”**: `POST …/pdf/download_section` con datos que exija el sitio (mínimo nombre de sección en el formulario documentado en inspección de red), parsear JSON, leer Base64, validar bytes PDF.
 
-Si una sección falla, no abortar toda la invocación. Continuar con las demás
-y reportar el error en `sections_failed`. `success: false` solo si al menos una falló.
+Cada ítem devuelto en la lista de una sección debe incluir al menos: `section`, `date` (YYYYMMDD), `source` discriminativo (p. ej. `boletin_edition_cdn` vs `boletin_edition_post`) para trazabilidad.
+
+### 5. Contrato downstream (s3writer / SFN)
+
+- Hoy: ítems con `url` HTTP(S) al CDN → `rag_lmbd_s3writer` descarga por URL (`HEAD` / `GET`).
+- Histórico (implementado en el repo): `rag_lmbd_bolinks` hace `POST /pdf/download_section`, valida el PDF y sube un objeto temporal al bucket de documentos bajo `staging/bolinks-ingest/{YYYYMMDD}/{seccion}.pdf`; el ítem expone `url` como **`s3://{bucket}/{key}`** con `source: boletin_edition_post`. `rag_lmbd_s3writer` acepta `s3://` (mismo rol IAM que ya lee el bucket) y, de forma alternativa, `pdf_base64` inline si algún flujo lo envía.
+
+Terraform: `lambda_bolinks` recibe `S3_BUCKET_NAME`, `S3_STAGING_PREFIX`, `BOLETIN_TZ` y política `s3:PutObject` (y lectura/borrado opcional) sobre `staging/bolinks-ingest/*` en el bucket de documentos.
+
+---
 
 ## Criterios de aceptación
 
-- [ ] `{"section": "all"}` procesa primera, segunda y tercera
-- [ ] `{"section": ["primera", "tercera"]}` procesa solo las indicadas
-- [ ] `{}` (sin parámetros) usa la fecha de HOY y sección `"primera"` por defecto
-- [ ] La respuesta incluye `pdf_links` como objeto keyed por sección (no lista plana)
-- [ ] Si una sección falla, las demás se procesan y el error queda en `sections_failed`
-- [ ] El guard de fin de semana se evalúa antes de procesar cualquier sección
-- [ ] El campo `totals` incluye conteo por sección y `total` agregado
-- [ ] Una sección inválida retorna 400 con mensaje descriptivo
+- [ ] `{"section": "all"}` procesa las tres secciones.
+- [ ] Fecha **histórica** laborable devuelve PDF de edición (vía POST + Base64 o mecanismo equivalente verificado contra el sitio).
+- [ ] Fecha **hoy** (según TZ acordada) sigue funcionando vía CDN cuando el HTML expone `pdf-del-dia`.
+- [ ] Fin de semana: sin scraping pesado donde ya aplique la regla AL-01 / guard existente.
+- [ ] Sección inválida → 400 claro.
+- [ ] `normalize_date_to_yyyymmdd` **no** se reescribe (solo se usa).
+
+---
 
 ## Restricciones
 
-- `get_pdf_links(target_date, seccion)` debe devolver **solo el PDF de edición completa**
-  de esa sección (enlace `pdf-del-dia` en CDN), validado con HEAD `Content-Type: application/pdf`.
-  Una sección → como mucho **un** elemento en la lista. El loop multi-sección sigue en el handler.
-- NO modificar la función `normalize_date_to_yyyymmdd` — ya funciona correctamente.
-- NO cambiar la lógica de validación de Content-Type de los PDFs.
-- NO modificar los CORS headers.
-- Mantener retrocompatibilidad: si `section` es un string simple y válido, comportarse como hasta ahora.
+- No reimplementar `normalize_date_to_yyyymmdd` salvo bugs demostrados en su contrato.
+- Mantener CORS y forma HTTP del handler salvo cambio explícito de producto.
+- Validación **Content-Type** en `HEAD` aplica al caso **URL CDN**; el caso **Base64** debe validarse con contenido decodificado (p. ej. prefijo `%PDF`).
+- Un PDF de edición por sección por corrida: como mucho **un** elemento en la lista de esa sección.
 
-## Patrón de referencia
+---
 
-```python
-VALID_SECTIONS = {"primera", "segunda", "tercera"}
-DEFAULT_SECTION = "primera"
+## Casos de prueba (referencia)
 
+```text
+# Hoy (ajustar fecha según calendario real del BO)
+{"section": "all"}
 
-def resolve_sections(section_param) -> list[str]:
-    """Normaliza el parámetro section a una lista de secciones válidas."""
-    if section_param is None:
-        return [DEFAULT_SECTION]
-    if section_param == "all":
-        return sorted(VALID_SECTIONS)
-    if isinstance(section_param, list):
-        invalid = set(section_param) - VALID_SECTIONS
-        if invalid:
-            raise ValueError(f"Secciones inválidas: {invalid}. Válidas: {VALID_SECTIONS}")
-        return section_param
-    if isinstance(section_param, str):
-        if section_param not in VALID_SECTIONS:
-            raise ValueError(f"Sección inválida: {section_param!r}. Válidas: {VALID_SECTIONS}")
-        return [section_param]
-    raise ValueError(f"Tipo inválido para section: {type(section_param)}")
+# Histórico laborable conocido
+{"date": "2026-05-12", "section": "all"}
 
+# Retrocompatibilidad
+{"date": "2026-04-08", "section": "segunda"}
 
-def resolve_date_default_today(date_raw) -> tuple[str | None, str | None]:
-    """Usa HOY como default si no se pasa fecha."""
-    if not date_raw:
-        return datetime.now().strftime("%Y%m%d"), None
-    return normalize_date_to_yyyymmdd(date_raw)  # función existente, no modificar
-
-
-def handler(event, context):
-    CORS_HEADERS = {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Headers": "*",
-        "Access-Control-Allow-Methods": "OPTIONS,POST,GET",
-    }
-
-    http_method = event.get("requestContext", {}).get("http", {}).get("method") or event.get("httpMethod")
-
-    if http_method == "OPTIONS":
-        return {"statusCode": 200, "headers": {"Content-Type": "application/json", **CORS_HEADERS}, "body": ""}
-
-    try:
-        body = json.loads(event.get("body") or "{}") if http_method else event
-
-        # Resolver secciones y fecha
-        try:
-            sections = resolve_sections(body.get("section"))
-        except ValueError as e:
-            return {
-                "statusCode": 400,
-                "headers": {"Content-Type": "application/json", **CORS_HEADERS},
-                "body": json.dumps({"success": False, "message": str(e)}),
-            }
-
-        date_str, date_err = resolve_date_default_today(body.get("date"))
-        if date_err:
-            return {
-                "statusCode": 400,
-                "headers": {"Content-Type": "application/json", **CORS_HEADERS},
-                "body": json.dumps({"success": False, "message": date_err}),
-            }
-
-        date_obj = datetime.strptime(date_str, "%Y%m%d")
-
-        # Guard de fin de semana — antes de cualquier scraping
-        if date_obj.weekday() in (5, 6):
-            return {
-                "statusCode": 200,
-                "headers": {"Content-Type": "application/json", **CORS_HEADERS},
-                "body": json.dumps({
-                    "success": True,
-                    "message": f"No hay boletín (fin de semana): {date_str} ({date_obj.strftime('%A')})",
-                    "is_weekend": True,
-                    "day_of_week": date_obj.strftime("%A"),
-                    "date": date_str,
-                    "pdf_links": {},
-                    "totals": {"total": 0},
-                }),
-            }
-
-        # Procesar cada sección de forma independiente
-        pdf_links = {}
-        sections_failed = {}
-
-        for section in sections:
-            try:
-                links = get_pdf_links(date_str, section)  # función existente, no modificar
-                pdf_links[section] = links
-            except Exception as e:
-                sections_failed[section] = str(e)
-                print(f"ERROR procesando sección {section!r}: {e}")
-
-        totals = {s: len(links) for s, links in pdf_links.items()}
-        totals["total"] = sum(v for k, v in totals.items())
-
-        all_ok = len(sections_failed) == 0
-        result = {
-            "success": all_ok,
-            "message": f"Procesadas {len(pdf_links)} secciones, {totals['total']} PDFs encontrados",
-            "date": date_str,
-            "day_of_week": date_obj.strftime("%A"),
-            "is_weekend": False,
-            "sections_processed": list(pdf_links.keys()),
-            "sections_failed": sections_failed,
-            "pdf_links": pdf_links,
-            "totals": totals,
-            "timestamp": datetime.now().isoformat(),
-        }
-
-        return {
-            "statusCode": 200,
-            "headers": {"Content-Type": "application/json", **CORS_HEADERS},
-            "body": json.dumps(result),
-        }
-
-    except json.JSONDecodeError:
-        return {
-            "statusCode": 400,
-            "headers": {"Content-Type": "application/json", **CORS_HEADERS},
-            "body": json.dumps({"error": "Invalid JSON in request body"}),
-        }
-    except Exception as e:
-        return {
-            "statusCode": 500,
-            "headers": {"Content-Type": "application/json", **CORS_HEADERS},
-            "body": json.dumps({"error": f"Internal server error: {str(e)}"}),
-        }
+# Fin de semana (según guard)
+{"date": "2026-04-12", "section": "all"}
 ```
 
-## Casos de prueba locales
+---
 
-```python
-# Caso 1: sin parámetros -> hoy, sección primera
-handler({}, None)
+## Tabla de diagnóstico (recordatorio)
 
-# Caso 2: todas las secciones, fecha explícita
-handler({"date": "20260408", "section": "all"}, None)
+| Situación | Mecanismo real | Error típico del scraper “solo CDN” |
+|-----------|----------------|-------------------------------------|
+| Hoy | `href` a `…/pdf-del-dia/{seccion}.pdf` en HTML de sección | Ninguno si se valida el PDF. |
+| Histórico | `POST /pdf/download_section` → JSON + Base64 (tras `actualizar`) | Buscar solo CDN → `pdf_links` vacío. |
 
-# Caso 3: lista de secciones
-handler({"date": "20260408", "section": ["primera", "tercera"]}, None)
-
-# Caso 4: string simple (retrocompatibilidad)
-handler({"date": "20260408", "section": "segunda"}, None)
-
-# Caso 5: fin de semana -> retorna vacío sin scraping
-handler({"date": "20260412"}, None)  # sábado
-
-# Caso 6: sección inválida -> 400
-handler({"date": "20260408", "section": "cuarta"}, None)
-
-# Caso 7: fecha en formato YYYY-MM-DD
-handler({"date": "2026-04-08", "section": "all"}, None)
-```
+El CDN `pdf-del-dia` refleja la **edición del día en curso del sitio**, no sustituye la descarga histórica por sesión.

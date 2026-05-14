@@ -1021,7 +1021,24 @@ module "lambda_bolinks" {
     BOLETIN_BASE_URL = var.boletin_base_url
     DEFAULT_SECTION  = var.boletin_default_section
     REQUEST_TIMEOUT  = var.boletin_request_timeout
+    S3_BUCKET_NAME   = local.documents_bucket_name
+    S3_STAGING_PREFIX  = "staging/bolinks-ingest"
+    BOLETIN_TZ         = var.scheduled_sync_timezone
   }
+
+  attach_policy_statements = [
+    {
+      effect = "Allow"
+      actions = [
+        "s3:PutObject",
+        "s3:GetObject",
+        "s3:DeleteObject",
+      ]
+      resources = [
+        "${local.documents_bucket_arn}/staging/bolinks-ingest/*",
+      ]
+    },
+  ]
 
   tags = local.common_tags
 }

@@ -21,6 +21,56 @@ dynamodb_resource = boto3.resource('dynamodb', **session_args)
 # Environment variables
 DYNAMODB_TABLE = os.getenv('DYNAMODB_TABLE_NAME')
 
+
+def _normalize_yyyymmdd(value: str) -> str:
+    """Normaliza a YYYYMMDD para PK Dynamo (alineado con prefijo S3 / embeddings)."""
+    if not value or not str(value).strip():
+        return ""
+    s = str(value).strip()
+    if len(s) == 10 and s[4] == "-" and s[7] == "-":
+        try:
+            return datetime.strptime(s, "%Y-%m-%d").strftime("%Y%m%d")
+        except ValueError:
+            return ""
+    if len(s) == 8 and s.isdigit():
+        return s
+    return ""
+
+
+def _yyyymmdd_partition_from_s3_key(s3_key: str) -> str:
+    """
+    Obtiene YYYYMMDD de la clave S3: primero segmento tras ``documents/``,
+    luego cualquier segmento YYYYMMDD o YYYY-MM-DD en el path.
+    """
+    parts = [p for p in (s3_key or "").split("/") if p]
+    if "documents" in parts:
+        i = parts.index("documents")
+        if i + 1 < len(parts):
+            seg = parts[i + 1]
+            if len(seg) == 8 and seg.isdigit():
+                return seg
+    for seg in parts:
+        if len(seg) == 8 and seg.isdigit():
+            return seg
+        norm = _normalize_yyyymmdd(seg)
+        if norm:
+            return norm
+    return ""
+
+
+def _document_partition_date(s3writer_output: Dict, file_info: Dict) -> str:
+    """Fecha de partición Dynamo por archivo (coherente con carpeta en S3)."""
+    key = (file_info or {}).get("s3_key") or ""
+    d = _yyyymmdd_partition_from_s3_key(key)
+    if d:
+        return d
+    md = (file_info or {}).get("metadata") or {}
+    d = _normalize_yyyymmdd(str(md.get("date") or ""))
+    if d:
+        return d
+    return str(s3writer_output.get("date") or "").strip()
+
+
 def convert_to_dynamodb_format(obj):
     """
     Convierte un objeto a formato compatible con DynamoDB
@@ -53,16 +103,17 @@ def create_document_item(s3writer_output: Dict, file_info: Dict) -> Dict:
     Crea un item de documento para DynamoDB
     """
     timestamp = datetime.utcnow().isoformat()
-    
+    part_date = _document_partition_date(s3writer_output, file_info)
+
     item = {
         'PK': generate_partition_key(
             s3writer_output.get('site_id', ''),
-            s3writer_output.get('date', '')
+            part_date,
         ),
         'SK': generate_sort_key(file_info.get('filename', '')),
         'entity_type': 'document',
         'site_id': s3writer_output.get('site_id', ''),
-        'date': s3writer_output.get('date', ''),
+        'date': part_date,
         'filename': file_info.get('filename', ''),
         'original_url': file_info.get('original_url') or file_info.get('url', ''),
         's3_key': file_info.get('s3_key', ''),
@@ -77,27 +128,30 @@ def create_document_item(s3writer_output: Dict, file_info: Dict) -> Dict:
     
     return convert_to_dynamodb_format(item)
 
-def create_site_item(s3writer_output: Dict) -> Dict:
+def create_site_item(s3writer_output: Dict, partition_date: Optional[str] = None) -> Dict:
     """
-    Crea un item de sitio para DynamoDB
+    Crea un item de sitio para DynamoDB.
+    partition_date: YYYYMMDD alineado al primer archivo (o None → s3writer_output.date).
     """
     timestamp = datetime.utcnow().isoformat()
+    date_str = (partition_date or "").strip() or str(s3writer_output.get('date', '') or '').strip()
     
     item = {
         'PK': generate_partition_key(
             s3writer_output.get('site_id', ''),
-            s3writer_output.get('date', '')
+            date_str,
         ),
         'SK': 'site#info',
         'entity_type': 'site',
         'site_id': s3writer_output.get('site_id', ''),
-        'date': s3writer_output.get('date', ''),
+        'date': date_str,
         'processed_count': s3writer_output.get('processed_count', 0),
         'failed_count': s3writer_output.get('failed_count', 0),
         'total_found': s3writer_output.get('total_found', 0),
         's3_bucket': s3writer_output.get('s3_bucket', ''),
         'created_at': timestamp,
         'updated_at': timestamp,
+        'processing_status': 'completed',
         'source': 'rag_lmbd_s3writer'
     }
     
@@ -177,14 +231,19 @@ def process_s3writer_output(s3writer_output: Dict) -> Dict:
             return {
                 'success': True,
                 'message': 'No files uploaded to process',
-                'processed_count': 0
+                'processed_count': 0,
+                'documents_count': 0,
+                'dynamo_document_items': 0,
             }
         
         # Preparar items para DynamoDB
         items_to_upsert = []
         
-        # Agregar item del sitio
-        site_item = create_site_item(s3writer_output)
+        # Agregar item del sitio (misma partición de fecha que el primer archivo en S3)
+        site_partition = _document_partition_date(s3writer_output, uploaded_files[0])
+        if not site_partition:
+            site_partition = str(s3writer_output.get("date") or "").strip()
+        site_item = create_site_item(s3writer_output, site_partition)
         items_to_upsert.append(site_item)
         
         # Agregar items de documentos
@@ -202,6 +261,8 @@ def process_s3writer_output(s3writer_output: Dict) -> Dict:
                 'date': s3writer_output.get('date', ''),
                 'processed_count': result['processed_count'],
                 'documents_count': len(uploaded_files),
+                'dynamo_document_items': len(uploaded_files),
+                'dynamo_site_items': 1,
                 'site_item_created': True,
                 'dynamodb_table': DYNAMODB_TABLE
             }

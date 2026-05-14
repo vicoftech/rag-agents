@@ -1,0 +1,249 @@
+---
+description: Extender el rol IAM OIDC existente (rag-batch-alerts-github-ecr-prod) con permisos para deploy de Lambdas desde GitHub Actions.
+globs:
+  - "infra/batch-alerts-semantic-matches/iam_github_oidc.tf"
+alwaysApply: false
+---
+
+# CI-02 — Extender rol OIDC existente con permisos Lambda deploy
+
+## Objetivo
+
+Agregar una segunda `aws_iam_role_policy` al rol IAM
+`arn:aws:iam::913123310997:role/rag-batch-alerts-github-ecr-prod`
+para que el pipeline `deploy-lambdas.yml` (spec CI-01) pueda ejecutar
+`aws lambda update-function-code` sin necesidad de un rol separado.
+
+**No modificar** el recurso `aws_iam_role.github_ecr_batch` ni la policy
+`aws_iam_role_policy.github_ecr_push` existentes. Solo agregar.
+
+---
+
+## Archivo a modificar
+
+```
+infra/batch-alerts-semantic-matches/iam_github_oidc.tf
+```
+
+---
+
+## Cambio a realizar
+
+Agregar al final de `iam_github_oidc.tf`, después del cierre de
+`resource "aws_iam_role_policy" "github_ecr_push"`, el siguiente bloque:
+
+```hcl
+# Permisos para que GitHub Actions actualice el código de las Lambdas rag_lmbd_*.
+# Se agrega como policy separada para no mezclar con los permisos ECR existentes.
+resource "aws_iam_role_policy" "github_lambda_deploy" {
+  name = "lambda-deploy-rag-lmbd"
+  role = aws_iam_role.github_ecr_batch.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "LambdaUpdateCode"
+        Effect = "Allow"
+        Action = [
+          "lambda:UpdateFunctionCode",
+          "lambda:GetFunction",
+          "lambda:GetFunctionConfiguration",
+        ]
+        Resource = "arn:aws:lambda:${var.aws_region}:913123310997:function:rag_lmbd_*"
+      }
+    ]
+  })
+}
+```
+
+El archivo completo queda así:
+
+```hcl
+# Credenciales para GitHub Actions (solo push ECR batch). Ver output github_actions_ecr_role_arn.
+
+resource "aws_iam_openid_connect_provider" "github" {
+  url = "https://token.actions.githubusercontent.com"
+  client_id_list = [
+    "sts.amazonaws.com",
+  ]
+  thumbprint_list = [
+    "6938fd4d98bab03faadb97b34396831e3780aea1",
+    "1c58a3a8518e8759bf075b76b750d4f2df264fcd",
+  ]
+}
+
+resource "aws_iam_role" "github_ecr_batch" {
+  name = "${var.project_name}-github-ecr-${var.environment}"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Federated = aws_iam_openid_connect_provider.github.arn
+        }
+        Action = "sts:AssumeRoleWithWebIdentity"
+        Condition = {
+          StringEquals = {
+            "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
+          }
+          StringLike = {
+            "token.actions.githubusercontent.com:sub" = "repo:${var.github_repo_full}:*"
+          }
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "github_ecr_push" {
+  name = "ecr-push-batch-image"
+  role = aws_iam_role.github_ecr_batch.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "EcrAuthToken"
+        Effect   = "Allow"
+        Action   = ["ecr:GetAuthorizationToken"]
+        Resource = "*"
+      },
+      {
+        Sid    = "EcrPushRepo"
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:BatchGetImage",
+          "ecr:PutImage",
+          "ecr:InitiateLayerUpload",
+          "ecr:UploadLayerPart",
+          "ecr:CompleteLayerUpload",
+          "ecr:DescribeRepositories",
+          "ecr:ListImages",
+        ]
+        Resource = aws_ecr_repository.batch.arn
+      }
+    ]
+  })
+}
+
+# ── NUEVO ────────────────────────────────────────────────────────────────────
+# Permisos para que GitHub Actions actualice el código de las Lambdas rag_lmbd_*.
+# Se agrega como policy separada para no mezclar con los permisos ECR existentes.
+resource "aws_iam_role_policy" "github_lambda_deploy" {
+  name = "lambda-deploy-rag-lmbd"
+  role = aws_iam_role.github_ecr_batch.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "LambdaUpdateCode"
+        Effect = "Allow"
+        Action = [
+          "lambda:UpdateFunctionCode",
+          "lambda:GetFunction",
+          "lambda:GetFunctionConfiguration",
+        ]
+        Resource = "arn:aws:lambda:${var.aws_region}:913123310997:function:rag_lmbd_*"
+      }
+    ]
+  })
+}
+```
+
+> **Nota sobre el account ID hardcodeado:** `913123310997` ya aparece en
+> `variables.tf` (`s3_documents_bucket = "rag-documents-prod-913123310997"`)
+> así que es consistente con el resto del módulo. Si en el futuro se parametriza
+> la cuenta, reemplazar con `data.aws_caller_identity.current.account_id` y
+> agregar el data source correspondiente.
+
+---
+
+## Output a agregar (opcional pero recomendado)
+
+En `infra/batch-alerts-semantic-matches/outputs.tf`, agregar:
+
+```hcl
+output "github_actions_lambda_deploy_role_arn" {
+  description = "Mismo ARN que AWS_BATCH_ECR_ROLE_ARN — ahora también tiene permisos Lambda. Documentación."
+  value       = aws_iam_role.github_ecr_batch.arn
+}
+```
+
+Esto deja en claro en los outputs de Terraform que el rol es de doble uso,
+sin crear confusión sobre qué secret usar en GitHub.
+
+---
+
+## Secret en GitHub — sin cambios
+
+El secret `AWS_BATCH_ECR_ROLE_ARN` ya cargado en el repo **sigue siendo el mismo ARN**.
+No hace falta agregar ni rotar nada.
+
+En el workflow `deploy-lambdas.yml` (CI-01), referenciar este secret existente:
+
+```yaml
+- name: Configure AWS credentials (OIDC)
+  uses: aws-actions/configure-aws-credentials@v4
+  with:
+    role-to-assume: ${{ secrets.AWS_BATCH_ECR_ROLE_ARN }}   # mismo secret, rol extendido
+    aws-region: ${{ env.AWS_REGION }}
+```
+
+Actualizar también la spec CI-01 para eliminar la referencia a
+`AWS_LAMBDA_DEPLOY_ROLE_ARN` (ya no se necesita ese secret separado).
+
+---
+
+## Pasos para aplicar
+
+```bash
+cd infra/batch-alerts-semantic-matches
+
+# Verificar que no hay drift antes de tocar
+terraform plan -var-file=terraform.tfvars
+
+# Aplicar solo el nuevo recurso (plan debe mostrar exactamente 1 recurso a agregar)
+terraform apply -var-file=terraform.tfvars
+```
+
+El `plan` debe mostrar exactamente:
+
+```
+# aws_iam_role_policy.github_lambda_deploy will be created
+  + resource "aws_iam_role_policy" "github_lambda_deploy" {
+      + name   = "lambda-deploy-rag-lmbd"
+      + role   = "rag-batch-alerts-github-ecr-prod"
+      ...
+    }
+
+Plan: 1 to add, 0 to change, 0 to destroy.
+```
+
+Si aparece cualquier otro cambio (`0 to change` no se cumple), revisar drift
+antes de continuar.
+
+---
+
+## Verificación post-apply
+
+```bash
+# Confirmar que el rol tiene ahora dos inline policies
+aws iam list-role-policies \
+  --role-name rag-batch-alerts-github-ecr-prod \
+  --query PolicyNames
+
+# Salida esperada:
+# [
+#   "ecr-push-batch-image",
+#   "lambda-deploy-rag-lmbd"
+# ]
+
+# Verificar el contenido de la nueva policy
+aws iam get-role-policy \
+  --role-name rag-batch-alerts-github-ecr-prod \
+  --policy-name lambda-deploy-rag-lmbd
+```

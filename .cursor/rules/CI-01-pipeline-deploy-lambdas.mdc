@@ -1,0 +1,324 @@
+---
+description: Pipeline GitHub Actions para deploy automático de Lambdas en apps/rag_lmbd_* ante cambios en esos paths.
+globs:
+  - ".github/workflows/*.yml"
+alwaysApply: false
+---
+
+# CI-01 — Pipeline de deploy de Lambdas (`apps/rag_lmbd_*`)
+
+## Objetivo
+
+Crear el workflow `.github/workflows/deploy-lambdas.yml` que detecta **qué Lambdas cambiaron**
+en un push a `main` / `tenant_boletin` y despliega **sólo las afectadas** haciendo
+`aws lambda update-function-code` con un ZIP construido on-the-fly.
+
+No usar Terraform en este pipeline. El módulo `terraform/modules/lambda` ya gestiona
+la configuración (VPC, env vars, IAM). Este workflow sólo actualiza el código.
+
+---
+
+## Lambdas en scope
+
+Cada directorio bajo `apps/` con prefijo `rag_lmbd_` es una Lambda independiente.
+Lista actual (puede crecer — el pipeline debe ser dinámico, no hardcodeada):
+
+| Directorio (`apps/<dir>`)        | Función Lambda (`<dir>-<env>`)                        |
+|----------------------------------|-------------------------------------------------------|
+| `rag_lmbd_alert_creation`        | `rag_lmbd_alert_creation-<env>`                       |
+| `rag_lmbd_anmatlinks`            | `rag_lmbd_anmatlinks-<env>`                           |
+| `rag_lmbd_anmatlinks_reset`      | `rag_lmbd_anmatlinks_reset-<env>`                     |
+| `rag_lmbd_bolinks`               | `rag_lmbd_bolinks-<env>`                              |
+| `rag_lmbd_dbwriter`              | `rag_lmbd_dbwriter-<env>`                             |
+| `rag_lmbd_embeddings`            | `rag_lmbd_embeddings-async-<env>` *(nombre especial)* |
+| `rag_lmbd_embeddings_enqueue`    | `rag_lmbd_embeddings_enqueue-<env>`                   |
+| `rag_lmbd_fetcher`               | `rag_lmbd_fetcher-<env>`                              |
+| `rag_lmbd_notifier`              | `rag_lmbd_notifier-<env>`                             |
+| `rag_lmbd_obtener_alertas`       | `rag_lmbd_obtener_alertas-<env>`                      |
+| `rag_lmbd_parser`                | `rag_lmbd_parser-<env>`                               |
+| `rag_lmbd_query`                 | `rag_lmbd_query-<env>`                                |
+| `rag_lmbd_query_dispatcher`      | `rag_lmbd_query_dispatcher-<env>`                     |
+| `rag_lmbd_s3writer`              | `rag_lmbd_s3writer-<env>`                             |
+| `rag_lmbd_stepfunction`          | `rag_lmbd_stepfunction-<env>`                         |
+
+> **Convención de nombre:** `<dir>-<env>`, donde `<env>` viene del branch o variable.
+> Excepción ya documentada: `rag_lmbd_embeddings` → `rag_lmbd_embeddings-async-<env>`.
+> Agregar excepciones similares en un mapa `FUNCTION_NAME_OVERRIDE` dentro del script.
+
+---
+
+## Lógica de detección de cambios
+
+```
+on push → git diff HEAD^ HEAD → paths que empiecen con apps/rag_lmbd_*
+          → extraer lista de directorios únicos afectados
+          → para cada uno: build ZIP + update-function-code
+```
+
+Usar `actions/checkout@v4` con `fetch-depth: 2` para tener el commit anterior.
+
+Script bash de detección (paso `detect-changes`):
+
+```bash
+CHANGED=$(git diff --name-only HEAD^ HEAD | grep '^apps/rag_lmbd_' | cut -d/ -f1-2 | sort -u)
+echo "lambdas=$(echo $CHANGED | tr '\n' ' ' | jq -Rc 'split(" ") | map(select(length > 0))')" >> $GITHUB_OUTPUT
+```
+
+Si `lambdas` es un array vacío `[]`, los pasos de deploy hacen early-exit (`if: steps.detect.outputs.lambdas != '[]'`).
+
+Añadir también `workflow_dispatch` con un input `lambda_dir` (string, opcional):
+si está presente, forzar deploy de esa Lambda ignorando el diff.
+
+---
+
+## Estructura del workflow
+
+```
+jobs:
+  detect:       → produce matrix de lambdas afectadas
+  deploy:       → matrix job: build ZIP + update-function-code
+                   needs: detect
+                   strategy.matrix.lambda: ${{ fromJson(needs.detect.outputs.lambdas) }}
+```
+
+### Job `detect`
+
+```yaml
+detect:
+  runs-on: ubuntu-latest
+  outputs:
+    lambdas: ${{ steps.diff.outputs.lambdas }}
+  steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 2
+    - id: diff
+      name: Detect changed lambdas
+      run: |
+        # Si es workflow_dispatch con lambda_dir override, usarlo directamente
+        if [[ -n "${{ inputs.lambda_dir }}" ]]; then
+          DIRS='["apps/${{ inputs.lambda_dir }}"]'
+        else
+          CHANGED=$(git diff --name-only HEAD^ HEAD \
+            | grep '^apps/rag_lmbd_' \
+            | awk -F/ '{print $1"/"$2}' \
+            | sort -u)
+          if [[ -z "$CHANGED" ]]; then
+            DIRS='[]'
+          else
+            DIRS=$(echo "$CHANGED" | jq -Rc '[., inputs]' | jq -sc '.')
+            # forma segura:
+            DIRS=$(echo "$CHANGED" | jq -Rsc 'split("\n") | map(select(length > 0))')
+          fi
+        fi
+        echo "lambdas=$DIRS" >> "$GITHUB_OUTPUT"
+```
+
+### Job `deploy`
+
+```yaml
+deploy:
+  needs: detect
+  if: needs.detect.outputs.lambdas != '[]'
+  runs-on: ubuntu-latest
+  strategy:
+    fail-fast: false          # una lambda rota no cancela el resto
+    matrix:
+      lambda_dir: ${{ fromJson(needs.detect.outputs.lambdas) }}
+  env:
+    AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+    ENVIRONMENT: ${{ vars.DEPLOY_ENVIRONMENT || 'prod' }}
+  steps:
+    - uses: actions/checkout@v4
+
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_BATCH_ECR_ROLE_ARN }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Build ZIP
+      id: build
+      run: |
+        DIR="${{ matrix.lambda_dir }}"
+        LAMBDA_BASENAME=$(basename "$DIR")
+        DIST="$DIR/dist"
+        ZIP_PATH="$DIST/${LAMBDA_BASENAME}.zip"
+
+        rm -rf "$DIST" && mkdir -p "$DIST"
+
+        # Instalar dependencias si existe requirements.txt
+        if [[ -f "$DIR/requirements.txt" ]]; then
+          pip install --upgrade pip --quiet
+          pip install -r "$DIR/requirements.txt" -t "$DIST" --quiet
+        fi
+
+        # Copiar fuentes
+        cp "$DIR"/*.py "$DIST/" 2>/dev/null || true
+        if [[ -d "$DIR/lib" ]]; then
+          mkdir -p "$DIST/lib"
+          cp "$DIR/lib/"*.py "$DIST/lib/" 2>/dev/null || true
+        fi
+
+        cd "$DIST"
+        zip -r "${LAMBDA_BASENAME}.zip" . > /dev/null
+        cd -
+
+        echo "zip_path=$ZIP_PATH" >> "$GITHUB_OUTPUT"
+        echo "lambda_basename=$LAMBDA_BASENAME" >> "$GITHUB_OUTPUT"
+
+    - name: Resolve function name
+      id: fn
+      run: |
+        BASENAME="${{ steps.build.outputs.lambda_basename }}"
+        ENV="${{ env.ENVIRONMENT }}"
+
+        # Mapa de overrides (formato: "dirname:function_name_sin_env")
+        declare -A OVERRIDES=(
+          ["rag_lmbd_embeddings"]="rag_lmbd_embeddings-async"
+        )
+
+        if [[ -n "${OVERRIDES[$BASENAME]+x}" ]]; then
+          FUNCTION_NAME="${OVERRIDES[$BASENAME]}-${ENV}"
+        else
+          FUNCTION_NAME="${BASENAME}-${ENV}"
+        fi
+
+        echo "function_name=$FUNCTION_NAME" >> "$GITHUB_OUTPUT"
+
+    - name: Deploy to Lambda
+      run: |
+        aws lambda update-function-code \
+          --function-name "${{ steps.fn.outputs.function_name }}" \
+          --zip-file "fileb://${{ steps.build.outputs.zip_path }}" \
+          --region "${{ env.AWS_REGION }}"
+
+    - name: Wait for update to complete
+      run: |
+        aws lambda wait function-updated \
+          --function-name "${{ steps.fn.outputs.function_name }}" \
+          --region "${{ env.AWS_REGION }}"
+
+    - name: Summary
+      run: |
+        echo "✅ Deployed \`${{ steps.fn.outputs.function_name }}\` from \`${{ matrix.lambda_dir }}\`" \
+          >> "$GITHUB_STEP_SUMMARY"
+```
+
+---
+
+## Secrets y variables requeridos
+
+Agregar en **Settings → Secrets and variables → Actions** del repo:
+
+| Tipo     | Nombre                        | Valor esperado                                                        |
+|----------|-------------------------------|-----------------------------------------------------------------------|
+| Secret   | `AWS_BATCH_ECR_ROLE_ARN`      | ARN del rol OIDC batch (`rag-batch-alerts-github-ecr-prod`); incluye ECR + Lambda deploy (CI-02). |
+| Variable | `AWS_REGION`                  | `us-east-1` (o la región del proyecto)                                |
+| Variable | `DEPLOY_ENVIRONMENT`          | `prod` (o `qa`, `dev` según branch)                                   |
+
+No hace falta un secret aparte `AWS_LAMBDA_DEPLOY_ROLE_ARN`.
+
+---
+
+## Rol IAM (`AWS_BATCH_ECR_ROLE_ARN`)
+
+Mismo rol que el pipeline Docker del batch semántico: Terraform en
+`infra/batch-alerts-semantic-matches/iam_github_oidc.tf` define el trust OIDC y
+las policies inline `ecr-push-batch-image` y `lambda-deploy-rag-lmbd` (CI-02).
+
+Permisos Lambda mínimos en la segunda policy:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "LambdaDeploy",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:UpdateFunctionCode",
+        "lambda:GetFunction",
+        "lambda:GetFunctionConfiguration"
+      ],
+      "Resource": "arn:aws:lambda:<region>:<account-id>:function:rag_lmbd_*"
+    }
+  ]
+}
+```
+
+Trust policy: ver `aws_iam_role.github_ecr_batch` en el mismo archivo (issuer GitHub Actions).
+
+---
+
+## Triggers del workflow
+
+```yaml
+on:
+  push:
+    branches:
+      - main
+      - master
+      - tenant_boletin
+    paths:
+      - "apps/rag_lmbd_*/**"
+
+  workflow_dispatch:
+    inputs:
+      lambda_dir:
+        description: "Directorio de la lambda a forzar (ej: rag_lmbd_parser)"
+        required: false
+        type: string
+```
+
+---
+
+## Concurrency
+
+```yaml
+concurrency:
+  group: deploy-lambdas-${{ github.ref }}
+  cancel-in-progress: false   # NO cancelar en progreso — evitar deploys a medias
+```
+
+---
+
+## Consideraciones de implementación
+
+1. **`rag_lmbd_anmatlinks`** tiene una subdir `lib/` con `lambda_chromium.py` de ~8KB.
+   El paso de build ya copia `lib/*.py` pero si en el futuro incluye binarios,
+   habrá que extender el paso para copiar archivos no-.py también.
+
+2. **`rag_lmbd_embeddings`** tiene un `build_lambda.sh` propio que llama a Terraform.
+   Este pipeline reemplaza ese script para CI; el script local puede seguir usándose
+   para deploy manual. No llamar al script desde el workflow (tiene `terraform apply`
+   embebido que no corresponde a este pipeline de código).
+
+3. **Tamaño del ZIP:** todas las lambdas actuales caben bajo el límite directo de
+   50 MB de `update-function-code` (no se necesita S3 intermediario). Si alguna
+   crece por encima, agregar un paso condicional que suba a S3 y use
+   `--s3-bucket / --s3-key` en lugar de `--zip-file`.
+
+4. **Tests:** si en el futuro se agregan tests unitarios por lambda (ya existen en
+   `rag_lmbd_embeddings/tests_unit/` y `rag_lmbd_query/tests_unit/`), agregar un
+   paso `pytest` antes de `Build ZIP` dentro del mismo matrix job.
+
+5. **Multi-ambiente:** para deployar a `qa` y `prod` en el mismo push,
+   extender la matrix con una dimensión `environment` o crear dos workflows separados
+   con distintas `branches` y `vars.DEPLOY_ENVIRONMENT`.
+
+---
+
+## Archivo final esperado
+
+```
+.github/
+  workflows/
+    batch-alerts-semantic-docker.yml   ← existente, no modificar
+    deploy-lambdas.yml                 ← NUEVO, generado por esta spec
+```
