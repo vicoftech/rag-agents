@@ -10,13 +10,20 @@ from bs4 import BeautifulSoup
 import re
 from urllib.parse import urlparse
 
-# AWS Session
+# AWS Session (boto3 cliente S3). En Lambda el runtime define ACCESS_KEY/SECRET y
+# SESSION_TOKEN para el rol; no pasar solo id+secret sin session token (S3: InvalidAccessKeyId).
 session_args = {'region_name': os.getenv('AWS_REGION', 'us-east-1')}
-if os.getenv('AWS_ACCESS_KEY_ID') and os.getenv('AWS_SECRET_ACCESS_KEY'):
-    session_args.update({
-        'aws_access_key_id': os.getenv('AWS_ACCESS_KEY_ID'),
-        'aws_secret_access_key': os.getenv('AWS_SECRET_ACCESS_KEY')
-    })
+if (
+    os.getenv('AWS_ACCESS_KEY_ID')
+    and os.getenv('AWS_SECRET_ACCESS_KEY')
+    and not os.getenv('AWS_SESSION_TOKEN')
+):
+    session_args.update(
+        {
+            'aws_access_key_id': os.getenv('AWS_ACCESS_KEY_ID'),
+            'aws_secret_access_key': os.getenv('AWS_SECRET_ACCESS_KEY'),
+        }
+    )
 
 # Environment variables
 BOLETIN_BASE_URL = os.getenv('BOLETIN_BASE_URL', 'https://www.boletinoficial.gob.ar')
