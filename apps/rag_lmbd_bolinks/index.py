@@ -47,6 +47,16 @@ def resolve_sections(section_param) -> list[str]:
     raise ValueError(f"Tipo inválido para section: {type(section_param).__name__}")
 
 
+def _received_params_for_output(body: dict) -> dict:
+    """Eco de la invocación para s3writer cuando la SFN sólo pasa ``bolinks_output``."""
+    return {
+        "date": body.get("date"),
+        "section": body.get("section"),
+        "tenant_id": body.get("tenant_id"),
+        "agent_id": body.get("agent_id"),
+    }
+
+
 def resolve_date_default_today(date_raw) -> tuple[str | None, str | None]:
     """Usa HOY como default si no se pasa fecha (no modifica normalize_date_to_yyyymmdd)."""
     if date_raw is None or (isinstance(date_raw, str) and not str(date_raw).strip()):
@@ -266,6 +276,7 @@ def handler(event, context):
                 "pdf_links": {},
                 "totals": {"total": 0},
                 "timestamp": datetime.now().isoformat(),
+                "received_params": _received_params_for_output(body),
             }
         else:
             print(
@@ -299,6 +310,7 @@ def handler(event, context):
                 "pdf_links": pdf_links,
                 "totals": totals,
                 "timestamp": datetime.now().isoformat(),
+                "received_params": _received_params_for_output(body),
             }
 
         return {
