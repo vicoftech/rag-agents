@@ -89,6 +89,15 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
+# AL-02: Import para verificación de idempotencia de emails
+try:
+    import psycopg2
+    from psycopg2.extensions import connection as PgConnection
+    _PSYCOPG2_AVAILABLE = True
+except ImportError:
+    _PSYCOPG2_AVAILABLE = False
+    PgConnection = None  # type: ignore
+
 _UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
     re.IGNORECASE,
@@ -580,6 +589,187 @@ def compute_notificaciones(blob: dict[str, Any], fallback_from: str) -> list[dic
         )
 
     return out
+
+
+# ────────────────────────────────────────────────────────────────────
+# AL-02: Idempotencia de emails - Prevención de duplicados
+# ────────────────────────────────────────────────────────────────────
+
+
+def _connect_to_postgres() -> PgConnection | None:
+    """
+    Conecta a PostgreSQL usando variables de entorno o Secrets Manager.
+    Retorna None si psycopg2 no está disponible o si faltan credenciales.
+
+    Variables de entorno:
+    - DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PORT (opcional, default 5432)
+    - DB_SECRET_ARN (opcional, preferido sobre variables directas)
+    """
+    if not _PSYCOPG2_AVAILABLE:
+        return None
+
+    import os
+
+    # Opción 1: Secrets Manager (preferido)
+    arn = (os.environ.get("DB_SECRET_ARN") or "").strip()
+    if arn:
+        try:
+            import json
+            secrets_client = boto3.client("secretsmanager")
+            resp = secrets_client.get_secret_value(SecretId=arn)
+            secret = json.loads(resp.get("SecretString") or "{}")
+
+            host = secret.get("host")
+            dbname = secret.get("dbname") or secret.get("database")
+            username = secret.get("username") or secret.get("user")
+            password = secret.get("password")
+            port = int(secret.get("port", 5432))
+
+            if not all([host, dbname, username, password]):
+                return None
+
+            return psycopg2.connect(
+                host=host,
+                port=port,
+                dbname=dbname,
+                user=username,
+                password=password,
+                sslmode="require",
+                connect_timeout=30,
+            )
+        except Exception:
+            # Si falla, intentar con variables de entorno
+            pass
+
+    # Opción 2: Variables de entorno directas
+    host = (os.environ.get("DB_HOST") or "").strip()
+    dbname = (os.environ.get("DB_NAME") or "").strip()
+    user = (os.environ.get("DB_USER") or "").strip()
+    password = os.environ.get("DB_PASSWORD")
+    port_s = (os.environ.get("DB_PORT") or "5432").strip()
+
+    if not host or not dbname or not user or password is None or str(password) == "":
+        return None
+
+    try:
+        port = int(port_s)
+    except ValueError:
+        return None
+
+    try:
+        return psycopg2.connect(
+            host=host,
+            port=port,
+            dbname=dbname,
+            user=user,
+            password=str(password),
+            sslmode=(os.environ.get("DB_SSLMODE") or "require").strip() or "require",
+            connect_timeout=30,
+        )
+    except Exception:
+        return None
+
+
+def _check_email_already_sent(
+    conn: PgConnection | None,
+    alert_id: int | str | None,
+    recipient_email: str,
+    sent_date: date | None = None,
+) -> bool:
+    """
+    Verifica si un email ya fue enviado para una alerta específica.
+
+    Args:
+        conn: Conexión a PostgreSQL (puede ser None)
+        alert_id: ID de la alerta
+        recipient_email: Email del destinatario
+        sent_date: Fecha de envío (default: hoy)
+
+    Returns:
+        True si el email ya fue enviado, False en caso contrario
+        False si no hay conexión o si ocurre algún error
+    """
+    if conn is None or not _PSYCOPG2_AVAILABLE:
+        return False
+
+    if not alert_id or not recipient_email:
+        return False
+
+    if sent_date is None:
+        sent_date = date.today()
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1 FROM alert_emails_sent
+                WHERE alert_id = %s
+                  AND recipient_email = %s
+                  AND sent_date = %s
+                LIMIT 1
+                """,
+                (int(alert_id), recipient_email.strip(), sent_date),
+            )
+            return cur.fetchone() is not None
+    except Exception:
+        # Si hay error (tabla no existe, etc.), no bloquear el envío
+        return False
+
+
+def filter_duplicate_notifications(
+    notifs: list[dict[str, Any]],
+    conn: PgConnection | None,
+) -> tuple[list[dict[str, Any]], int]:
+    """
+    Filtra notificaciones que ya fueron enviadas según la tabla alert_emails_sent.
+
+    Args:
+        notifs: Lista de notificaciones a filtrar
+        conn: Conexión a PostgreSQL (puede ser None)
+
+    Returns:
+        Tupla (notificaciones_filtradas, cantidad_duplicados_detectados)
+    """
+    if conn is None or not _PSYCOPG2_AVAILABLE:
+        # Si no hay conexión, retornar todas las notificaciones sin filtrar
+        return (notifs, 0)
+
+    filtered: list[dict[str, Any]] = []
+    duplicates_count = 0
+    today = date.today()
+
+    for notif in notifs:
+        alert_id = notif.get("alerta_id")
+        message = notif.get("message") or {}
+        recipient_email = (message.get("to") or "").strip()
+
+        if not alert_id or not recipient_email:
+            # Si falta información, incluir la notificación
+            filtered.append(notif)
+            continue
+
+        already_sent = _check_email_already_sent(
+            conn,
+            alert_id,
+            recipient_email,
+            sent_date=today,
+        )
+
+        if already_sent:
+            duplicates_count += 1
+            _log_step(
+                "DEDUP",
+                f"SKIP_DUPLICATE: alert_id={alert_id} recipient={recipient_email} "
+                f"(ya enviado el {today})",
+                level="WARNING",
+            )
+        else:
+            filtered.append(notif)
+
+    return (filtered, duplicates_count)
+
+
+# ────────────────────────────────────────────────────────────────────
 
 
 def _publish_json_messages_to_sqs(
@@ -1953,14 +2143,46 @@ def main(argv: list[str]) -> int:
         do_publish_queue = bool(args.publish_email_queue and not args.no_email_queue_send)
         if do_publish_queue:
             try:
+                # AL-02: Conectar a PostgreSQL para verificar duplicados
+                pg_conn = _connect_to_postgres()
+                if pg_conn is None:
+                    _log_step(
+                        "DEDUP",
+                        "PostgreSQL no disponible - enviando notificaciones sin verificar duplicados",
+                        level="WARNING",
+                    )
+                else:
+                    _log_step("DEDUP", "Verificando duplicados en alert_emails_sent...")
+
+                # AL-02: Filtrar notificaciones duplicadas
+                notifs_filtered, duplicates_count = filter_duplicate_notifications(notifs, pg_conn)
+
+                if duplicates_count > 0:
+                    _log_step(
+                        "DEDUP",
+                        f"Duplicados detectados: {duplicates_count} notificaciones omitidas",
+                        level="WARNING",
+                    )
+
+                # Cerrar conexión
+                if pg_conn is not None:
+                    try:
+                        pg_conn.close()
+                    except Exception:
+                        pass
+
                 qn = (args.email_sqs_queue or "").strip() or "email-sender-record-email-processor-prod"
                 _log_step("MAIN", f"Publicando notificaciones en SQS queue={qn}")
                 n_sent = publish_notificaciones_to_sqs(
-                    notifs,
+                    notifs_filtered,  # AL-02: Usar notificaciones filtradas
                     queue_name=qn,
                     session=_session(args.profile, args.region),
                 )
-                _log_step("MAIN", f"SQS publicados: {n_sent} mensaje(s) → cola «{qn}»")
+                _log_step(
+                    "MAIN",
+                    f"SQS publicados: {n_sent} mensaje(s) → cola «{qn}» "
+                    f"(originales: {len(notifs)}, duplicados: {duplicates_count})",
+                )
             except ClientError as e:
                 _log_step("MAIN", f"AWS ClientError (SQS): {e}", level="ERROR")
                 return 4
