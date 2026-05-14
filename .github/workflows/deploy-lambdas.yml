@@ -1,0 +1,163 @@
+# ---
+# Deploy sólo el código (ZIP) de Lambdas bajo apps/rag_lmbd_* ante cambios en esos paths.
+# Configuración de la función (VPC, env) sigue en Terraform.
+#
+# Secret (Settings → Secrets → Actions):
+#   AWS_BATCH_ECR_ROLE_ARN — rol OIDC con permisos Lambda (ver CI-02 / iam_github_oidc.tf).
+#
+# Variables opcionales del repo: AWS_REGION, DEPLOY_ENVIRONMENT (default prod).
+# ---
+
+name: Deploy Lambdas (rag_lmbd_*)
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - tenant_boletin
+    paths:
+      - "apps/rag_lmbd_*/**"
+
+  workflow_dispatch:
+    inputs:
+      lambda_dir:
+        description: "Nombre del directorio bajo apps/ (ej. rag_lmbd_parser). Opcional: si vacío, usa git diff como en push."
+        required: false
+        type: string
+
+concurrency:
+  group: deploy-lambdas-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      lambdas: ${{ steps.diff.outputs.lambdas }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - id: diff
+        name: Detect changed lambdas
+        env:
+          INPUT_LAMBDA_DIR: ${{ github.event.inputs.lambda_dir }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && -n "${INPUT_LAMBDA_DIR// }" ]]; then
+            DIRS=$(jq -nc --arg d "${INPUT_LAMBDA_DIR// }" '["apps/" + $d]')
+          else
+            CHANGED=$(git diff --name-only HEAD^ HEAD 2>/dev/null | grep '^apps/rag_lmbd_' | awk -F/ '{print $1"/"$2}' | sort -u || true)
+            if [[ -z "${CHANGED}" ]]; then
+              DIRS='[]'
+            else
+              DIRS=$(printf '%s\n' "$CHANGED" | jq -Rsc 'split("\n") | map(select(length > 0))')
+            fi
+          fi
+          echo "lambdas=${DIRS}" >> "${GITHUB_OUTPUT}"
+          echo "Detected matrix: ${DIRS}"
+
+  deploy:
+    needs: detect
+    if: needs.detect.outputs.lambdas != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        lambda_dir: ${{ fromJson(needs.detect.outputs.lambdas) }}
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      ENVIRONMENT: ${{ vars.DEPLOY_ENVIRONMENT || 'prod' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_BATCH_ECR_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build ZIP
+        id: build
+        run: |
+          set -euo pipefail
+          DIR="${{ matrix.lambda_dir }}"
+          if [[ ! -d "$DIR" ]]; then
+            echo "::error::Directorio no existe: ${DIR}"
+            exit 1
+          fi
+          LAMBDA_BASENAME=$(basename "$DIR")
+          DIST="${DIR}/dist"
+          ZIP_PATH="${DIST}/${LAMBDA_BASENAME}.zip"
+
+          rm -rf "$DIST" && mkdir -p "$DIST"
+
+          if [[ -f "${DIR}/requirements.txt" ]]; then
+            pip install --upgrade pip --quiet
+            pip install -r "${DIR}/requirements.txt" -t "$DIST" --quiet
+          fi
+
+          shopt -s nullglob
+          for f in "${DIR}"/*.py; do
+            cp "$f" "$DIST/"
+          done
+          if [[ -d "${DIR}/lib" ]]; then
+            mkdir -p "${DIST}/lib"
+            for f in "${DIR}/lib/"*.py; do
+              [[ -e "$f" ]] || continue
+              cp "$f" "${DIST}/lib/"
+            done
+          fi
+
+          ( cd "$DIST" && zip -r "${LAMBDA_BASENAME}.zip" . > /dev/null )
+
+          echo "zip_path=${ZIP_PATH}" >> "${GITHUB_OUTPUT}"
+          echo "lambda_basename=${LAMBDA_BASENAME}" >> "${GITHUB_OUTPUT}"
+
+      - name: Resolve function name
+        id: fn
+        shell: bash
+        env:
+          BASENAME: ${{ steps.build.outputs.lambda_basename }}
+        run: |
+          set -euo pipefail
+          ENV="${{ env.ENVIRONMENT }}"
+          declare -A OVERRIDES=(
+            ["rag_lmbd_embeddings"]="rag_lmbd_embeddings-async"
+          )
+          if [[ -n "${OVERRIDES[$BASENAME]+x}" ]]; then
+            FUNCTION_NAME="${OVERRIDES[$BASENAME]}-${ENV}"
+          else
+            FUNCTION_NAME="${BASENAME}-${ENV}"
+          fi
+          echo "function_name=${FUNCTION_NAME}" >> "${GITHUB_OUTPUT}"
+
+      - name: Deploy to Lambda
+        run: |
+          set -euo pipefail
+          aws lambda update-function-code \
+            --function-name "${{ steps.fn.outputs.function_name }}" \
+            --zip-file "fileb://${{ steps.build.outputs.zip_path }}" \
+            --region "${{ env.AWS_REGION }}"
+
+      - name: Wait for update to complete
+        run: |
+          set -euo pipefail
+          aws lambda wait function-updated \
+            --function-name "${{ steps.fn.outputs.function_name }}" \
+            --region "${{ env.AWS_REGION }}"
+
+      - name: Summary
+        run: |
+          echo "✅ Deployed \`${{ steps.fn.outputs.function_name }}\` from \`${{ matrix.lambda_dir }}\`" >> "${GITHUB_STEP_SUMMARY}"

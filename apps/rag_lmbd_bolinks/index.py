@@ -312,6 +312,7 @@ def handler(event, context):
 if __name__ == "__main__":
     import sys
 
+    # Ejemplos locales; el ZIP de prod se actualiza vía deploy-lambdas (paths apps/rag_lmbd_*).
     if len(sys.argv) > 1 and sys.argv[1] == "all":
         print(handler({"date": "20260408", "section": "all"}, None))
     else:
