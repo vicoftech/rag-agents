@@ -66,6 +66,12 @@ Mapas: scripts/boletin_map.json y scripts/anmat_map.json (agent_id UUID de ANMAT
 Mapeo por fuente_de_informacion: tenant_id (slug API), agent_id (UUID),
 opcional \"s3_tenant_slug\". URIs: s3://<bucket>/<s3_slug>/<agent>/documents/<document_name>.
 
+**AL-05** (``--publish-email-queue``): tras ``SendMessage`` exitoso a la cola de email, el script intenta
+``UPDATE`` en la tabla ``busqueda`` (columnas detectadas: ``activo = false`` si es boolean, ``last_fired_at``,
+``estado_alerta`` / etc.).
+Variables: ``ALERT_BUSQUEDA_TABLE``, ``ALERT_BUSQUEDA_ESTADO_FIRED``, ``ALERT_BUSQUEDA_ESTADO_FIRED_TEXT``.
+Log INFO por fila: ``ALERT_FIRED: alert_id=<id busqueda> status actualizado a FIRED``.
+
 Build imagen ECS batch (push ECR): ver ``.github/workflows/batch-alerts-semantic-docker.yml``.
 """
 
@@ -773,6 +779,203 @@ def filter_duplicate_notifications(
 
 
 # ────────────────────────────────────────────────────────────────────
+# AL-05: Tras confirmar publicación a la cola de email, actualizar public.busqueda
+# (last_fired_at / estado_alerta o equivalentes detectados por information_schema).
+# ────────────────────────────────────────────────────────────────────
+
+_PG_IDENT_OK = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _pg_ident_ok(name: str) -> bool:
+    return bool(name and _PG_IDENT_OK.match(name))
+
+
+def _resolve_busqueda_table(cur: Any) -> tuple[str, str] | None:
+    """
+    Resuelve schema y tabla de búsquedas (misma familia que rag_lmbd_obtener_alertas).
+    Override: ALERT_BUSQUEDA_TABLE=schema.table
+    """
+    raw = (os.environ.get("ALERT_BUSQUEDA_TABLE") or "").strip()
+    candidates: list[str] = []
+    if raw and "." in raw:
+        candidates.append(raw)
+    env_key = (os.environ.get("ENVIRONMENT") or os.environ.get("ENV") or "dev").strip().upper() or "DEV"
+    sch = (os.environ.get(f"DB_SCHEMA_{env_key}") or os.environ.get("DB_SCHEMA") or "public").strip()
+    if _pg_ident_ok(sch):
+        candidates.append(f"{sch}.busqueda")
+    candidates.append("public.busqueda")
+    seen: set[str] = set()
+    for fq in candidates:
+        if fq in seen:
+            continue
+        seen.add(fq)
+        cur.execute("SELECT to_regclass(%s::text)", (fq,))
+        row = cur.fetchone()
+        if row and row[0]:
+            s = str(row[0])
+            if "." in s:
+                a, b = s.split(".", 1)
+                a, b = a.strip('"'), b.strip('"')
+            else:
+                a, b = "public", s.strip('"')
+            if _pg_ident_ok(a) and _pg_ident_ok(b):
+                return (a, b)
+    return None
+
+
+def _busqueda_column_types(cur: Any, schema: str, table: str) -> dict[str, str]:
+    cur.execute(
+        """
+        SELECT lower(column_name), lower(data_type)
+        FROM information_schema.columns
+        WHERE table_schema = %s AND table_name = %s
+        """,
+        (schema, table),
+    )
+    return {str(r[0]): str(r[1]) for r in cur.fetchall()}
+
+
+def _type_is_integerish(dt: str) -> bool:
+    return any(
+        x in dt
+        for x in (
+            "integer",
+            "smallint",
+            "bigint",
+            "serial",
+            "bigserial",
+            "smallserial",
+        )
+    )
+
+
+def _type_is_textish(dt: str) -> bool:
+    return "char" in dt or dt == "text" or "varchar" in dt
+
+
+def _type_is_boolean(dt: str) -> bool:
+    return dt == "boolean"
+
+
+def busqueda_fired_set_clause_and_params(
+    col_types: dict[str, str], fired_at: datetime
+) -> tuple[str, list[Any]] | None:
+    """
+    Construye la cláusula SET ... para marcar disparo en busqueda.
+    estado numérico: ALERT_BUSQUEDA_ESTADO_FIRED (default 2).
+    estado texto: ALERT_BUSQUEDA_ESTADO_FIRED_TEXT (default FIRED).
+    Si existe columna ``activo`` (boolean), se pone ``false`` (desactivar alerta tras match / AL-05).
+    """
+    parts: list[str] = []
+    vals: list[Any] = []
+    ct = {k.lower(): v.lower() for k, v in col_types.items()}
+
+    if "last_fired_at" in ct:
+        parts.append("last_fired_at = %s")
+        vals.append(fired_at)
+    for alt in ("fechayhora_ultimo_disparo", "fecha_ultimo_disparo", "ultimo_disparo_at"):
+        if alt in ct:
+            parts.append(f"{alt} = %s")
+            vals.append(fired_at)
+
+    fired_int_s = (os.environ.get("ALERT_BUSQUEDA_ESTADO_FIRED") or "2").strip()
+    try:
+        fired_int = int(fired_int_s)
+    except ValueError:
+        fired_int = 2
+    fired_txt = (os.environ.get("ALERT_BUSQUEDA_ESTADO_FIRED_TEXT") or "FIRED").strip() or "FIRED"
+
+    if "estado_alerta" in ct:
+        dt = ct["estado_alerta"]
+        if _type_is_integerish(dt):
+            parts.append("estado_alerta = %s")
+            vals.append(fired_int)
+        elif _type_is_textish(dt):
+            parts.append("estado_alerta = %s")
+            vals.append(fired_txt)
+
+    if "estado" in ct and "estado_alerta" not in ct:
+        dt = ct["estado"]
+        if _type_is_integerish(dt):
+            parts.append("estado = %s")
+            vals.append(fired_int)
+        elif _type_is_textish(dt):
+            parts.append("estado = %s")
+            vals.append(fired_txt)
+
+    if "status" in ct and "estado" not in ct and "estado_alerta" not in ct:
+        dt = ct["status"]
+        if _type_is_textish(dt) or _type_is_integerish(dt):
+            parts.append("status = %s")
+            vals.append(fired_txt if _type_is_textish(dt) else fired_int)
+
+    # AL-05: dejar de reprocesar la alerta (obtener_alertas filtra activo=true).
+    if "activo" in ct and _type_is_boolean(ct["activo"]):
+        parts.append("activo = false")
+
+    if not parts:
+        return None
+    return ", ".join(parts), vals
+
+
+def update_busqueda_after_confirmed_email_send(
+    conn: PgConnection,
+    busqueda_ids: list[int],
+    fired_at: datetime,
+) -> tuple[list[int], list[int]]:
+    """
+    AL-05: UPDATE en la tabla busqueda por cada id (misma conexión; el caller hace commit).
+
+    Returns:
+        (ids_actualizados_rowcount_gt0, ids_sin_cambio_o_error)
+    """
+    if not busqueda_ids or not _PSYCOPG2_AVAILABLE:
+        return ([], [])
+
+    uniq_ids = list(dict.fromkeys(int(x) for x in busqueda_ids))
+    ok: list[int] = []
+    cur = conn.cursor()
+    try:
+        rel = _resolve_busqueda_table(cur)
+        if not rel:
+            if uniq_ids:
+                _log_step(
+                    "AL-05",
+                    "No se encontró tabla busqueda (to_regclass); omito UPDATE post-email.",
+                    level="WARNING",
+                )
+            return ([], uniq_ids)
+        schema, table = rel
+        types_map = _busqueda_column_types(cur, schema, table)
+        built = busqueda_fired_set_clause_and_params(types_map, fired_at)
+        if not built:
+            if uniq_ids:
+                _log_step(
+                    "AL-05",
+                    "Tabla busqueda sin columnas reconocibles (activo boolean / last_fired_at / "
+                    "fechayhora_ultimo_disparo / estado_alerta|estado|status); omito UPDATE. "
+                    "Coordinar DDL o ALERT_BUSQUEDA_TABLE.",
+                    level="WARNING",
+                )
+            return ([], uniq_ids)
+        set_sql, set_params = built
+        for bid in uniq_ids:
+            try:
+                cur.execute(
+                    f'UPDATE "{schema}"."{table}" SET {set_sql} WHERE id = %s',
+                    [*set_params, bid],
+                )
+                if cur.rowcount and int(cur.rowcount) > 0:
+                    ok.append(bid)
+            except Exception:
+                pass
+        bad = [b for b in uniq_ids if b not in ok]
+        return (ok, bad)
+    finally:
+        cur.close()
+
+
+# ────────────────────────────────────────────────────────────────────
 
 
 def _publish_json_messages_to_sqs(
@@ -826,7 +1029,9 @@ def mark_alert_creation_messages_as_fired(
     AL-05: evita que el backend legacy reprocesa alertas creadas por
     ``rag_lmbd_alert_creation`` con ``enviada=false`` cuando el batch RAG ya
     publicó el email funcional a ``email-sender-record-email-processor-*`` o
-    detectó que ese email ya existía por idempotencia.
+    detectó que ese email ya existía por idempotencia. El estado ``FIRED`` en
+    ``public.busqueda`` lo actualiza el script (post-SQS) y/o la Lambda cuando
+    ``enviada=true`` en el mensaje.
 
     No modifica la lista original; retorna copias superficiales de los mensajes.
     """
@@ -2240,8 +2445,11 @@ def main(argv: list[str]) -> int:
         print(args.output)
         do_publish_queue = bool(args.publish_email_queue and not args.no_email_queue_send)
         if do_publish_queue:
+            duplicates_count = 0
+            notifs_filtered = list(notifs)
+            pg_conn = None
+            upd_ok: list[int] = []
             try:
-                # AL-02: Conectar a PostgreSQL para verificar duplicados
                 pg_conn = _connect_to_postgres()
                 if pg_conn is None:
                     _log_step(
@@ -2252,7 +2460,6 @@ def main(argv: list[str]) -> int:
                 else:
                     _log_step("DEDUP", "Verificando duplicados en alert_emails_sent...")
 
-                # AL-02: Filtrar notificaciones duplicadas
                 notifs_filtered, duplicates_count = filter_duplicate_notifications(notifs, pg_conn)
 
                 if duplicates_count > 0:
@@ -2262,35 +2469,79 @@ def main(argv: list[str]) -> int:
                         level="WARNING",
                     )
 
-                # Cerrar conexión
+                qn = (args.email_sqs_queue or "").strip() or "email-sender-record-email-processor-prod"
+                _log_step("MAIN", f"Publicando notificaciones en SQS queue={qn}")
+                n_sent = publish_notificaciones_to_sqs(
+                    notifs_filtered,
+                    queue_name=qn,
+                    session=_session(args.profile, args.region),
+                )
+                # AL-05: email encolado con éxito → marcar busqueda; logs por alert_id (id busqueda).
+                email_confirmed_notifs = list(notifs)
+                fired_ts = datetime.now(timezone.utc)
+                ids_for_busqueda: list[int] = []
+                for n in notifs_filtered:
+                    aid = n.get("alerta_id")
+                    if aid is None:
+                        continue
+                    try:
+                        ids_for_busqueda.append(int(aid))
+                    except (TypeError, ValueError):
+                        continue
+
+                conn_bus = None
+                if ids_for_busqueda:
+                    conn_bus = pg_conn if pg_conn is not None else _connect_to_postgres()
+                    try:
+                        if conn_bus is not None:
+                            try:
+                                upd_ok, upd_bad = update_busqueda_after_confirmed_email_send(
+                                    conn_bus, ids_for_busqueda, fired_ts
+                                )
+                                conn_bus.commit()
+                                for bid in upd_ok:
+                                    _log_step(
+                                        "MAIN",
+                                        f"ALERT_FIRED: alert_id={bid} status actualizado a FIRED",
+                                    )
+                                if upd_bad:
+                                    _log_step(
+                                        "AL-05",
+                                        f"busqueda sin fila o error UPDATE para ids={upd_bad[:25]}",
+                                        level="WARNING",
+                                    )
+                            except Exception as e:
+                                try:
+                                    conn_bus.rollback()
+                                except Exception:
+                                    pass
+                                _log_step(
+                                    "AL-05",
+                                    f"Fallo transacción UPDATE busqueda tras SQS: {e}",
+                                    level="ERROR",
+                                )
+                    finally:
+                        if conn_bus is not None and conn_bus is not pg_conn:
+                            try:
+                                conn_bus.close()
+                            except Exception:
+                                pass
+
+                _log_step(
+                    "MAIN",
+                    f"SQS publicados: {n_sent} mensaje(s) → cola «{qn}» "
+                    f"(originales: {len(notifs)}, duplicados: {duplicates_count}); "
+                    f"busqueda FIRED en BD={len(upd_ok)}",
+                )
+            except ClientError as e:
+                _log_step("MAIN", f"AWS ClientError (SQS): {e}", level="ERROR")
+                return 4
+            finally:
                 if pg_conn is not None:
                     try:
                         pg_conn.close()
                     except Exception:
                         pass
-
-                qn = (args.email_sqs_queue or "").strip() or "email-sender-record-email-processor-prod"
-                _log_step("MAIN", f"Publicando notificaciones en SQS queue={qn}")
-                n_sent = publish_notificaciones_to_sqs(
-                    notifs_filtered,  # AL-02: Usar notificaciones filtradas
-                    queue_name=qn,
-                    session=_session(args.profile, args.region),
-                )
-                # AL-05: si el email fue publicado o ya existía por idempotencia,
-                # la alerta RAG no debe quedar pendiente para el backend legacy.
-                email_confirmed_notifs = list(notifs)
-                _log_step(
-                    "MAIN",
-                    f"SQS publicados: {n_sent} mensaje(s) → cola «{qn}» "
-                    f"(originales: {len(notifs)}, duplicados: {duplicates_count})",
-                )
-                _log_step(
-                    "MAIN",
-                    f"ALERT_FIRED: alertas con email publicado/confirmado={len(email_confirmed_notifs)}",
-                )
-            except ClientError as e:
-                _log_step("MAIN", f"AWS ClientError (SQS): {e}", level="ERROR")
-                return 4
         elif args.publish_email_queue and args.no_email_queue_send:
             _log_step("MAIN", "Modo prueba activo: se omite publicación a SQS (--no-email-queue-send).")
 

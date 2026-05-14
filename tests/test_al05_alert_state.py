@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 import types
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -89,3 +90,32 @@ def test_mark_alert_creation_messages_as_fired_ignores_invalid_ids():
     marked = module.mark_alert_creation_messages_as_fired(messages, notifications)
 
     assert all("enviada" not in msg for msg in marked)
+
+
+def test_busqueda_fired_set_clause_includes_last_fired_and_estado_alerta():
+    module = _load_alerts_semantic_matches()
+    ts = datetime(2026, 1, 2, tzinfo=timezone.utc)
+    col = {"last_fired_at": "timestamp with time zone", "estado_alerta": "integer"}
+    out = module.busqueda_fired_set_clause_and_params(col, ts)
+    assert out is not None
+    set_sql, params = out
+    assert "last_fired_at" in set_sql
+    assert "estado_alerta" in set_sql
+    assert params[0] is ts
+    assert params[1] == 2
+
+
+def test_busqueda_fired_set_clause_none_when_no_supported_columns():
+    module = _load_alerts_semantic_matches()
+    ts = datetime(2026, 1, 2, tzinfo=timezone.utc)
+    assert module.busqueda_fired_set_clause_and_params({"foo": "text"}, ts) is None
+
+
+def test_busqueda_fired_set_clause_activo_false_when_boolean():
+    module = _load_alerts_semantic_matches()
+    ts = datetime(2026, 1, 2, tzinfo=timezone.utc)
+    out = module.busqueda_fired_set_clause_and_params({"activo": "boolean"}, ts)
+    assert out is not None
+    set_sql, params = out
+    assert "activo = false" in set_sql
+    assert params == []

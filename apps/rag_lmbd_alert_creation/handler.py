@@ -1,6 +1,9 @@
 """
 SQS-triggered Lambda: persiste alertas en public.* leyendo chunks desde tenant_anmat.documents.
 Una conexión por invocación; un commit por mensaje SQS (transacción aislada).
+
+AL-05: si el mensaje trae enviada=true (email ya publicado por el batch RAG), en la misma transacción
+se intenta UPDATE en public.busqueda (activo=false si aplica, last_fired_at / estado_alerta reconocidos).
 """
 from __future__ import annotations
 
@@ -8,7 +11,7 @@ import json
 import logging
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import boto3
@@ -141,6 +144,157 @@ def _vector_sql_param(embedding: Any) -> Any:
     if isinstance(embedding, (list, tuple)):
         return "[" + ",".join(str(float(x)) for x in embedding) + "]"
     raise TypeError(f"Tipo de embedding no soportado: {type(embedding)!r}")
+
+
+_PG_IDENT_OK = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _pg_ident_ok(name: str) -> bool:
+    return bool(name and _PG_IDENT_OK.match(name))
+
+
+def _resolve_busqueda_table(cur: Any) -> tuple[str, str] | None:
+    raw = (os.environ.get("ALERT_BUSQUEDA_TABLE") or "").strip()
+    candidates: list[str] = []
+    if raw and "." in raw:
+        candidates.append(raw)
+    env_key = (os.environ.get("ENVIRONMENT") or os.environ.get("ENV") or "dev").strip().upper() or "DEV"
+    sch = (os.environ.get(f"DB_SCHEMA_{env_key}") or os.environ.get("DB_SCHEMA") or "public").strip()
+    if _pg_ident_ok(sch):
+        candidates.append(f"{sch}.busqueda")
+    candidates.append("public.busqueda")
+    seen: set[str] = set()
+    for fq in candidates:
+        if fq in seen:
+            continue
+        seen.add(fq)
+        cur.execute("SELECT to_regclass(%s::text)", (fq,))
+        row = cur.fetchone()
+        if row and row[0]:
+            s = str(row[0])
+            if "." in s:
+                a, b = s.split(".", 1)
+                a, b = a.strip('"'), b.strip('"')
+            else:
+                a, b = "public", s.strip('"')
+            if _pg_ident_ok(a) and _pg_ident_ok(b):
+                return (a, b)
+    return None
+
+
+def _busqueda_column_types(cur: Any, schema: str, table: str) -> dict[str, str]:
+    cur.execute(
+        """
+        SELECT lower(column_name), lower(data_type)
+        FROM information_schema.columns
+        WHERE table_schema = %s AND table_name = %s
+        """,
+        (schema, table),
+    )
+    return {str(r[0]): str(r[1]) for r in cur.fetchall()}
+
+
+def _type_is_integerish(dt: str) -> bool:
+    return any(
+        x in dt
+        for x in (
+            "integer",
+            "smallint",
+            "bigint",
+            "serial",
+            "bigserial",
+            "smallserial",
+        )
+    )
+
+
+def _type_is_textish(dt: str) -> bool:
+    return "char" in dt or dt == "text" or "varchar" in dt
+
+
+def _type_is_boolean(dt: str) -> bool:
+    return dt == "boolean"
+
+
+def _busqueda_fired_set_clause_and_params(
+    col_types: dict[str, str], fired_at: datetime
+) -> tuple[str, list[Any]] | None:
+    parts: list[str] = []
+    vals: list[Any] = []
+    ct = {k.lower(): v.lower() for k, v in col_types.items()}
+
+    if "last_fired_at" in ct:
+        parts.append("last_fired_at = %s")
+        vals.append(fired_at)
+    for alt in ("fechayhora_ultimo_disparo", "fecha_ultimo_disparo", "ultimo_disparo_at"):
+        if alt in ct:
+            parts.append(f"{alt} = %s")
+            vals.append(fired_at)
+
+    fired_int_s = (os.environ.get("ALERT_BUSQUEDA_ESTADO_FIRED") or "2").strip()
+    try:
+        fired_int = int(fired_int_s)
+    except ValueError:
+        fired_int = 2
+    fired_txt = (os.environ.get("ALERT_BUSQUEDA_ESTADO_FIRED_TEXT") or "FIRED").strip() or "FIRED"
+
+    if "estado_alerta" in ct:
+        dt = ct["estado_alerta"]
+        if _type_is_integerish(dt):
+            parts.append("estado_alerta = %s")
+            vals.append(fired_int)
+        elif _type_is_textish(dt):
+            parts.append("estado_alerta = %s")
+            vals.append(fired_txt)
+
+    if "estado" in ct and "estado_alerta" not in ct:
+        dt = ct["estado"]
+        if _type_is_integerish(dt):
+            parts.append("estado = %s")
+            vals.append(fired_int)
+        elif _type_is_textish(dt):
+            parts.append("estado = %s")
+            vals.append(fired_txt)
+
+    if "status" in ct and "estado" not in ct and "estado_alerta" not in ct:
+        dt = ct["status"]
+        if _type_is_textish(dt) or _type_is_integerish(dt):
+            parts.append("status = %s")
+            vals.append(fired_txt if _type_is_textish(dt) else fired_int)
+
+    if "activo" in ct and _type_is_boolean(ct["activo"]):
+        parts.append("activo = false")
+
+    if not parts:
+        return None
+    return ", ".join(parts), vals
+
+
+def _apply_busqueda_fired_update(cur: Any, busqueda_id: int, fired_at: datetime) -> int:
+    """AL-05: marca busqueda disparada en la misma transacción que alerta_generada. Retorna rowcount."""
+    rel = _resolve_busqueda_table(cur)
+    if not rel:
+        logger.warning(
+            "AL-05: no se encontró tabla busqueda (to_regclass); omito UPDATE alert_id=%s",
+            busqueda_id,
+        )
+        return 0
+    schema, table = rel
+    types_map = _busqueda_column_types(cur, schema, table)
+    built = _busqueda_fired_set_clause_and_params(types_map, fired_at)
+    if not built:
+        logger.warning(
+            "AL-05: busqueda sin columnas reconocibles para disparo (activo/last_fired_at/estado); "
+            "omito UPDATE alert_id=%s",
+            busqueda_id,
+        )
+        return 0
+    set_sql, set_params = built
+    cur.execute(
+        f'UPDATE "{schema}"."{table}" SET {set_sql} WHERE id = %s',
+        [*set_params, busqueda_id],
+    )
+    return int(cur.rowcount or 0)
 
 
 def _parse_bool(value: Any, *, default: bool = False) -> bool:
@@ -366,9 +520,18 @@ def _process_one_record(conn: PgConnection, data: dict[str, Any]) -> None:
             raise RuntimeError("INSERT en alerta_generada no devolvió id")
         alerta_id = int(alerta_row[0])
 
+        fired_ts = fh_occ if fh_occ is not None else datetime.now(timezone.utc)
+        if enviada:
+            busqueda_rc = _apply_busqueda_fired_update(cur, busqueda_id, fired_ts)
+            if busqueda_rc == 0:
+                logger.warning(
+                    "AL-05: UPDATE busqueda sin filas afectadas para alert_id=%s",
+                    busqueda_id,
+                )
+
         conn.commit()
         logger.info(
-            "Alerta creada: alerta_id=%s disposicion_id=%s busqueda_id=%s chunks_insertados=%s enviada=%s",
+            "Alerta creada: alerta_generada_id=%s disposicion_pk=%s busqueda_id=%s chunks_insertados=%s enviada=%s",
             alerta_id,
             disposicion_pk,
             busqueda_id,
@@ -377,13 +540,13 @@ def _process_one_record(conn: PgConnection, data: dict[str, Any]) -> None:
         )
         if enviada:
             logger.info(
-                "ALERT_FIRED: alert_id=%s status actualizado a enviada=true",
-                alerta_id,
+                "ALERT_FIRED: alert_id=%s status actualizado a FIRED",
+                busqueda_id,
             )
         else:
             logger.info(
-                "ALERT_PENDING: alert_id=%s status enviada=false",
-                alerta_id,
+                "ALERT_PENDING: alert_id=%s status pendiente (enviada=false)",
+                busqueda_id,
             )
     except Exception:
         conn.rollback()
