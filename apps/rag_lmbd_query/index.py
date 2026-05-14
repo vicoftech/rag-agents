@@ -218,6 +218,38 @@ def _cohere_embed_extras():
     return {}
 
 
+def _document_dedupe_key(row) -> str:
+    """Clave estable BU-01 para colapsar chunks del mismo documento."""
+    document_name = str(row[2] or "").strip()
+    if document_name:
+        return f"name:{document_name}"
+    document_id = str(row[5] or "").strip() if len(row) > 5 else ""
+    if document_id:
+        return f"id:{document_id}"
+    chunk_id = str(row[0] or "").strip()
+    return f"chunk:{chunk_id}"
+
+
+def dedupe_rows_by_document(rows: list, *, limit: int | None = None) -> list:
+    """
+    BU-01: conserva solo el mejor chunk por documento.
+
+    Recibe filas ya ordenadas por relevancia (rrf_score DESC, vector_distance ASC) y
+    preserva la primera aparición de cada document_name/document_id.
+    """
+    seen: set[str] = set()
+    out = []
+    for row in rows:
+        key = _document_dedupe_key(row)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(row)
+        if limit is not None and len(out) >= limit:
+            break
+    return out
+
+
 def parse_created_at_day(raw):
     """
     Opcional: filtra chunks por día de created_at en BD.
@@ -438,6 +470,9 @@ def semantic_search(
     )
     include_literal = lit_w > 0 and len(q_plain) >= max(1, lit_min)
     lit_sql_weight = float(lit_w) if include_literal else 0.0
+    # BU-01: sobre-muestrear candidatos para poder deduplicar por documento
+    # sin quedarse sin resultados únicos cuando varios chunks del mismo PDF rankean arriba.
+    candidate_limit = min(max(int(k) * 3, int(k)), 500)
 
     if include_literal:
         # No reutilizar where_sql aquí: ya incluye "WHERE"; hay que fusionar una sola cláusula.
@@ -453,6 +488,7 @@ def semantic_search(
                 d.ctid,
                 d.chunk_text,
                 d.document_name,
+                d.document_id,
                 ROW_NUMBER() OVER (
                     ORDER BY POSITION(LOWER(%s::text) IN LOWER(d.chunk_text)) ASC,
                              d.ctid
@@ -463,11 +499,11 @@ def semantic_search(
         ),
         """
         # Orden de %s al leer el texto: OVER … POSITION, WHERE POSITION, filtros..., LIMIT.
-        literal_params = [query, query, *filter_params, k]
+        literal_params = [query, query, *filter_params, candidate_limit]
     else:
         literal_cte = f"""
         literal_ranked AS (
-            SELECT d.id, d.ctid, d.chunk_text, d.document_name,
+            SELECT d.id, d.ctid, d.chunk_text, d.document_name, d.document_id,
                    1::bigint AS lit_rank
             FROM {schema}.documents AS d
             WHERE FALSE
@@ -483,6 +519,7 @@ def semantic_search(
                 d.ctid,
                 d.chunk_text,
                 d.document_name,
+                d.document_id,
                 d.embedding <=> %s::vector AS vector_distance
             FROM {schema}.documents AS d
             {where_sql}
@@ -494,6 +531,7 @@ def semantic_search(
                 ctid,
                 chunk_text,
                 document_name,
+                document_id,
                 vector_distance,
                 ROW_NUMBER() OVER (ORDER BY vector_distance ASC) AS vec_rank
             FROM base
@@ -507,6 +545,7 @@ def semantic_search(
                 d.ctid,
                 d.chunk_text,
                 d.document_name,
+                d.document_id,
                 ts_rank_cd(d.fts_vector, q.query, 32) AS lex_score,
                 ROW_NUMBER() OVER (
                     ORDER BY ts_rank_cd(d.fts_vector, q.query, 32) DESC
@@ -534,6 +573,7 @@ def semantic_search(
                 COALESCE(v.id, l.id, lit.id) AS chunk_id,
                 COALESCE(v.chunk_text, l.chunk_text, lit.chunk_text) AS chunk_text,
                 COALESCE(v.document_name, l.document_name, lit.document_name) AS document_name,
+                COALESCE(v.document_id, l.document_id, lit.document_id) AS document_id,
                 v.vector_distance,
                 v.vec_rank,
                 l.lex_rank,
@@ -549,6 +589,7 @@ def semantic_search(
                 chunk_id,
                 chunk_text,
                 document_name,
+                document_id,
                 vector_distance,
                 (
                     CASE WHEN vec_rank IS NOT NULL
@@ -561,19 +602,19 @@ def semantic_search(
             FROM merged
         )
 
-        SELECT chunk_id, chunk_text, document_name, vector_distance, rrf_score
+        SELECT chunk_id, chunk_text, document_name, vector_distance, rrf_score, document_id
         FROM rrf
-        ORDER BY rrf_score DESC
+        ORDER BY rrf_score DESC, vector_distance ASC NULLS LAST
         LIMIT %s
     """
 
     params = [
         q_emb_str,
         *filter_params,
-        k,
+        candidate_limit,
         query,
         *filter_params,
-        k,
+        candidate_limit,
         *literal_params,
         vw,
         rk,
@@ -581,7 +622,7 @@ def semantic_search(
         rk,
         lit_sql_weight,
         rk,
-        k,
+        candidate_limit,
     ]
 
     try:
@@ -619,6 +660,14 @@ def semantic_search(
             f"[retrieval] no chunk under MAX_SEMANTIC_DISTANCE={max_sd}; "
             f"using best {n} by rrf_score, vector_distances={dists}"
         )
+    before_dedupe = len(matched_rows)
+    matched_rows = dedupe_rows_by_document(matched_rows, limit=k)
+    duplicates_removed = before_dedupe - len(matched_rows)
+    if duplicates_removed > 0:
+        print(
+            f"[retrieval] BU-01 dedupe removed {duplicates_removed} duplicate chunk(s) "
+            f"by document; unique_docs={len(matched_rows)}"
+        )
     elif not rows:
         print(
             "[retrieval] 0 rows: revisá tenant_id, agent_id, columna fts_vector, "
@@ -640,6 +689,7 @@ def semantic_search(
                 "chunk_id": int(row[0]) if row[0] is not None else None,
                 "chunk_text": row[1],
                 "document_name": row[2] or "",
+                "document_id": str(row[5]) if len(row) > 5 and row[5] is not None else "",
                 "distance": row[3],
                 "rrf_score": float(rs) if rs is not None else None,
             }
@@ -653,7 +703,11 @@ def semantic_search(
         "max_semantic_distance": max_sd,
         "semantic_fallback_top_n": fb_n,
         "retrieval_sql_row_count": n_sql,
+        "retrieval_candidate_limit": candidate_limit,
         "chunks_after_similarity_gate": after_sim,
+        "chunks_before_document_dedupe": before_dedupe,
+        "duplicate_chunks_removed_by_document": duplicates_removed,
+        "unique_documents_returned": len(matched_rows),
         "semantic_fallback_neighbor_used": semantic_fallback_used,
         "literal_keyword_overlap_applied": bool(literal_keyword_overlap and lit_w > 0),
         "literal_substring_leg_sql": include_literal,

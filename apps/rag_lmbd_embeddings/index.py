@@ -809,19 +809,20 @@ def handler(event, context):
             document_name,
             chunk,
             to_pgvector(embedding),
+            chunk_index,
             created_at_partition,
         )
-        for chunk, embedding in zip(chunks, embeddings)
+        for chunk_index, (chunk, embedding) in enumerate(zip(chunks, embeddings))
     ]
     execute_values(
         cur,
         f"""
         INSERT INTO {tenant_id}.documents (
-            agent_id, document_id, document_name, chunk_text, embedding, created_at
+            agent_id, document_id, document_name, chunk_text, embedding, chunk_index, created_at
         ) VALUES %s
         """,
         rows,
-        template="""(%s::uuid, %s::uuid, %s, %s, %s::vector, COALESCE(%s::timestamp, NOW()))""",
+        template="""(%s::uuid, %s::uuid, %s, %s, %s::vector, %s, COALESCE(%s::timestamp, NOW()))""",
         page_size=len(rows) if rows else 1,
     )
 
