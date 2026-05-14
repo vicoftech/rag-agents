@@ -813,6 +813,53 @@ def publish_notificaciones_to_sqs(
     )
 
 
+def mark_alert_creation_messages_as_fired(
+    messages: list[dict[str, Any]],
+    notifications: list[dict[str, Any]],
+    *,
+    fired_at: str | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Marca como enviadas las alertas que ya tienen email publicado o previamente
+    registrado como enviado.
+
+    AL-05: evita que el backend legacy reprocesa alertas creadas por
+    ``rag_lmbd_alert_creation`` con ``enviada=false`` cuando el batch RAG ya
+    publicó el email funcional a ``email-sender-record-email-processor-*`` o
+    detectó que ese email ya existía por idempotencia.
+
+    No modifica la lista original; retorna copias superficiales de los mensajes.
+    """
+    fired_ids: set[int] = set()
+    for notif in notifications:
+        alert_id = notif.get("alerta_id")
+        if alert_id is None:
+            continue
+        try:
+            fired_ids.add(int(alert_id))
+        except (TypeError, ValueError):
+            continue
+
+    if not fired_ids:
+        return [dict(m) for m in messages]
+
+    fired_ts = fired_at or datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    out: list[dict[str, Any]] = []
+    for msg in messages:
+        msg2 = dict(msg)
+        try:
+            busqueda_id = int(msg2.get("busqueda_id"))
+        except (TypeError, ValueError):
+            out.append(msg2)
+            continue
+        if busqueda_id in fired_ids:
+            msg2["enviada"] = True
+            msg2["last_fired_at"] = fired_ts
+            msg2["estado_envio_alerta"] = "published_to_email_queue"
+        out.append(msg2)
+    return out
+
+
 def compute_alert_creation_messages(blob: dict[str, Any]) -> list[dict[str, Any]]:
     """
     Construye mensajes para la cola rag-alert-creation-*:
@@ -2105,6 +2152,7 @@ def main(argv: list[str]) -> int:
 
     notifs = compute_notificaciones(out, fb_from)
     alert_creation_msgs = compute_alert_creation_messages(out)
+    email_confirmed_notifs: list[dict[str, Any]] = []
     _log_step("MAIN", f"Notificaciones generadas (chunks_count>0): {len(notifs)}")
     _log_step("MAIN", f"Mensajes alert_creation generados: {len(alert_creation_msgs)}")
     email_qn = (args.email_sqs_queue or "").strip() or "email-sender-record-email-processor-prod"
@@ -2181,10 +2229,17 @@ def main(argv: list[str]) -> int:
                     queue_name=qn,
                     session=_session(args.profile, args.region),
                 )
+                # AL-05: si el email fue publicado o ya existía por idempotencia,
+                # la alerta RAG no debe quedar pendiente para el backend legacy.
+                email_confirmed_notifs = list(notifs)
                 _log_step(
                     "MAIN",
                     f"SQS publicados: {n_sent} mensaje(s) → cola «{qn}» "
                     f"(originales: {len(notifs)}, duplicados: {duplicates_count})",
+                )
+                _log_step(
+                    "MAIN",
+                    f"ALERT_FIRED: alertas con email publicado/confirmado={len(email_confirmed_notifs)}",
                 )
             except ClientError as e:
                 _log_step("MAIN", f"AWS ClientError (SQS): {e}", level="ERROR")
@@ -2195,9 +2250,22 @@ def main(argv: list[str]) -> int:
         if bool(args.publish_alert_creation_queue and not args.no_email_queue_send):
             try:
                 qn_alert = (args.alert_creation_sqs_queue or "").strip() or f"rag-alert-creation-{args.env}"
-                _log_step("MAIN", f"Publicando alert_creation en SQS queue={qn_alert}")
+                alert_creation_msgs_to_publish = (
+                    mark_alert_creation_messages_as_fired(
+                        alert_creation_msgs,
+                        email_confirmed_notifs,
+                    )
+                    if email_confirmed_notifs
+                    else alert_creation_msgs
+                )
+                fired_msgs = sum(1 for m in alert_creation_msgs_to_publish if m.get("enviada") is True)
+                _log_step(
+                    "MAIN",
+                    f"Publicando alert_creation en SQS queue={qn_alert} "
+                    f"(ALERT_FIRED marcadas={fired_msgs})",
+                )
                 n_alert = _publish_json_messages_to_sqs(
-                    alert_creation_msgs,
+                    alert_creation_msgs_to_publish,
                     queue_name=qn_alert,
                     session=_session(args.profile, args.region),
                 )

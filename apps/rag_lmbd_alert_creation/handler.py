@@ -143,6 +143,23 @@ def _vector_sql_param(embedding: Any) -> Any:
     raise TypeError(f"Tipo de embedding no soportado: {type(embedding)!r}")
 
 
+def _parse_bool(value: Any, *, default: bool = False) -> bool:
+    """Normaliza flags booleanos opcionales recibidos por SQS."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        s = value.strip().lower()
+        if s in {"1", "true", "t", "yes", "y", "si", "sí"}:
+            return True
+        if s in {"0", "false", "f", "no", "n"}:
+            return False
+    return default
+
+
 def _validate_payload(data: dict[str, Any]) -> None:
     if "busqueda_id" not in data or data["busqueda_id"] is None:
         raise ValueError("Falta busqueda_id en el mensaje")
@@ -183,7 +200,8 @@ def _process_one_record(conn: PgConnection, data: dict[str, Any]) -> None:
     disposicion_id_str = str(disp["disposicion_id"]).strip()
     matched_ids = data["matched_chunk_ids"]
     estado_alerta = data.get("estado_alerta")
-    fh_occ = _parse_timestamp(data.get("fechayhora_ocurrencia"))
+    fh_occ = _parse_timestamp(data.get("last_fired_at") or data.get("fechayhora_ocurrencia"))
+    enviada = _parse_bool(data.get("enviada"), default=False)
 
     cur = conn.cursor()
     try:
@@ -335,7 +353,7 @@ def _process_one_record(conn: PgConnection, data: dict[str, Any]) -> None:
             """,
             (
                 False,
-                False,
+                enviada,
                 estado_alerta,
                 fh_occ,
                 False,
@@ -350,12 +368,23 @@ def _process_one_record(conn: PgConnection, data: dict[str, Any]) -> None:
 
         conn.commit()
         logger.info(
-            "Alerta creada: alerta_id=%s disposicion_id=%s busqueda_id=%s chunks_insertados=%s",
+            "Alerta creada: alerta_id=%s disposicion_id=%s busqueda_id=%s chunks_insertados=%s enviada=%s",
             alerta_id,
             disposicion_pk,
             busqueda_id,
             chunks_inserted,
+            enviada,
         )
+        if enviada:
+            logger.info(
+                "ALERT_FIRED: alert_id=%s status actualizado a enviada=true",
+                alerta_id,
+            )
+        else:
+            logger.info(
+                "ALERT_PENDING: alert_id=%s status enviada=false",
+                alerta_id,
+            )
     except Exception:
         conn.rollback()
         raise
