@@ -103,6 +103,13 @@ PRESIGNED_URL_EXPIRES_SECONDS = int(os.getenv("PRESIGNED_URL_EXPIRES_SECONDS", "
 # Si el cliente no envía retrieval_limit, se usa este tope (híbrido más barato con valores menores).
 DEFAULT_RETRIEVAL_LIMIT = int(os.getenv("DEFAULT_RETRIEVAL_LIMIT", "25"))
 QUERY_JOB_TABLE_NAME = os.getenv("QUERY_JOB_TABLE_NAME", "").strip()
+# BU-02: criterio validado localmente para TASK_390.
+# Default: relevancia semántica pura (menor vector_distance primero).
+# HYBRID conserva el ranking RRF legacy como alternativa explícita.
+SEARCH_SORT_RELEVANCE = "relevance"
+SEARCH_SORT_HYBRID = "hybrid"
+SEARCH_SORT_DATE_DESC = "date_desc"
+SEARCH_SORT_ALLOWED = {SEARCH_SORT_RELEVANCE, SEARCH_SORT_HYBRID, SEARCH_SORT_DATE_DESC}
 
 
 def _utc_now_iso() -> str:
@@ -248,6 +255,45 @@ def dedupe_rows_by_document(rows: list, *, limit: int | None = None) -> list:
         if limit is not None and len(out) >= limit:
             break
     return out
+
+
+def normalize_search_sort_by(raw_sort_by: Any) -> str:
+    """Valida sort_by con allowlist para no construir ORDER BY arbitrario."""
+    sort_by = str(raw_sort_by or SEARCH_SORT_RELEVANCE).strip().lower()
+    if not sort_by:
+        sort_by = SEARCH_SORT_RELEVANCE
+    if sort_by not in SEARCH_SORT_ALLOWED:
+        allowed = ", ".join(sorted(SEARCH_SORT_ALLOWED))
+        raise ValueError(f"sort_by inválido: {sort_by!r}. Valores permitidos: {allowed}")
+    return sort_by
+
+
+def search_order_clause(sort_by: str) -> str:
+    """
+    BU-02: orden final de resultados.
+
+    - relevance: menor vector_distance primero; tie-break por RRF.
+    - hybrid: ranking RRF legacy; tie-break por vector_distance.
+    - date_desc: documentos más recientes primero; tie-break por relevancia.
+    """
+    normalized = normalize_search_sort_by(sort_by)
+    if normalized == SEARCH_SORT_RELEVANCE:
+        return "vector_distance ASC NULLS LAST, rrf_score DESC, created_at DESC NULLS LAST"
+    if normalized == SEARCH_SORT_DATE_DESC:
+        return "created_at DESC NULLS LAST, vector_distance ASC NULLS LAST, rrf_score DESC"
+    return "rrf_score DESC, vector_distance ASC NULLS LAST, created_at DESC NULLS LAST"
+
+
+def ordered_unique_documents(rows: list) -> list[str]:
+    """Devuelve nombres de documentos en el mismo orden final de context_items."""
+    seen: set[str] = set()
+    docs: list[str] = []
+    for row in rows:
+        doc = str(row[2] or "").strip()
+        if doc and doc not in seen:
+            seen.add(doc)
+            docs.append(doc)
+    return docs
 
 
 def parse_created_at_day(raw):
@@ -400,7 +446,10 @@ def semantic_search(
     literal_min_chars_override=None,
     max_semantic_distance=None,
     semantic_fallback_top_n=None,
+    sort_by=None,
 ):
+    sort_by_norm = normalize_search_sort_by(sort_by)
+    order_sql = search_order_clause(sort_by_norm)
     max_sd = (
         MAX_SEMANTIC_DISTANCE if max_semantic_distance is None else float(max_semantic_distance)
     )
@@ -489,6 +538,7 @@ def semantic_search(
                 d.chunk_text,
                 d.document_name,
                 d.document_id,
+                d.created_at,
                 ROW_NUMBER() OVER (
                     ORDER BY POSITION(LOWER(%s::text) IN LOWER(d.chunk_text)) ASC,
                              d.ctid
@@ -503,7 +553,7 @@ def semantic_search(
     else:
         literal_cte = f"""
         literal_ranked AS (
-            SELECT d.id, d.ctid, d.chunk_text, d.document_name, d.document_id,
+            SELECT d.id, d.ctid, d.chunk_text, d.document_name, d.document_id, d.created_at,
                    1::bigint AS lit_rank
             FROM {schema}.documents AS d
             WHERE FALSE
@@ -520,6 +570,7 @@ def semantic_search(
                 d.chunk_text,
                 d.document_name,
                 d.document_id,
+                d.created_at,
                 d.embedding <=> %s::vector AS vector_distance
             FROM {schema}.documents AS d
             {where_sql}
@@ -532,6 +583,7 @@ def semantic_search(
                 chunk_text,
                 document_name,
                 document_id,
+                created_at,
                 vector_distance,
                 ROW_NUMBER() OVER (ORDER BY vector_distance ASC) AS vec_rank
             FROM base
@@ -546,6 +598,7 @@ def semantic_search(
                 d.chunk_text,
                 d.document_name,
                 d.document_id,
+                d.created_at,
                 ts_rank_cd(d.fts_vector, q.query, 32) AS lex_score,
                 ROW_NUMBER() OVER (
                     ORDER BY ts_rank_cd(d.fts_vector, q.query, 32) DESC
@@ -574,6 +627,7 @@ def semantic_search(
                 COALESCE(v.chunk_text, l.chunk_text, lit.chunk_text) AS chunk_text,
                 COALESCE(v.document_name, l.document_name, lit.document_name) AS document_name,
                 COALESCE(v.document_id, l.document_id, lit.document_id) AS document_id,
+                COALESCE(v.created_at, l.created_at, lit.created_at) AS created_at,
                 v.vector_distance,
                 v.vec_rank,
                 l.lex_rank,
@@ -590,6 +644,7 @@ def semantic_search(
                 chunk_text,
                 document_name,
                 document_id,
+                created_at,
                 vector_distance,
                 (
                     CASE WHEN vec_rank IS NOT NULL
@@ -602,9 +657,9 @@ def semantic_search(
             FROM merged
         )
 
-        SELECT chunk_id, chunk_text, document_name, vector_distance, rrf_score, document_id
+        SELECT chunk_id, chunk_text, document_name, vector_distance, rrf_score, document_id, created_at
         FROM rrf
-        ORDER BY rrf_score DESC, vector_distance ASC NULLS LAST
+        ORDER BY {order_sql}
         LIMIT %s
     """
 
@@ -644,7 +699,7 @@ def semantic_search(
 
     print(
         f"[retrieval] hybrid search returned {len(rows)} rows "
-        f"(k={k}, schema={schema}, vector_w={vw}, lexical_w={lw}, "
+        f"(k={k}, schema={schema}, sort_by={sort_by_norm}, vector_w={vw}, lexical_w={lw}, "
         f"literal_w={lit_sql_weight}, literal_substring_leg={include_literal})"
     )
 
@@ -679,7 +734,7 @@ def semantic_search(
     semantic_fallback_used = after_sim == 0 and bool(rows) and bool(matched_rows)
 
     chunks = [row[1] for row in matched_rows]
-    documents = sorted({(row[2] or "") for row in matched_rows if row[2]})
+    documents = ordered_unique_documents(matched_rows)
     context_items: list[dict[str, Any]] = []
     for i, row in enumerate(matched_rows):
         rs = row[4]
@@ -690,6 +745,7 @@ def semantic_search(
                 "chunk_text": row[1],
                 "document_name": row[2] or "",
                 "document_id": str(row[5]) if len(row) > 5 and row[5] is not None else "",
+                "created_at": row[6].isoformat() if len(row) > 6 and hasattr(row[6], "isoformat") else (str(row[6]) if len(row) > 6 and row[6] is not None else None),
                 "distance": row[3],
                 "rrf_score": float(rs) if rs is not None else None,
             }
@@ -700,6 +756,7 @@ def semantic_search(
     retrieval_config: dict[str, Any] = {
         "hybrid_search": True,
         "retrieval_limit": k,
+        "sort_by": sort_by_norm,
         "max_semantic_distance": max_sd,
         "semantic_fallback_top_n": fb_n,
         "retrieval_sql_row_count": n_sql,
@@ -1072,6 +1129,14 @@ def handler(event, context):
             resp["headers"] = {"Content-Type": "application/json", **CORS_HEADERS}
         return resp
 
+    try:
+        sort_by_eff = normalize_search_sort_by(req_src.get("sort_by"))
+    except ValueError as e:
+        resp = {"statusCode": 400, "body": json.dumps({"error": str(e)})}
+        if is_http_event:
+            resp["headers"] = {"Content-Type": "application/json", **CORS_HEADERS}
+        return resp
+
     retrieval_config: dict[str, Any] = {}
     request_id = getattr(context, "aws_request_id", "") if context else ""
     try:
@@ -1090,6 +1155,7 @@ def handler(event, context):
             semantic_fallback_top_n=sfb_eff,
             literal_keyword_overlap=literal_overlap,
             literal_min_chars_override=literal_ml,
+            sort_by=sort_by_eff,
         )
         _search_ms = (time.perf_counter() - _t_search0) * 1000.0
     except ValueError as e:
