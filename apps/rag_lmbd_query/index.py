@@ -73,7 +73,6 @@ HYBRID_RRF_K = int(os.getenv("HYBRID_RRF_K", "60"))
 _PG_MAX_PARALLEL_PER_GATHER_RAW = os.getenv("PG_MAX_PARALLEL_WORKERS_PER_GATHER", "0").strip()
 _DB_SECRET_CACHE = None
 
-
 def _pg_max_parallel_workers_per_gather_override() -> int | None:
     r = _PG_MAX_PARALLEL_PER_GATHER_RAW.lower()
     if not r or r in ("server", "default"):
