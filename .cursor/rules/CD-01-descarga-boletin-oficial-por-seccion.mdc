@@ -13,7 +13,13 @@ Existe un Lambda handler (`handler.py`) que extrae enlaces PDF del Boletín Ofic
 
 El sitio funciona con sesión stateful: primero hay que establecer la fecha con
 `GET /edicion/actualizar/{DD-MM-YYYY}` y luego scrapear `/seccion/{nombre_seccion}`.
-Los PDFs individuales se sirven desde `https://www.boletinoficial.gob.ar/pdf/aviso/{seccion}/{id_aviso}/{fecha}`.
+
+**PDF de edición por sección (el que debe exponer el Lambda):** en el HTML de cada
+sección aparece **un solo enlace** al PDF completo del día para esa sección, servido
+en CDN (p. ej. `https://s3.arsat.com.ar/cdn-bo-001/pdf-del-dia/primera.pdf` para
+`primera`; análogo `segunda.pdf` / `tercera.pdf`). Ese es el archivo agregado de
+muchas páginas — **no** enumerar los PDFs por aviso (`/pdf/aviso/{seccion}/{id}/{fecha}`),
+que son decenas de archivos sueltos y no sustituyen al boletín completo de la sección.
 
 El handler actual ya maneja:
 - Normalización de fecha (YYYYMMDD o YYYY-MM-DD -> YYYYMMDD)
@@ -71,16 +77,16 @@ La respuesta debe incluir los PDFs agrupados por sección:
   "sections_failed": {},
   "pdf_links": {
     "primera": [
-      {"url": "https://www.boletinoficial.gob.ar/pdf/aviso/primera/123456/20260408", "section": "primera", "date": "20260408"}
+      {"url": "https://s3.arsat.com.ar/cdn-bo-001/pdf-del-dia/primera.pdf", "section": "primera", "date": "20260408"}
     ],
     "segunda": [],
     "tercera": []
   },
   "totals": {
-    "primera": 42,
-    "segunda": 18,
-    "tercera": 7,
-    "total": 67
+    "primera": 1,
+    "segunda": 0,
+    "tercera": 0,
+    "total": 1
   }
 }
 ```
@@ -103,7 +109,9 @@ y reportar el error en `sections_failed`. `success: false` solo si al menos una 
 
 ## Restricciones
 
-- NO modificar la función `get_pdf_links(target_date, seccion)` — solo procesa una sección a la vez. El loop multi-sección va en el handler.
+- `get_pdf_links(target_date, seccion)` debe devolver **solo el PDF de edición completa**
+  de esa sección (enlace `pdf-del-dia` en CDN), validado con HEAD `Content-Type: application/pdf`.
+  Una sección → como mucho **un** elemento en la lista. El loop multi-sección sigue en el handler.
 - NO modificar la función `normalize_date_to_yyyymmdd` — ya funciona correctamente.
 - NO cambiar la lógica de validación de Content-Type de los PDFs.
 - NO modificar los CORS headers.

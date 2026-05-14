@@ -88,7 +88,12 @@ HEADERS = {
 
 def get_pdf_links(target_date: str, seccion: str = 'primera'):
     """
-    Extrae los links de los PDFs del Boletín Oficial para una fecha dada.
+    Devuelve el/los PDF(s) de **edición completa** de la sección para la fecha dada
+    (un solo archivo agregado por sección en CDN Arsat), no los PDFs por aviso.
+
+    Flujo: sesión con fecha → GET /seccion/{seccion} → enlace pdf-del-dia/{seccion}.pdf
+    en el HTML. Los avisos individuales viven en /pdf/aviso/... y no se listan aquí.
+
     Formato de parametro fecha: YYYYMMDD
     """
     if len(target_date) == 8:
@@ -97,80 +102,87 @@ def get_pdf_links(target_date: str, seccion: str = 'primera'):
         print("La fecha debe estar en formato YYYYMMDD (ej. 20260317)")
         return []
 
-    print(f"Obteniendo boletín para la fecha: {formatted_date}...")
-    
+    print(f"Obteniendo boletín (PDF edición completa) para la fecha: {formatted_date}, sección {seccion}...")
+
     session = requests.Session()
     session.headers.update({
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     })
-    
-    # 1. Establecer fecha en la sesión
-    update_url = f'https://www.boletinoficial.gob.ar/edicion/actualizar/{formatted_date}'
-    res = session.get(update_url)
-    
+
+    update_url = f'{BOLETIN_BASE_URL.rstrip("/")}/edicion/actualizar/{formatted_date}'
+    res = session.get(update_url, timeout=REQUEST_TIMEOUT)
+
     if res.status_code != 200:
         print("Error al actualizar la fecha en el servidor.")
         return []
 
-    # 2. Obtener la página principal de la Sección especificada
-    res_seccion = session.get(f'https://www.boletinoficial.gob.ar/seccion/{seccion}')
-    soup = BeautifulSoup(res_seccion.text, 'html.parser')
-    
-    # Buscar todos los enlaces de avisos
-    links = soup.find_all('a', href=True)
-    pdf_links = []
-    pdf_links_dict = []
-    
-    # URL base para la descarga de los PDFs individuales
-    base_pdf_url = "https://www.boletinoficial.gob.ar/pdf/aviso/"
-    
-    for link in links:
-        href = link["href"]
-        if "/detalleAviso/" not in href:
-            continue
-        if f"/detalleAviso/{seccion}/" not in href and f"detalleAviso/{seccion}/" not in href:
-            continue
-        parts = [p for p in href.strip("/").split("/") if p]
-        try:
-            idx = parts.index("detalleAviso")
-        except ValueError:
-            continue
-        if len(parts) < idx + 4:
-            continue
-        sec_link = parts[idx + 1]
-        id_aviso = parts[idx + 2]
-        fecha_aviso = parts[idx + 3]
+    res_seccion = session.get(
+        f'{BOLETIN_BASE_URL.rstrip("/")}/seccion/{seccion}',
+        timeout=REQUEST_TIMEOUT,
+    )
+    if res_seccion.status_code != 200:
+        print(f"Error al obtener la sección {seccion}: HTTP {res_seccion.status_code}")
+        return []
 
-        pdf_url = f"{base_pdf_url}{sec_link}/{id_aviso}/{fecha_aviso}"
-        if pdf_url not in pdf_links:
-            try:
-                response = requests.head(
-                    pdf_url,
-                    headers={
-                        "User-Agent": (
-                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                            "AppleWebKit/537.36"
-                        )
-                    },
-                    timeout=3,
-                )
-                content_type = response.headers.get("content-type", "").lower()
-                if "application/pdf" in content_type:
-                    pdf_links.append(pdf_url)
-                    pdf_links_dict.append(
-                        {"url": pdf_url, "section": sec_link, "date": fecha_aviso}
-                    )
-                    print(f"Added valid PDF: {pdf_url}")
-                else:
-                    print(
-                        f"Skipping non-PDF link: {pdf_url} "
-                        f"(Content-Type: {content_type})"
-                    )
-            except requests.RequestException as e:
-                print(f"Error checking PDF link {pdf_url}: {e}")
+    html = res_seccion.text
+    soup = BeautifulSoup(html, 'html.parser')
+
+    # PDF único de la sección (edición del día): CDN Boletín en página de sección
+    edition_re = re.compile(
+        r'https://s3\.arsat\.com\.ar/cdn-bo-001/pdf-del-dia/'
+        + re.escape(seccion)
+        + r'\.pdf',
+        re.IGNORECASE,
+    )
+    pdf_url: str | None = None
+    m = edition_re.search(html)
+    if m:
+        pdf_url = m.group(0)
+    else:
+        for link in soup.find_all('a', href=True):
+            href = link['href']
+            if 'pdf-del-dia' not in href.lower():
                 continue
+            if f'/{seccion}.pdf' not in href.lower() and not href.lower().endswith(f'{seccion}.pdf'):
+                continue
+            if href.startswith('http'):
+                pdf_url = href
+            else:
+                pdf_url = f"{BOLETIN_BASE_URL.rstrip('/')}/{href.lstrip('/')}"
+            break
 
-    print(f"Found {len(pdf_links)} valid PDF links in section '{seccion}'")
+    if not pdf_url:
+        print(f"No se encontró enlace a PDF de edición completa (pdf-del-dia) para sección {seccion!r}.")
+        return []
+
+    pdf_links_dict: list[dict] = []
+    try:
+        response = requests.head(
+            pdf_url,
+            headers={
+                'User-Agent': (
+                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                    'AppleWebKit/537.36'
+                ),
+            },
+            timeout=10,
+            allow_redirects=True,
+        )
+        content_type = response.headers.get('content-type', '').lower()
+        if 'application/pdf' in content_type:
+            pdf_links_dict.append(
+                {'url': pdf_url, 'section': seccion, 'date': target_date}
+            )
+            print(f"Added edition PDF: {pdf_url}")
+        else:
+            print(
+                f"Skipping edition link (not PDF Content-Type): {pdf_url} "
+                f"(Content-Type: {content_type})"
+            )
+    except requests.RequestException as e:
+        print(f"Error checking edition PDF link {pdf_url}: {e}")
+
+    print(f"Found {len(pdf_links_dict)} edition PDF link(s) for section '{seccion}'")
     return pdf_links_dict
 
 def handler(event, context):
