@@ -877,6 +877,7 @@ module "lambda_s3writer" {
     {
       effect = "Allow"
       actions = [
+        "s3:GetObject",
         "s3:PutObject",
         "s3:PutObjectAcl"
       ]
