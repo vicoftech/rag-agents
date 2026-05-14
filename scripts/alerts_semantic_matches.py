@@ -80,7 +80,7 @@ import threading
 import unicodedata
 import uuid
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 from datetime import date, datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
@@ -901,7 +901,16 @@ def compute_alert_creation_messages(blob: dict[str, Any]) -> list[dict[str, Any]
                 continue
 
             dispo_id = str(dname).strip()
-            url = (r.get("s3_uri_por_documento") or {}).get(dname) or ""
+            raw_url = (r.get("s3_uri_por_documento") or {}).get(dname)
+            url = normalize_document_url_for_alert(raw_url) or normalize_document_url_for_alert(
+                r.get("url_disposicion_default")
+            )
+            if not url:
+                _log_step(
+                    "AL-06",
+                    f"DOC_URL_INVALID: alerta_id={busqueda_id} document={dispo_id}; se crea alerta sin link",
+                    level="WARNING",
+                )
             out.append(
                 {
                     "busqueda_id": int(busqueda_id),
@@ -910,7 +919,7 @@ def compute_alert_creation_messages(blob: dict[str, Any]) -> list[dict[str, Any]
                     "disposicion": {
                         "disposicion_id": dispo_id,
                         "descripcion": (r.get("descripcion_disposicion_default") or r.get("nombre_busqueda") or dispo_id),
-                        "url": url or f"s3://desconocido/{dispo_id}",
+                        "url": url,
                         "nombre_pdf": r.get("nombre_pdf_disposicion_default") or dispo_id,
                         "archivo": r.get("archivo_disposicion_default"),
                         "fecha_de_aparicion": r.get("fecha_de_aparicion_default") or default_day,
@@ -1067,6 +1076,44 @@ def canonical_s3_uri(
     key = f"{s3_slug}/{agent_id}/documents/{document_name}"
     key = key.lstrip("/")
     return f"s3://{bucket}/{key}"
+
+
+def normalize_document_url_for_alert(raw_url: Any) -> str | None:
+    """
+    AL-06: normaliza links de documentos antes de persistirlos en alertas.
+
+    Acepta únicamente URLs externas HTTP(S) no locales o URIs S3 con bucket/key.
+    Rechaza valores vacíos, rutas locales, hosts privados/dev y placeholders.
+    """
+    if raw_url is None:
+        return None
+    url = str(raw_url).strip()
+    if not url:
+        return None
+
+    lower_url = url.lower()
+    if lower_url.startswith("s3://"):
+        parsed = urlparse(url)
+        if parsed.netloc and parsed.path and parsed.path.strip("/"):
+            return url
+        return None
+
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        return None
+    host = (parsed.hostname or "").strip().lower()
+    if not host:
+        return None
+
+    blocked_hosts = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+    if host in blocked_hosts or host.endswith(".local") or host.endswith(".test"):
+        return None
+    if host.startswith("10.") or host.startswith("192.168."):
+        return None
+    if re.match(r"^172\.(1[6-9]|2\d|3[0-1])\.", host):
+        return None
+
+    return url
 
 
 def normalize_search_query(palabras: Any, nombre: Any) -> str:
