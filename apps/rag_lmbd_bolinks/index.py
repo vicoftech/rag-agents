@@ -181,7 +181,12 @@ def get_pdf_links(target_date: str, seccion: str = 'primera'):
         content_type = response.headers.get('content-type', '').lower()
         if 'application/pdf' in content_type:
             pdf_links_dict.append(
-                {'url': pdf_url, 'section': seccion, 'date': target_date}
+                {
+                    "url": pdf_url,
+                    "section": seccion,
+                    "date": target_date,
+                    "source": "boletin_edition_cdn",
+                }
             )
             print(f"Added edition PDF: {pdf_url}")
         else:

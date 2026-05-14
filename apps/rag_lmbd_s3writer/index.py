@@ -60,7 +60,8 @@ def flatten_bolinks_pdf_links(pdf_links_field: Any) -> List[Dict]:
     """Soporta pdf_links como lista (legacy) o dict por sección (CD-01)."""
     if isinstance(pdf_links_field, dict):
         out: List[Dict] = []
-        for _sec, items in pdf_links_field.items():
+        for _sec in sorted(pdf_links_field.keys()):
+            items = pdf_links_field.get(_sec)
             if isinstance(items, list):
                 out.extend(items)
         return out
@@ -355,6 +356,31 @@ def upload_to_s3(content: bytes, bucket: str, key: str) -> bool:
         print(f"Error uploading to S3: {e}")
         return False
 
+def _normalize_yyyymmdd_for_s3_key(date_str: str) -> str:
+    """
+    Segmento de carpeta bajo documents/ debe ser YYYYMMDD (parse_s3_rag_key / embeddings).
+    """
+    if not date_str or not str(date_str).strip():
+        return ""
+    s = str(date_str).strip()
+    if len(s) == 10 and s[4] == "-" and s[7] == "-":
+        try:
+            return datetime.strptime(s, "%Y-%m-%d").strftime("%Y%m%d")
+        except ValueError:
+            return ""
+    if len(s) == 8 and s.isdigit():
+        return s
+    return ""
+
+
+def _is_boletin_arsat_edition_pdf_url(pdf_url: str) -> bool:
+    """PDF de edición completa por sección (CDN Boletín, CD-01)."""
+    p = urlparse(pdf_url)
+    host = (p.hostname or "").lower()
+    path = (p.path or "").lower()
+    return "arsat.com.ar" in host and "pdf-del-dia" in path and path.endswith(".pdf")
+
+
 def _anmat_pdf_stem_from_url(pdf_url: str, index: int) -> str:
     """Nombre base estable para PDFs BuscaDispo (último segmento del path, sin extensión)."""
     parsed = urlparse(pdf_url)
@@ -377,6 +403,12 @@ def generate_filename_from_url(pdf_url: str, index: int, date_str: str, section:
     if stem_anmat:
         # ANMAT: nombre determinista (sin timestamp) para idempotencia / HeadObject
         return f"aviso_{stem_anmat}_{date_str}_{section}.pdf"
+
+    dd = _normalize_yyyymmdd_for_s3_key(date_str)
+    if _is_boletin_arsat_edition_pdf_url(pdf_url) and dd:
+        sec = re.sub(r"[^\w\-]+", "_", (section or "seccion").lower())[:40]
+        # Sin timestamp: misma corrida / re-ejecución SFN → misma key S3 (idempotente).
+        return f"edicion_completa_{sec}_{dd}.pdf"
 
     # Boletín u otros: ID en path + timestamp para evitar colisiones
     # Ej: https://www.boletinoficial.gob.ar/pdf/aviso/primera/339534/20260317
@@ -431,6 +463,10 @@ def process_bolinks_output(bolinks_output: Dict, tenant_id: str, agent_id: str) 
         
         print(f"Processing {len(pdf_links_to_process)} PDFs (limited from {len(pdf_links)} total) for site: {site_id}")
         
+        fallback_date_key = _normalize_yyyymmdd_for_s3_key(
+            str(bolinks_output.get("date") or "")
+        )
+
         for index, pdf in enumerate(pdf_links_to_process):
             if not pdf.get("url"):
                 continue
@@ -438,9 +474,14 @@ def process_bolinks_output(bolinks_output: Dict, tenant_id: str, agent_id: str) 
             if index > 0 and S3WRITER_PDF_DOWNLOAD_DELAY_SEC > 0:
                 time.sleep(S3WRITER_PDF_DOWNLOAD_DELAY_SEC)
 
-            date_str = pdf.get("date") or ""
+            raw_date = pdf.get("date") or ""
             section = pdf.get("section") or "default"
-            
+            date_key = _normalize_yyyymmdd_for_s3_key(str(raw_date)) or fallback_date_key
+            if not date_key:
+                print(f"Skipping PDF {index + 1}: falta fecha YYYYMMDD para la clave S3")
+                failed_count += 1
+                continue
+
             print(f"Processing PDF {index + 1}/{len(pdf_links_to_process)}: {pdf['url']}")
             
             # Descargar PDF
@@ -451,9 +492,9 @@ def process_bolinks_output(bolinks_output: Dict, tenant_id: str, agent_id: str) 
                 continue
             
             # Generar nombre de archivo
-            filename = generate_filename_from_url(pdf["url"], index, date_str, section)
+            filename = generate_filename_from_url(pdf["url"], index, date_key, section)
             # Subir a S3
-            s3_key = f"{site_id}/{date_str}/{section}/{filename}"
+            s3_key = f"{site_id}/{date_key}/{section}/{filename}"
             if upload_to_s3(pdf_content, S3_BUCKET, s3_key):
                 s3_uri = f"s3://{S3_BUCKET}/{s3_key}" if S3_BUCKET else ""
                 uploaded_files.append({
@@ -464,7 +505,7 @@ def process_bolinks_output(bolinks_output: Dict, tenant_id: str, agent_id: str) 
                     'filename': filename,
                     'size': len(pdf_content),
                     'metadata': {
-                        'date': date_str,
+                        'date': date_key,
                         'section': section,
                         'site_id': site_id
                     }
@@ -510,8 +551,14 @@ def process_single_pdf(pdf: Dict, tenant_id: str, agent_id: str) -> Dict:
             return {'success': False, 'error': 'missing url'}
         tenant_prefix = _normalize_tenant_prefix(tenant_id)
         site_id = f"{tenant_prefix}/{agent_id}/documents"
-        date_str = pdf.get('date') or ''
+        date_str = _normalize_yyyymmdd_for_s3_key(str(pdf.get('date') or ''))
         section = pdf.get('section') or 'default'
+        if not date_str:
+            return {
+                'success': False,
+                'error': 'missing date (YYYYMMDD) for S3 path',
+                'url': pdf.get('url'),
+            }
         print(f"single_pdf: {pdf['url']}")
         filename = generate_filename_from_url(pdf['url'], 0, date_str, section)
         s3_key = f"{site_id}/{date_str}/{section}/{filename}"
