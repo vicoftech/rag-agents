@@ -73,6 +73,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import threading
@@ -161,7 +162,11 @@ def mensaje_cuando_sin_chunks_recuperados(retrieval_cfg: dict[str, Any] | None) 
 DEFAULT_NOTIFICATION_FALLBACK_FROM = "wisoft.soporte@asap-consulting.net"
 
 # Frontend Alert Management historic search ([base](https://alerts.wi-soft.net/#/search/historic-search)).
-HISTORIC_SEARCH_BASE_URL = "https://alerts.wi-soft.net/#/search/historic-search"
+# AL-03: Configurable por ambiente vía variable de entorno HISTORIC_SEARCH_BASE_URL
+HISTORIC_SEARCH_BASE_URL = (
+    os.environ.get("HISTORIC_SEARCH_BASE_URL")
+    or "https://alerts.wi-soft.net/#/search/historic-search"
+).strip()
 
 _DATE_ISO = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -607,8 +612,6 @@ def _connect_to_postgres() -> PgConnection | None:
     """
     if not _PSYCOPG2_AVAILABLE:
         return None
-
-    import os
 
     # Opción 1: Secrets Manager (preferido)
     arn = (os.environ.get("DB_SECRET_ARN") or "").strip()
