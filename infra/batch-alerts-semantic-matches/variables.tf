@@ -106,8 +106,8 @@ variable "batch_no_created_at_filter" {
 
 variable "batch_testing_email" {
   type        = string
-  description = "Si no vacío, el contenedor pasa --testing-email (reemplaza destinatarios). Prueba ECS ANMAT/boletín: lrodriguez@asap-consulting.net; luego \"\" para destinatarios reales."
-  default     = "lrodriguez@asap-consulting.net"
+  description = "Si no vacío, el contenedor pasa --testing-email y reemplaza todos los destinatarios (solo pruebas). Por defecto \"\" = emails reales desde tabla busqueda (prod ANMAT y Boletín)."
+  default     = ""
   sensitive   = true
 }
 

@@ -28,6 +28,6 @@ s3_documents_bucket = "rag-documents-prod-913123310997"
 # batch_include_zero_chunk_anmat    = false
 # batch_include_zero_chunk_boletin  = false
 # batch_no_created_at_filter               = false
-# batch_testing_email                      = "lrodriguez@asap-consulting.net"  # default en variables.tf; "" para destinatarios reales
+# batch_testing_email                      = ""  # default: destinatarios reales. Solo pruebas: p. ej. "qa@asap-consulting.net"
 # batch_publish_email_queue                = true   # false para no encolar mails
 # batch_publish_alert_creation_queue       = true   # false para no encolar alert creation

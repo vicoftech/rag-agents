@@ -14,7 +14,7 @@ Parámetros del contenedor (`batch/alerts-semantic-matches/entrypoint.sh` + env 
 - `--profile ""` (credenciales del **task role**)
 - `--env prod`, `--corrida` según `BATCH_CORRIDA`, `--s3-bucket` desde `S3_DOCUMENTS_BUCKET`
 - `--parallel` desde `batch_parallel_*` en Terraform
-- Opcionales: `--no-created-at-filter`, `--trace-lambda-payloads`, `--include-zero-chunk-resultados`, `--testing-email` (si `batch_testing_email` no vacío)
+- Opcionales: `--no-created-at-filter`, `--trace-lambda-payloads`, `--include-zero-chunk-resultados`, `--testing-email` (solo si `batch_testing_email` en Terraform **no** está vacío; default **vacío** = destinatarios reales de cada alerta en `busqueda`)
 - **`--publish-email-queue` / `--publish-alert-creation-queue`** si `batch_publish_email_queue` / `batch_publish_alert_creation_queue` son `true` (default)
 - Salida en `/tmp/alerts_matches_prod_fullcorpus_<UTC>.json` dentro del contenedor (`-o` requerido para publicar a colas)
 
