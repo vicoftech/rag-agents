@@ -55,7 +55,7 @@ def _run_boletin() -> dict[str, Any]:
     arn = os.environ["BOLETIN_SFN_ARN"]
     tenant = os.environ["BOLETIN_TENANT_ID"]
     agent = os.environ["BOLETIN_AGENT_ID"]
-    raw_sections = os.environ.get("BOLETIN_SECTIONS", "primera,segunda,tercera,cuarta")
+    raw_sections = os.environ.get("BOLETIN_SECTIONS", "primera,segunda,tercera")
     sections = [s.strip() for s in raw_sections.split(",") if s.strip()]
     tz = os.environ.get("SCHEDULE_TZ", "America/Argentina/Buenos_Aires")
     d_y, d_t = _two_day_window_dates(tz)

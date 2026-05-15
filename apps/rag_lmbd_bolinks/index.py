@@ -33,15 +33,17 @@ BOLETIN_TZ = os.getenv('BOLETIN_TZ', 'America/Argentina/Buenos_Aires')
 S3_BUCKET_NAME = os.getenv('S3_BUCKET_NAME', '').strip()
 S3_STAGING_PREFIX = os.getenv('S3_STAGING_PREFIX', 'staging/bolinks-ingest').strip().strip('/')
 
-VALID_SECTIONS = frozenset({"primera", "segunda", "tercera"})
+# Boletín Oficial: sólo secciones I, II y III (primera, segunda, tercera). No hay cuarta en este flujo.
+SECTIONS_IN_ORDER = ("primera", "segunda", "tercera")
+VALID_SECTIONS = frozenset(SECTIONS_IN_ORDER)
 
 
 def resolve_sections(section_param) -> list[str]:
-    """Normaliza el parámetro section a una lista de secciones válidas."""
+    """Normaliza ``section`` a una lista de secciones válidas (sólo I–III / primera–tercera)."""
     if section_param is None:
         return [DEFAULT_SECTION]
     if section_param == "all":
-        return sorted(VALID_SECTIONS)
+        return list(SECTIONS_IN_ORDER)
     if isinstance(section_param, list):
         if not section_param:
             raise ValueError("Lista de secciones vacía.")

@@ -64,9 +64,9 @@ variable "anmat_year_override" {
 }
 
 variable "boletin_sections" {
-  description = "Secciones separadas por coma (orden bolinks)"
+  description = "Secciones separadas por coma (sólo primera, segunda, tercera — I a III del BO)"
   type        = string
-  default     = "primera,segunda,tercera,cuarta"
+  default     = "primera,segunda,tercera"
 }
 
 variable "lambda_runtime" {

@@ -630,7 +630,7 @@ variable "boletin_base_url" {
 }
 
 variable "boletin_default_section" {
-  description = "Default section to fetch (primera, segunda, tercera, cuarta)"
+  description = "Default section to fetch (primera, segunda, tercera)"
   type        = string
   default     = "primera"
 }
