@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import re
 import urllib.parse
 from datetime import date, datetime, time as dt_time, timedelta, timezone
 import boto3
@@ -293,6 +294,74 @@ def ordered_unique_documents(rows: list) -> list[str]:
             seen.add(doc)
             docs.append(doc)
     return docs
+
+
+def extract_document_date(document_name: str) -> date | None:
+    """
+    BU-04: Extrae fecha del documento desde document_name.
+
+    Patrones soportados (en orden de prioridad):
+    1. ANMAT aviso: aviso_YYYY_YYYYMMDD_default_NNNNNN.pdf → YYYY-MM-DD
+    2. YYYYMMDD (8 dígitos consecutivos): 20260512/aviso_...pdf → 2026-05-12
+    3. YYYY-MM-DD con guiones: informe_2026-05-15.pdf → 2026-05-15
+    4. Dispo_NNNN-YY: Dispo_3618-24.pdf → 2024-01-01 (solo año)
+
+    Args:
+        document_name: Nombre del documento (puede incluir path)
+
+    Returns:
+        date object si se puede extraer, None si no se encuentra patrón válido.
+
+    Examples:
+        >>> extract_document_date("aviso_2010_20100601_default_035149.pdf")
+        date(2010, 6, 1)
+        >>> extract_document_date("20260512/segunda/aviso_segunda_20260512.pdf")
+        date(2026, 5, 12)
+        >>> extract_document_date("Dispo_3618-24.pdf")
+        date(2024, 1, 1)
+        >>> extract_document_date("documento_sin_fecha.pdf")
+        None
+    """
+    if not document_name or not isinstance(document_name, str):
+        return None
+
+    # Limpiar query strings (ej: "20260511?anexos=1/primera/aviso...")
+    filename = document_name.split('?')[0].strip().lower()
+
+    # Patrón 1: ANMAT aviso (más específico: aviso_YYYY_YYYYMMDD_default_NNNNNN.pdf)
+    match = re.search(r'aviso_\d{4}_(\d{8})_default_\d+\.pdf', filename)
+    if match:
+        try:
+            return datetime.strptime(match.group(1), '%Y%m%d').date()
+        except ValueError:
+            pass  # Fecha inválida (ej: 20261332), continuar con otros patrones
+
+    # Patrón 2: YYYYMMDD genérico (8 dígitos consecutivos) - Boletín Oficial
+    match = re.search(r'(\d{8})', filename)
+    if match:
+        try:
+            return datetime.strptime(match.group(1), '%Y%m%d').date()
+        except ValueError:
+            pass  # No es una fecha válida
+
+    # Patrón 3: YYYY-MM-DD con guiones
+    match = re.search(r'(\d{4})-(\d{2})-(\d{2})', filename)
+    if match:
+        try:
+            y, m, d = int(match.group(1)), int(match.group(2)), int(match.group(3))
+            return date(y, m, d)
+        except ValueError:
+            pass
+
+    # Patrón 4: Dispo_NNNN-YY (solo año, menos preciso)
+    match = re.search(r'dispo_\d+-(\d{2})\.pdf', filename)
+    if match:
+        year = 2000 + int(match.group(1))
+        if 2000 <= year <= 2099:  # Validar rango razonable
+            return date(year, 1, 1)  # Default al 1 de enero
+
+    # No se pudo extraer fecha
+    return None
 
 
 def parse_created_at_day(raw):
@@ -728,6 +797,41 @@ def semantic_search(
             "document_name/chunk_text/created_at o datos en BD"
         )
 
+    # BU-04: Filtrar por fecha del documento (extraída de document_name)
+    skipped_out_of_range = 0
+    skipped_no_date = 0
+    if ca_lo is not None and ca_hi_exc is not None:
+        date_filtered_rows = []
+
+        for row in matched_rows:
+            doc_name = str(row[2] or "").strip()
+            doc_date = extract_document_date(doc_name)
+
+            if doc_date is None:
+                # No se pudo extraer fecha: incluir en resultados con warning
+                date_filtered_rows.append(row)
+                skipped_no_date += 1
+                continue
+
+            # Convertir bounds a date para comparación
+            date_lo = ca_lo.date() if hasattr(ca_lo, 'date') else ca_lo
+            date_hi = ca_hi_exc.date() if hasattr(ca_hi_exc, 'date') else ca_hi_exc
+
+            if date_lo <= doc_date < date_hi:
+                date_filtered_rows.append(row)
+            else:
+                skipped_out_of_range += 1
+
+        before_date_filter = len(matched_rows)
+        matched_rows = date_filtered_rows
+
+        if skipped_out_of_range > 0 or skipped_no_date > 0:
+            print(
+                f"[retrieval] BU-04 document_date filter: "
+                f"before={before_date_filter}, after={len(matched_rows)}, "
+                f"out_of_range={skipped_out_of_range}, no_date_extracted={skipped_no_date}"
+            )
+
     n_sql = len(rows)
     after_sim = sum(1 for r in rows if r[3] is None or float(r[3]) <= max_sd)
     semantic_fallback_used = after_sim == 0 and bool(rows) and bool(matched_rows)
@@ -775,6 +879,9 @@ def semantic_search(
         "created_at_start": ca_s or None,
         "created_at_end": ca_e or None,
         "created_at_single_day": created_at_day.isoformat() if created_at_day else None,
+        "document_date_filter_applied": bool(ca_lo and ca_hi_exc),
+        "documents_filtered_by_date": skipped_out_of_range if ca_lo and ca_hi_exc else 0,
+        "documents_without_extractable_date": skipped_no_date if ca_lo and ca_hi_exc else 0,
     }
 
     return chunks, documents, context_items, retrieval_config
