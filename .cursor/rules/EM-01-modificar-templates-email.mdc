@@ -1,6 +1,6 @@
 ---
-description: Spec para modificar el contenido de los templates de email actualmente en uso. Aplicar al trabajar en templates HTML de emails o en el sistema de notificaciones.
-globs: ["**/templates/**/*.html", "**/email*", "**/mailer*", "**/notification*"]
+description: Spec para modificar el contenido de los templates de email (incl. SES `alert_aviso`). Aplicar al trabajar en templates HTML, `ses_template*.json` o el sistema de notificaciones.
+globs: ["**/templates/**/*.html", "**/email*", "**/mailer*", "**/notification*", "**/ses_template*.json"]
 alwaysApply: false
 ---
 
@@ -14,7 +14,7 @@ requieren ajustes de contenido.
 
 ## Tarea concreta
 
-1. Identificar y listar todos los templates de email activos en el sistema
+1. Identificar y listar todos los templates de email activos en el sistema (incl. **SES `alert_aviso`**; ver sección obligatoria más abajo).
 2. Documentar los cambios específicos requeridos por cada template (a definir con el equipo de producto)
 3. Aplicar los cambios en los archivos de template correspondientes
 4. Verificar que los cambios se renderizan correctamente en los principales clientes de mail (Gmail, Outlook)
@@ -36,16 +36,50 @@ requieren ajustes de contenido.
 
 ## Inventario de templates a revisar
 
-> Completar esta lista con los archivos reales del proyecto antes de iniciar:
+El template de alertas por matching semántico **no** vive bajo `templates/` en el repo: se define en **Amazon SES** con nombre **`alert_aviso`** (nombre oficial en AWS y en el código; no confundir con «aviso_alert»). En la raíz del repositorio hay una copia de referencia sincronizada con SES:
+
+- `ses_template_alert_aviso_from_ses.json` — export de `aws ses get-template --template-name alert_aviso`
+
+Para cambiar el HTML/asunto/texto: editar el JSON (o el contenido en la consola SES), aplicar con `aws ses update-template` (ver `terraform/README.md`, sección template SES), y volver a exportar al archivo de referencia.
 
 ```
+# Otros (legacy / ejemplo en esta spec)
 templates/
 ├── email/
-│   ├── alert_notification.html      # Email de alerta encontrada
-│   ├── no_results_notification.html # Email de búsqueda sin resultados
-│   ├── welcome.html                 # Email de bienvenida (si existe)
+│   ├── alert_notification.html
 │   └── ...
 ```
+
+---
+
+## Template SES `alert_aviso` — soporte (EM-01 obligatorio)
+
+**Objetivo:** sustituir el contacto por correo por un enlace al portal de soporte.
+
+### Comportamiento actual (a reemplazar)
+
+En **HTML** y **texto plano**, el párrafo de ayuda termina indicando el mail **`soporte@wi-soft.net`** (en HTML suele ser un `mailto:`). Ejemplo de redacción:
+
+> Si tenés alguna pregunta sobre este proceso o necesitás asistencia, podés ponerte en contacto con nuestro equipo de soporte en soporte@wi-soft.net
+
+### Comportamiento deseado
+
+Misma intención, pero el cierre debe invitar a abrir el portal de soporte con el texto enlazado **«Aquí»**:
+
+> Si tenés alguna pregunta sobre este proceso o necesitás asistencia, podés ponerte en contacto con nuestro equipo de soporte **Aquí**
+
+Donde **«Aquí»** es un hipervínculo a **`https://soporte.wi-soft.net/`** (mismo estilo de color/enlace que el resto del mail, p. ej. mantener `#00BCD4` y `text-decoration` coherente con el template).
+
+- En **HTML**: un único `<a href="https://soporte.wi-soft.net/" …>Aquí</a>` (o «aquí» según criterio de producto; mantener mayúscula inicial si así queda acordado).
+- En **TextPart**: la URL explícita al final del párrafo o la frase con la URL completa, para clientes solo texto (ej.: `… soporte en https://soporte.wi-soft.net/`).
+
+### Criterios de aceptación adicionales (solo este bloque)
+
+- [ ] No queda `mailto:soporte@wi-soft.net` en el cuerpo por este párrafo del template `alert_aviso` (el footer puede seguir teniendo «Contactanos» u otros enlaces; no es parte de este cambio salvo que producto lo pida).
+- [ ] El enlace apunta exactamente a `https://soporte.wi-soft.net/` ([portal de soporte / Redmine](https://soporte.wi-soft.net/)).
+- [ ] Tras deploy en SES, se actualiza `ses_template_alert_aviso_from_ses.json` con `get-template` para que el repo refleje la verdad en AWS.
+
+---
 
 ## Patrón de referencia
 
