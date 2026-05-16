@@ -2,6 +2,8 @@
 """
 Invoca la Step Function de Boletín por fecha (descendente) y secciones.
 Soporta paralelizar días (--parallel-days) y, opcionalmente, secciones (--parallel-sections).
+Por defecto: 2 días × 3 secciones en paralelo, con tope global de 10 SFN en vuelo
+(--max-concurrent-sfn) para no saturar Bedrock/embeddings.
 
 Rango de fechas:
   - Por día: --start-date / --end-date (YYYY-MM-DD), recorrido descendente.
@@ -26,25 +28,41 @@ import boto3
 AWS_REGION = "us-east-1"
 AWS_PROFILE = "asap_main"
 # Cuenta 913: prod gestionado en Terraform: Alerts-BoletinOficialSyncronizer-prod (JSONata, Lambdas -prod)
+# Cuenta 913: nombre real del state machine prod (sin sufijo -prod).
 STEP_FUNCTION_ARN_PROD = (
-    "arn:aws:states:us-east-1:913123310997:stateMachine:Alerts-BoletinOficialSyncronizer-prod"
+    "arn:aws:states:us-east-1:913123310997:stateMachine:Alerts-BoletinOficialSyncronizer"
 )
 STEP_FUNCTION_ARN_QA = (
     "arn:aws:states:us-east-1:913123310997:stateMachine:Alerts-BoletinOficialSyncronizer-qa"
 )
 STEP_FUNCTION_ARN = STEP_FUNCTION_ARN_PROD
 
-TENANT_ID = "boletin"
+TENANT_ID = "tenant_boletin"
 # Agente RAG "boletin" en prod (ajustar --agent-id para QA u otros)
 AGENT_ID = "05032266-f6e1-48cb-9248-bc116652c7c7"
 
 START_DATE = datetime(2026, 4, 21)
 END_DATE = datetime(2025, 4, 1)
 
-SECTIONS = ["primera", "segunda", "tercera", "cuarta"]
+# Alineado con rag_lmbd_bolinks (I–III).
+SECTIONS = ["primera", "segunda", "tercera"]
+DEFAULT_PARALLEL_DAYS = 2
 MAX_PARALLEL_DAYS = 10
+# Tope global de SFN RUNNING a la vez (2 días × ~5 “slots” ≈ 10; con 3 secciones pico ≈ 6).
+DEFAULT_MAX_CONCURRENT_SFN = 10
 
 _print_lock = threading.Lock()
+_sfn_semaphore: threading.Semaphore | None = None
+
+
+def _acquire_sfn_slot() -> None:
+    if _sfn_semaphore is not None:
+        _sfn_semaphore.acquire()
+
+
+def _release_sfn_slot() -> None:
+    if _sfn_semaphore is not None:
+        _sfn_semaphore.release()
 
 
 def log_progress(msg: str) -> None:
@@ -189,21 +207,25 @@ def process_date_sequential_sections(
 
     for section in SECTIONS:
         _log(f"  {section.upper()}:", quiet)
-        arn = invoke_step_function(sfn, date_str, section, tenant_id, agent_id, quiet)
-        if not arn:
-            bad_sec.append(section)
-            continue
-        if wait_for_completion(
-            sfn,
-            arn,
-            timeout=wait_timeout,
-            quiet=quiet,
-            wait_label=f"{date_str} {section}",
-            progress_interval_sec=sf_progress_interval,
-        ):
-            ok_sec.append(section)
-        else:
-            bad_sec.append(section)
+        _acquire_sfn_slot()
+        try:
+            arn = invoke_step_function(sfn, date_str, section, tenant_id, agent_id, quiet)
+            if not arn:
+                bad_sec.append(section)
+                continue
+            if wait_for_completion(
+                sfn,
+                arn,
+                timeout=wait_timeout,
+                quiet=quiet,
+                wait_label=f"{date_str} {section}",
+                progress_interval_sec=sf_progress_interval,
+            ):
+                ok_sec.append(section)
+            else:
+                bad_sec.append(section)
+        finally:
+            _release_sfn_slot()
         time.sleep(0 if quiet else 1)
 
     _log(f"  Resumen {date_str}: ok={ok_sec} fail={bad_sec}", quiet)
@@ -224,18 +246,22 @@ def _run_one_section(
     sf_progress_interval: float = 15.0,
 ) -> tuple[str, bool]:
     sfn = create_step_function_client(profile, region)
-    arn = invoke_step_function(sfn, date_str, section, tenant_id, agent_id, quiet)
-    if not arn:
-        return section, False
-    ok = wait_for_completion(
-        sfn,
-        arn,
-        timeout=wait_timeout,
-        quiet=quiet,
-        wait_label=f"{date_str} {section}",
-        progress_interval_sec=sf_progress_interval,
-    )
-    return section, ok
+    _acquire_sfn_slot()
+    try:
+        arn = invoke_step_function(sfn, date_str, section, tenant_id, agent_id, quiet)
+        if not arn:
+            return section, False
+        ok = wait_for_completion(
+            sfn,
+            arn,
+            timeout=wait_timeout,
+            quiet=quiet,
+            wait_label=f"{date_str} {section}",
+            progress_interval_sec=sf_progress_interval,
+        )
+        return section, ok
+    finally:
+        _release_sfn_slot()
 
 
 def process_date_parallel_sections(
@@ -307,7 +333,7 @@ def main():
         "--env",
         choices=("qa", "prod"),
         default="prod",
-        help="State Machine: prod=Alerts-BoletinOficialSyncronizer, qa=...-qa (default: prod).",
+        help="State Machine: prod=Alerts-BoletinOficialSyncronizer (913), qa=...-qa (default: prod).",
     )
     parser.add_argument(
         "--sfn-arn",
@@ -320,14 +346,31 @@ def main():
     parser.add_argument(
         "--parallel-days",
         type=int,
-        default=10,
+        default=DEFAULT_PARALLEL_DAYS,
         metavar="N",
-        help="Cantidad de días a procesar en paralelo (default: 10, máx: 10).",
+        help=(
+            f"Cantidad de días a procesar en paralelo (default: {DEFAULT_PARALLEL_DAYS}, "
+            f"máx: {MAX_PARALLEL_DAYS})."
+        ),
     )
     parser.add_argument(
         "--parallel-sections",
-        action="store_true",
-        help="Dentro de cada día, lanzar las 4 secciones en paralelo (más SFN concurrentes).",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Por día, lanzar las 3 secciones en paralelo (default: activado). "
+            "Desactivar con --no-parallel-sections."
+        ),
+    )
+    parser.add_argument(
+        "--max-concurrent-sfn",
+        type=int,
+        default=DEFAULT_MAX_CONCURRENT_SFN,
+        metavar="N",
+        help=(
+            f"Máximo de ejecuciones SFN en vuelo a la vez (default: {DEFAULT_MAX_CONCURRENT_SFN}). "
+            "Limita carga sobre embeddings/Bedrock."
+        ),
     )
     parser.add_argument(
         "--wait-timeout",
@@ -432,7 +475,12 @@ def main():
         )
         sys.exit(1)
 
-    global STEP_FUNCTION_ARN
+    global STEP_FUNCTION_ARN, _sfn_semaphore
+    if args.max_concurrent_sfn < 1:
+        print("ERROR: --max-concurrent-sfn debe ser >= 1.", file=sys.stderr)
+        sys.exit(1)
+    _sfn_semaphore = threading.Semaphore(args.max_concurrent_sfn)
+
     if args.sfn_arn and str(args.sfn_arn).strip():
         STEP_FUNCTION_ARN = str(args.sfn_arn).strip()
     elif args.env == "qa":
@@ -464,9 +512,15 @@ def main():
     )
     print(f"Secciones: {', '.join(SECTIONS)}")
     print(f"Tenant: {args.tenant_id} | Agent: {args.agent_id}")
+    sections_factor = len(SECTIONS) if args.parallel_sections else 1
+    nominal_peak = parallel_days * sections_factor
     print(
         f"Paralelismo: {parallel_days} día(s)"
-        + (" + secciones en paralelo" if args.parallel_sections else "")
+        + (f" × {len(SECTIONS)} secciones en paralelo" if args.parallel_sections else " (secciones en serie)")
+    )
+    print(
+        f"SFN en vuelo: máx {args.max_concurrent_sfn} (pico nominal ~{nominal_peak} "
+        f"= {parallel_days}×{sections_factor}, acotado por el semáforo)"
     )
     print(f"Timeout/sección: {args.wait_timeout}s")
     print(
