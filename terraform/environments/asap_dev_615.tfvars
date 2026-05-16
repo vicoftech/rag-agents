@@ -24,13 +24,14 @@ cors_allowed_origins = ["*"]
 
 # Lambdas: no definir DB_* aquí; main.tf inyecta endpoint Aurora vía base_db_env_vars
 lambda_embeddings_config = {
-  timeout                = 30
+  timeout                = 300
   memory_size            = 1024
   ephemeral_storage_size = 1024
 }
 
 lambda_embeddings_env_vars = {
   EMBEDDINGS_MODEL      = "cohere.embed-v4:0"
+  EMBED_BATCH_SIZE      = "5"
   MAX_EMBED_TEXT_LENGTH = "20000"
 }
 

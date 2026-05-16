@@ -28,13 +28,14 @@ cors_allowed_origins = ["*"]
 # ==============================================================================
 
 lambda_embeddings_config = {
-  timeout                = 30
+  timeout                = 300
   memory_size            = 1024
   ephemeral_storage_size = 1024
 }
 
 lambda_embeddings_env_vars = {
-  EMBEDDINGS_MODEL = "cohere.embed-v4:0"
+  EMBEDDINGS_MODEL      = "cohere.embed-v4:0"
+  EMBED_BATCH_SIZE      = "5"
   # Claves S3 tipo boletin_oficial/YYYYMMDD/.../archivo.pdf (sin /documents/<uuid>/)
   RAG_S3_DEFAULT_AGENT_ID  = "25abefca-8e5c-4c6e-973d-2fad3af8b469"
   RAG_S3_PREFIX_SCHEMA_MAP = "{\"boletin_oficial\":\"tenant_boletin\"}"

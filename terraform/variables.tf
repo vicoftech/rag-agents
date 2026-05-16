@@ -254,7 +254,7 @@ variable "lambda_embeddings_config" {
     ephemeral_storage_size = number
   })
   default = {
-    timeout                = 30
+    timeout                = 300
     memory_size            = 1024
     ephemeral_storage_size = 1024
   }

@@ -1,5 +1,5 @@
 {
-  "Comment": "Boletín Oficial: bolinks → s3writer → dbwriter (JSONata)",
+  "Comment": "Boletín Oficial: bolinks → s3writer → dbwriter (JSONata). ParseLinksResponse: tenant_id/agent_id desde received_params o Execution.Input.",
   "StartAt": "Boletin Oficial - Get links",
   "QueryLanguage": "JSONata",
   "States": {
@@ -58,7 +58,7 @@
     "ParseLinksResponse": {
       "Type": "Pass",
       "Next": "Descarga Pdf a S3",
-      "Output": "{% {\n  \"bolinks_output\": $parse($states.input.body),\n  \"tenant_id\": $parse($states.input.body).received_params.tenant_id,\n  \"agent_id\": $parse($states.input.body).received_params.agent_id\n} %}"
+      "Output": "{% ($p := $parse($states.input.body); $in := $states.context.Execution.Input; { \"bolinks_output\": $p, \"tenant_id\": ($p.received_params.tenant_id ? $p.received_params.tenant_id : $in.tenant_id), \"agent_id\": ($p.received_params.agent_id ? $p.received_params.agent_id : $in.agent_id) }) %}"
     },
     "Descarga Pdf a S3": {
       "Type": "Task",
