@@ -112,6 +112,80 @@ SEARCH_SORT_DATE_DESC = "date_desc"
 SEARCH_SORT_ALLOWED = {SEARCH_SORT_RELEVANCE, SEARCH_SORT_HYBRID, SEARCH_SORT_DATE_DESC}
 
 
+API_V2_MAX_PAGE_SIZE = 50
+API_V2_DEFAULT_PAGE_SIZE = 10
+
+
+def _extract_version_from_path(event: dict) -> str:
+    path = (
+        event.get("requestContext", {}).get("http", {}).get("path")
+        or event.get("rawPath")
+        or event.get("path")
+        or ""
+    )
+    m = re.search(r"/(v\d+)/query", path.rstrip("/"))
+    if m:
+        return m.group(1)
+    return "v1"
+
+
+def _normalize_v2_body(body: dict) -> dict:
+    body = dict(body)
+    page_size_raw = body.get("pageSize")
+    if page_size_raw is not None:
+        try:
+            page_size = int(page_size_raw)
+        except (TypeError, ValueError):
+            raise ValueError("pageSize debe ser un entero")
+    else:
+        page_size = API_V2_DEFAULT_PAGE_SIZE
+    if page_size < 1 or page_size > API_V2_MAX_PAGE_SIZE:
+        raise ValueError(
+            f"pageSize debe estar entre 1 y {API_V2_MAX_PAGE_SIZE}"
+        )
+    page_raw = body.get("page")
+    if page_raw is not None:
+        try:
+            page = int(page_raw)
+        except (TypeError, ValueError):
+            raise ValueError("page debe ser un entero")
+    else:
+        page = 1
+    if page < 1:
+        raise ValueError("page debe ser >= 1")
+    body["retrieval_limit"] = page_size
+    body["_page"] = page
+    sort_raw = body.get("sort")
+    if sort_raw is not None and str(sort_raw).strip():
+        body["sort_by"] = str(sort_raw).strip()
+    return body
+
+
+def _build_v2_response(v1_body: dict, page: int, page_size: int) -> dict:
+    data = {
+        "response": v1_body.get("response"),
+        "contexts": v1_body.get("contexts", []),
+        "context_items": v1_body.get("context_items", []),
+        "documents": v1_body.get("documents", []),
+    }
+    contexts = v1_body.get("contexts", [])
+    has_next = len(contexts) >= page_size
+    has_previous = page > 1
+    retrieval_config = v1_body.get("retrieval_config", {})
+    return {
+        "data": data,
+        "pagination": {
+            "page": page,
+            "pageSize": page_size,
+            "hasNext": has_next,
+            "hasPrevious": has_previous,
+        },
+        "metadata": {
+            "retrieval_config": retrieval_config,
+        },
+    }
+
+
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -1063,6 +1137,8 @@ def handler(event, context):
     if is_http_event and _is_presigned_url_route(event, method_upper):
         return handle_presigned_download(event, is_http_event=True)
 
+    api_version = _extract_version_from_path(event)
+
     if is_http_event:
         body = event.get("body") or "{}"
         if isinstance(body, str):
@@ -1076,6 +1152,19 @@ def handler(event, context):
                         **CORS_HEADERS,
                     },
                     "body": json.dumps({"error": "Invalid JSON body"}),
+                }
+
+        if api_version == "v2":
+            try:
+                body = _normalize_v2_body(body)
+            except ValueError as e:
+                return {
+                    "statusCode": 400,
+                    "headers": {
+                        "Content-Type": "application/json",
+                        **CORS_HEADERS,
+                    },
+                    "body": json.dumps({"error": str(e)}),
                 }
 
         tenant_id = body.get("tenant_id")
@@ -1293,17 +1382,22 @@ def handler(event, context):
         f"llm_generate_ms={_llm_ms:.1f} handler_after_validate_ms={_handler_work_ms:.1f}"
     )
     print(response)
+    resp_body = {
+        "response": response,
+        "contexts": chunks,
+        "documents": documents,
+        "context_items": context_items,
+        "retrieval_config": retrieval_config,
+    }
+
+    if api_version == "v2":
+        page = int(req_src.get("_page", 1))
+        page_size = int(req_src.get("retrieval_limit", API_V2_DEFAULT_PAGE_SIZE))
+        resp_body = _build_v2_response(resp_body, page, page_size)
+
     resp = {
         "statusCode": 200,
-        "body": json.dumps(
-            {
-                "response": response,
-                "contexts": chunks,
-                "documents": documents,
-                "context_items": context_items,
-                "retrieval_config": retrieval_config,
-            }
-        ),
+        "body": json.dumps(resp_body),
     }
     if is_http_event:
         resp["headers"] = {

@@ -111,12 +111,25 @@ def _route_key(event: dict[str, Any]) -> str:
     return str(event.get("routeKey") or "").strip()
 
 
+def _extract_version_from_path(event: dict[str, Any]) -> str:
+    path = (
+        event.get("requestContext", {}).get("http", {}).get("path")
+        or event.get("rawPath")
+        or event.get("path")
+        or ""
+    )
+    m = re.search(r"/(v\d+)/query", path.rstrip("/"))
+    if m:
+        return m.group(1)
+    return "v1"
+
+
 def _is_post_query_enqueue(event: dict[str, Any], meth: str) -> bool:
     """POST encolar async /query — compatible con APIs que omiten routeKey o usan prefijo stage."""
     if meth != "POST":
         return False
     rk = _route_key(event)
-    if rk == "POST /query":
+    if rk in ("POST /query", "POST /v1/query", "POST /v2/query"):
         return True
     # HTTP API a veces deja routeKey vacío o con variante; usar path terminado en /query
     raw = event.get("rawPath") or event.get("path") or ""
@@ -185,6 +198,7 @@ def _find_cached_job_id(
     retrieval_limit: int | None = 10,
     sort_by: str | None = None,
     document_name: str | None = None,
+    api_version: str | None = "v1",
 ) -> str | None:
     """
     Busca un job ya completado con la misma clave lógica (sin recalcular en worker).
@@ -194,6 +208,7 @@ def _find_cached_job_id(
     - retrieval_limit: afecta cantidad de resultados (default: 10)
     - sort_by: afecta orden de resultados
     - document_name: filtro por documento específico
+    - api_version: evita formato incorrecto entre v1 y v2
     """
     tbl = _ddb_table()
     kcf = (
@@ -228,6 +243,11 @@ def _find_cached_job_id(
         kcf = kcf & Attr("document_name").eq(document_name)
     else:
         kcf = kcf & (Attr("document_name").not_exists() | Attr("document_name").eq("") | Attr("document_name").eq(None))
+
+    if api_version:
+        kcf = kcf & Attr("api_version").eq(api_version)
+    else:
+        kcf = kcf & (Attr("api_version").not_exists() | Attr("api_version").eq("") | Attr("api_version").eq(None))
 
     eks: dict[str, Any] | None = None
     for _ in range(_CACHE_QUERY_MAX_PAGES):
@@ -334,18 +354,30 @@ def _post_query(event: dict[str, Any]) -> dict[str, Any]:
         )
     start_s, end_s = window
 
-    # Extraer parámetros de búsqueda para clave de cache
-    # Default retrieval_limit = 10 si no se especifica
-    retrieval_limit = body.get("retrieval_limit")
-    if retrieval_limit is not None:
-        try:
-            retrieval_limit = int(retrieval_limit)
-        except (TypeError, ValueError):
-            retrieval_limit = 10  # Default en caso de error de conversión
-    else:
-        retrieval_limit = 10  # Default cuando no se envía
+    # Detectar versión de API desde path
+    api_version = _extract_version_from_path(event)
 
-    sort_by = str(body.get("sort_by") or "").strip() or None
+    # Extraer parámetros de búsqueda para clave de cache
+    retrieval_limit = body.get("retrieval_limit")
+    if api_version == "v2":
+        page_size_raw = body.get("pageSize")
+        if page_size_raw is not None:
+            try:
+                retrieval_limit = int(page_size_raw)
+            except (TypeError, ValueError):
+                retrieval_limit = 10
+        else:
+            retrieval_limit = retrieval_limit or 10
+    else:
+        if retrieval_limit is not None:
+            try:
+                retrieval_limit = int(retrieval_limit)
+            except (TypeError, ValueError):
+                retrieval_limit = 10
+        else:
+            retrieval_limit = 10
+
+    sort_by = str(body.get("sort_by") or body.get("sort") or "").strip() or None
     document_name = str(body.get("document_name") or "").strip() or None
 
     cached_id = _find_cached_job_id(
@@ -357,6 +389,7 @@ def _post_query(event: dict[str, Any]) -> dict[str, Any]:
         retrieval_limit=retrieval_limit,
         sort_by=sort_by,
         document_name=document_name,
+        api_version=api_version,
     )
     if cached_id:
         return _resp(202, {"id": cached_id})
@@ -375,6 +408,8 @@ def _post_query(event: dict[str, Any]) -> dict[str, Any]:
         # Valores = mismos strings que ``start_at`` / ``end_at`` del JSON.
         "start_at": start_s,
         "start_end": end_s,
+        # Version de API para cache key y formato de respuesta
+        "api_version": api_version,
     }
 
     # Guardar parámetros de búsqueda para cache key
