@@ -139,6 +139,64 @@ resource "aws_apigatewayv2_route" "presigned_url_options" {
   target             = "integrations/${aws_apigatewayv2_integration.worker.id}"
 }
 
+# TASK-399: Rutas explícitas para /v2/query (versionado de API)
+resource "aws_apigatewayv2_route" "query_v2" {
+  count = local.dispatch_enabled ? 1 : 0
+
+  api_id             = aws_apigatewayv2_api.this.id
+  route_key          = "POST /v2/query"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+  target             = "integrations/${aws_apigatewayv2_integration.dispatcher[0].id}"
+}
+
+resource "aws_apigatewayv2_route" "query_v2_options" {
+  count = local.dispatch_enabled ? 1 : 0
+
+  api_id             = aws_apigatewayv2_api.this.id
+  route_key          = "OPTIONS /v2/query"
+  authorization_type = "NONE"
+  target             = "integrations/${aws_apigatewayv2_integration.dispatcher[0].id}"
+}
+
+resource "aws_apigatewayv2_route" "query_status_v2" {
+  count = local.dispatch_enabled ? 1 : 0
+
+  api_id             = aws_apigatewayv2_api.this.id
+  route_key          = "GET /v2/query/status/{id}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+  target             = "integrations/${aws_apigatewayv2_integration.dispatcher[0].id}"
+}
+
+resource "aws_apigatewayv2_route" "query_status_v2_options" {
+  count = local.dispatch_enabled ? 1 : 0
+
+  api_id             = aws_apigatewayv2_api.this.id
+  route_key          = "OPTIONS /v2/query/status/{id}"
+  authorization_type = "NONE"
+  target             = "integrations/${aws_apigatewayv2_integration.dispatcher[0].id}"
+}
+
+resource "aws_apigatewayv2_route" "query_result_v2" {
+  count = local.dispatch_enabled ? 1 : 0
+
+  api_id             = aws_apigatewayv2_api.this.id
+  route_key          = "GET /v2/query/result/{id}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+  target             = "integrations/${aws_apigatewayv2_integration.dispatcher[0].id}"
+}
+
+resource "aws_apigatewayv2_route" "query_result_v2_options" {
+  count = local.dispatch_enabled ? 1 : 0
+
+  api_id             = aws_apigatewayv2_api.this.id
+  route_key          = "OPTIONS /v2/query/result/{id}"
+  authorization_type = "NONE"
+  target             = "integrations/${aws_apigatewayv2_integration.dispatcher[0].id}"
+}
+
 resource "aws_cloudwatch_log_group" "api_gateway" {
   name              = "/aws/apigateway/${var.api_name}"
   retention_in_days = 14
