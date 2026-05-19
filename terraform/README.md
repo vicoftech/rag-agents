@@ -385,8 +385,8 @@ Módulo Terraform `modules/scheduled_boletin_anmat_sfn`: **EventBridge Scheduler
 
 | Horario (TZ `scheduled_sync_timezone`, default Buenos Aires) | Corpus | Comportamiento |
 |-------------------------------------------------------------|--------|----------------|
-| **09:00** | Boletín | Para **ayer** y **hoy** (civil en esa TZ), una ejecución SFN por cada sección (`primera`, `segunda`, `tercera`). Misma carga útil que `scripts/boletin_syncronizer_invoker.py`. |
-| **09:30** | ANMAT | **Una** ejecución del SFN `rag-anmat-to-s3writer-*` con `year` = año civil actual (o `anmat_year_override`) y rango de páginas configurable (`anmat_page_start` / `anmat_page_end`, default 1–15). |
+| **11:30** (lun–vie, `scheduled_boletin_cron_minute_hour`) | Boletín | Ventana **[último día hábil previo, hoy]** (AL-01), una SFN por sección (`primera`, `segunda`, `tercera`). |
+| **09:30** (default módulo) | ANMAT | **Una** ejecución del SFN `rag-anmat-to-s3writer-*` con `year` = año civil actual (o `anmat_year_override`) y página 1. |
 
 **Criterio “hoy y ayer”:** aplica de forma literal al **Boletín** (dos fechas en el payload `date`). El SFN de **ANMAT** hoy sólo acepta **año + páginas** en la Lambda anmatlinks; no hay filtro por fecha de norma en el ASL. Para alinear ANMAT a un rango calendario habría que extender la Lambda/SFN.
 
@@ -394,7 +394,10 @@ Módulo Terraform `modules/scheduled_boletin_anmat_sfn`: **EventBridge Scheduler
 
 ```hcl
 enable_scheduled_boletin_anmat_sfn = true
-# Opcional: UUIDs agente RAG si difieren del default
+scheduled_boletin_cron_minute_hour = "30 11"
+scheduled_boletin_tenant_id        = "tenant_boletin"
+# Prod heredado: SFN sin sufijo -prod (no el output de module.boletin_oficial_sfn)
+scheduled_boletin_sfn_arn_override = "arn:aws:states:us-east-1:913123310997:stateMachine:Alerts-BoletinOficialSyncronizer"
 # scheduled_boletin_rag_agent_id = "..."
 # scheduled_anmat_rag_agent_id = "..."
 ```

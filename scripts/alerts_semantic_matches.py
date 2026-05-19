@@ -12,8 +12,9 @@ En cada invocación el script sobrescribe el umbral sólo para esa llamada.
 La Lambda en API sigue usando MAX_SEMANTIC_DISTANCE del env (p. ej. 0.45) si nadie envía otro valor.
 
 Por **default** cada invocación a ``rag_lmbd_query`` filtra chunks por ``created_at`` en un ventana de
-**días civiles UTC**: hoy inclusivo hasta hoy menos (N−1), con **N = 2** (ayer + hoy). Así las corridas
-son más cortas que un full-index. Para buscar todo el corpus: ``--no-created-at-filter``.
+**días civiles UTC**: hoy inclusivo hasta hoy menos (N−1), con **N = 1** (solo hoy UTC). El batch ECS
+pasa ``--created-at-start`` y ``--created-at-end`` con la fecha de hoy en TZ Argentina. Para buscar todo
+el corpus: ``--no-created-at-filter``.
 
 Si ``chunks_count`` es 0 y el LLM igual escribe en ``llm_response_preview``, eso **no**
 es un ``matcheo`` de corpus: no hay chunk ni S3 hasta que ``tiene_fuente_documental_recuperada`` sea true.
@@ -2142,10 +2143,10 @@ def main(argv: list[str]) -> int:
     p.add_argument(
         "--created-at-span-days",
         type=int,
-        default=2,
+        default=1,
         help=(
             "Si no hay --created-at-start/--created-at-end: N días civiles UTC inclusivos terminando "
-            "hoy (default 2 = ayer + hoy UTC)."
+            "hoy (default 1 = solo hoy UTC). El batch ECS pasa explícitamente start=end=hoy (TZ Argentina)."
         ),
     )
     p.add_argument(

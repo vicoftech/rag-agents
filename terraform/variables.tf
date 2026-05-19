@@ -52,13 +52,31 @@ variable "boletin_oficial_state_machine_name_override" {
 }
 
 variable "enable_scheduled_boletin_anmat_sfn" {
-  description = "Si true, despliega EventBridge Scheduler + Lambda que disparan diariamente los SFN de Boletín (09:00) y ANMAT (09:30) en scheduled_sync_timezone."
+  description = "Si true, despliega EventBridge Scheduler + Lambda que disparan diariamente los SFN de Boletín y ANMAT en scheduled_sync_timezone."
   type        = bool
   default     = false
 }
 
+variable "scheduled_boletin_sfn_arn_override" {
+  description = "ARN del SFN Boletín para el scheduler. Si no vacío, reemplaza module.boletin_oficial_sfn (p. ej. Alerts-BoletinOficialSyncronizer heredado sin sufijo -prod)."
+  type        = string
+  default     = ""
+}
+
+variable "scheduled_boletin_tenant_id" {
+  description = "tenant_id en el payload del SFN diario de Boletín (esquema Postgres/S3, p. ej. tenant_boletin)."
+  type        = string
+  default     = "tenant_boletin"
+}
+
+variable "scheduled_boletin_cron_minute_hour" {
+  description = "Hora local Boletín lun–vie en scheduled_sync_timezone. Ej: \"30 11\" = 11:30."
+  type        = string
+  default     = "30 11"
+}
+
 variable "scheduled_boletin_rag_agent_id" {
-  description = "UUID agente RAG boletín para el payload del SFN diario (tenant_id=boletin)."
+  description = "UUID agente RAG boletín para el payload del SFN diario."
   type        = string
   default     = "05032266-f6e1-48cb-9248-bc116652c7c7"
 }

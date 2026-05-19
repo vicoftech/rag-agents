@@ -14,7 +14,8 @@ resource "aws_scheduler_schedule" "batch" {
     mode = "OFF"
   }
 
-  schedule_expression = each.value.schedule_cron
+  schedule_expression          = each.value.schedule_cron
+  schedule_expression_timezone = var.schedule_timezone
 
   target {
     arn      = aws_ecs_cluster.batch.arn

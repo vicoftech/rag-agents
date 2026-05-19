@@ -56,16 +56,28 @@ variable "sqs_env_suffix" {
   default     = "prod"
 }
 
+variable "schedule_timezone" {
+  type        = string
+  description = "TZ IANA para cron de matching (AL-02)."
+  default     = "America/Argentina/Buenos_Aires"
+}
+
 variable "schedule_cron_anmat" {
   type        = string
-  description = "Cron UTC EventBridge Scheduler, solo lun–vie (AL-01). Default: 10:30 ART (UTC-3) → 13:30 UTC."
-  default     = "cron(30 13 ? * MON-FRI *)"
+  description = "Cron lun–vie (AL-01), hora local schedule_timezone. Default: 13:00 ART."
+  default     = "cron(0 13 ? * MON-FRI *)"
 }
 
 variable "schedule_cron_boletin" {
   type        = string
-  description = "Cron UTC, solo lun–vie (AL-01). Default: 11:00 ART → 14:00 UTC."
-  default     = "cron(0 14 ? * MON-FRI *)"
+  description = "Cron lun–vie (AL-01), hora local schedule_timezone. Default: 13:30 ART."
+  default     = "cron(30 13 ? * MON-FRI *)"
+}
+
+variable "batch_date_timezone" {
+  type        = string
+  description = "TZ para --created-at-start/end «hoy» en entrypoint.sh."
+  default     = "America/Argentina/Buenos_Aires"
 }
 
 variable "batch_parallel_anmat" {

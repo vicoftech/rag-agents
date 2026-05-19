@@ -401,7 +401,7 @@ output "scheduled_boletin_anmat_lambda_arn" {
 }
 
 output "scheduled_boletin_anmat_schedule_boletin_arn" {
-  description = "ARN regla Scheduler Boletín 09:00 (timezone scheduled_sync_timezone)"
+  description = "ARN regla Scheduler Boletín (hora scheduled_boletin_cron_minute_hour, TZ scheduled_sync_timezone)"
   value       = var.enable_scheduled_boletin_anmat_sfn ? module.scheduled_boletin_anmat_sfn[0].schedule_boletin_arn : null
 }
 

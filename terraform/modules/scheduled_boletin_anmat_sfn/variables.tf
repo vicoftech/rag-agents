@@ -21,7 +21,7 @@ variable "anmat_state_machine_arn" {
 
 variable "boletin_tenant_id" {
   type    = string
-  default = "boletin"
+  default = "tenant_boletin"
 }
 
 variable "boletin_agent_id" {
@@ -46,9 +46,9 @@ variable "schedule_timezone" {
 }
 
 variable "boletin_cron_minute_hour" {
-  description = "Minuto y hora locales (resto: ? * MON-FRI *). Ej: \"0 9\" = 09:00 lun–vie"
+  description = "Minuto y hora locales (resto: ? * MON-FRI *). Ej: \"30 11\" = 11:30 lun–vie"
   type        = string
-  default     = "0 9"
+  default     = "30 11"
 }
 
 variable "anmat_cron_minute_hour" {
