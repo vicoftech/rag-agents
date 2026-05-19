@@ -1,6 +1,6 @@
 # API Versioning - Sistema RAG
 
-**Versión:** 1.0
+**Versión:** 1.1
 **Fecha:** 2026-05-19
 **Estado:** Implementado
 **Task:** TASK-398
@@ -9,51 +9,29 @@
 
 ## Resumen
 
-El endpoint `/query` del sistema RAG soporta 3 variantes de URL para permitir evolución del API sin romper clientes existentes.
+El endpoint `/query` del sistema RAG soporta variantes versionadas y una variante sin prefijo configurable.
+
+Decisión vigente TASK-399: `/query` usa por defecto el contrato paginado v2. No requiere cambios de API Gateway ni Terraform para cambiar la URL pública.
 
 | Endpoint | Versión | Comportamiento |
 |----------|---------|---------------|
-| `/query` | Legacy (v1) | Sin cambios, compatibilidad total |
-| `/v1/query` | v1 explícito | Idéntico a `/query` |
+| `/query` | Configurable, default código: v2 | URL pública legacy con contrato v2 paginado |
+| `/v1/query` | v1 explícito | Contrato legacy explícito |
 | `/v2/query` | v2 | Nueva respuesta con paginado estándar |
 
 ---
 
 ## Endpoints
 
-### POST /query (legacy)
+### POST /query
 
-Comportamiento original sin cambios. Usa parámetros v1.
+Endpoint público principal. Por defecto usa contrato v2. Para rollback puntual se puede configurar:
 
-**Request:**
-```json
-{
-  "query": "ibuprofeno",
-  "retrieval_limit": 10,
-  "sort_by": "relevance",
-  "start_at": "2026-01-01",
-  "end_at": "2026-05-31"
-}
+```env
+UNVERSIONED_QUERY_API_VERSION=v1
 ```
 
-**Response:**
-```json
-{
-  "response": "El ibuprofeno es...",
-  "contexts": [...],
-  "documents": [...],
-  "context_items": [...],
-  "retrieval_config": {...}
-}
-```
-
-### POST /v1/query
-
-Idéntico a `/query`. Mismos parámetros y misma respuesta.
-
-### POST /v2/query
-
-Nueva versión con paginado estándar.
+Esto permite volver temporalmente al contrato legacy sin cambiar rutas. El valor por defecto del código es `v2`.
 
 **Request:**
 ```json
@@ -70,12 +48,15 @@ Nueva versión con paginado estándar.
 **Response:**
 ```json
 {
-  "data": {
-    "response": "El ibuprofeno es...",
-    "contexts": [...],
-    "context_items": [...],
-    "documents": [...]
-  },
+  "data": [
+    {
+      "rank": 0,
+      "document_name": "aviso_2026_20260315_default_123456.pdf",
+      "chunk_text": "El ibuprofeno es...",
+      "distance": 0.12,
+      "created_at": "2026-03-15T10:30:00Z"
+    }
+  ],
   "pagination": {
     "page": 1,
     "pageSize": 10,
@@ -83,6 +64,52 @@ Nueva versión con paginado estándar.
     "hasPrevious": false
   },
   "metadata": {
+    "response": "El ibuprofeno es...",
+    "retrieval_config": {...}
+  }
+}
+```
+
+### POST /v1/query
+
+Contrato legacy explícito. Usar solo si un cliente necesita la respuesta plana v1.
+
+### POST /v2/query
+
+Contrato paginado estándar. Mismo comportamiento esperado que `/query` por defecto.
+
+**Request:**
+```json
+{
+  "query": "ibuprofeno",
+  "page": 1,
+  "pageSize": 10,
+  "sort": "relevance",
+  "start_at": "2026-01-01",
+  "end_at": "2026-05-31"
+}
+```
+
+**Response:**
+```json
+{
+  "data": [
+    {
+      "rank": 0,
+      "document_name": "aviso_2026_20260315_default_123456.pdf",
+      "chunk_text": "El ibuprofeno es...",
+      "distance": 0.12,
+      "created_at": "2026-03-15T10:30:00Z"
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "pageSize": 10,
+    "hasNext": true,
+    "hasPrevious": false
+  },
+  "metadata": {
+    "response": "El ibuprofeno es...",
     "retrieval_config": {...}
   }
 }
@@ -92,7 +119,7 @@ Nueva versión con paginado estándar.
 
 ## Parámetros
 
-### v1 (`/query`, `/v1/query`)
+### v1 (`/v1/query`)
 
 | Parámetro | Tipo | Default | Descripción |
 |-----------|------|---------|-------------|
@@ -104,7 +131,7 @@ Nueva versión con paginado estándar.
 | `tenant_id` | string | - (obligatorio) | ID del tenant |
 | `agent_id` | string | - (obligatorio) | ID del agente |
 
-### v2 (`/v2/query`)
+### v2 (`/query` configurado, `/v2/query`)
 
 | Parámetro | Tipo | Default | Descripción |
 |-----------|------|---------|-------------|
@@ -133,20 +160,20 @@ Nueva versión con paginado estándar.
 
 La respuesta v2 envuelve los datos en una estructura con 3 secciones:
 
-- **`data`**: Contiene `response`, `contexts`, `context_items`, `documents` (equivalente a la respuesta v1 plana)
+- **`data`**: Array de `context_items` paginados.
 - **`pagination`**: Metadatos de paginación (`page`, `pageSize`, `hasNext`, `hasPrevious`)
-- **`metadata`**: Contiene `retrieval_config` (antes directo en la raíz)
+- **`metadata`**: Contiene `response` y `retrieval_config`.
 
 ### Código de ejemplo: TypeScript
 
 ```typescript
-// Antes (v1)
-const resp = await api.post('/query', { query: 'ibuprofeno', retrieval_limit: 10 });
+// Legacy explícito (v1)
+const resp = await api.post('/v1/query', { query: 'ibuprofeno', retrieval_limit: 10 });
 console.log(resp.response, resp.contexts);
 
-// Después (v2)
-const resp = await api.post('/v2/query', { query: 'ibuprofeno', page: 1, pageSize: 10 });
-console.log(resp.data.response, resp.data.contexts);
+// Actual (v2 sobre /query)
+const resp = await api.post('/query', { query: 'ibuprofeno', page: 1, pageSize: 10 });
+console.log(resp.metadata.response, resp.data);
 console.log('Pagina:', resp.pagination.page, 'Siguiente:', resp.pagination.hasNext);
 ```
 
@@ -176,19 +203,20 @@ La cache del dispatcher incluye `api_version` en la key para evitar mezclar resp
 
 ## Implementación
 
-El versionado usa routing interno en el mismo Lambda (`rag_lmbd_query/index.py`):
+El versionado usa routing interno en el mismo Lambda (`rag_lmbd_query/index.py`) y en el dispatcher async:
 
-1. `_extract_version_from_path()` detecta la versión desde la URL
+1. `_extract_version_from_path()` detecta la versión desde `api_version`, la URL o `UNVERSIONED_QUERY_API_VERSION`.
 2. `handler()` enruta según versión detectada
 3. `_normalize_v2_body()` transforma params v2 a formato interno v1
 4. `_build_v2_response()` wrappea la respuesta v1 en estructura paginada
+5. El dispatcher propaga `api_version` al worker SQS para que el resultado async mantenga el formato correcto.
 
 **Archivos modificados:**
 - `rag-agents/apps/rag_lmbd_query/index.py`
 - `rag-agents/apps/rag_lmbd_query_dispatcher/index.py`
 
 **Tests:**
-- `rag-agents/tests/test_api_versioning.py` (21 tests)
+- `rag-agents/tests/test_api_versioning.py`
 
 ---
 

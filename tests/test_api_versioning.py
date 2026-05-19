@@ -90,13 +90,14 @@ def _load_dispatcher_module():
 # _extract_version_from_path()
 # =============================================================================
 
-def test_extract_version_query_path_defaults_to_v1():
+def test_extract_version_query_path_defaults_to_v2(monkeypatch):
     module = _load_query_module()
+    monkeypatch.delenv("UNVERSIONED_QUERY_API_VERSION", raising=False)
     event = {
         "requestContext": {"http": {"path": "/query", "method": "POST"}},
         "httpMethod": "POST",
     }
-    assert module._extract_version_from_path(event) == "v1"
+    assert module._extract_version_from_path(event) == "v2"
 
 
 def test_extract_version_v1_query_path():
@@ -127,8 +128,9 @@ def test_extract_version_path_fallback():
     assert module._extract_version_from_path(event) == "v2"
 
 
-def test_extract_version_no_path_returns_v1():
+def test_extract_version_no_path_returns_v1(monkeypatch):
     module = _load_query_module()
+    monkeypatch.delenv("UNVERSIONED_QUERY_API_VERSION", raising=False)
     assert module._extract_version_from_path({}) == "v1"
 
 
@@ -141,6 +143,27 @@ def test_extract_version_explicit_api_version_for_sqs_worker():
 def test_extract_version_explicit_api_version_takes_precedence_over_missing_path():
     module = _load_query_module()
     event = {"api_version": "V2", "rawPath": ""}
+    assert module._extract_version_from_path(event) == "v2"
+
+
+def test_extract_version_unversioned_query_uses_env_v2(monkeypatch):
+    module = _load_query_module()
+    monkeypatch.setenv("UNVERSIONED_QUERY_API_VERSION", "v2")
+    event = {"rawPath": "/query", "httpMethod": "POST"}
+    assert module._extract_version_from_path(event) == "v2"
+
+
+def test_extract_version_unversioned_query_invalid_env_falls_back_to_v2(monkeypatch):
+    module = _load_query_module()
+    monkeypatch.setenv("UNVERSIONED_QUERY_API_VERSION", "beta")
+    event = {"rawPath": "/query", "httpMethod": "POST"}
+    assert module._extract_version_from_path(event) == "v2"
+
+
+def test_dispatcher_extract_version_unversioned_query_uses_env_v2(monkeypatch):
+    module = _load_dispatcher_module()
+    monkeypatch.setenv("UNVERSIONED_QUERY_API_VERSION", "v2")
+    event = {"rawPath": "/query", "httpMethod": "POST"}
     assert module._extract_version_from_path(event) == "v2"
 
 
@@ -198,6 +221,56 @@ def test_dispatcher_v2_message_propagates_api_version_to_sqs_worker(monkeypatch)
     assert message_body["retrieval_limit"] == 100
     assert message_body["_page"] == 2
     assert message_body["_page_size"] == 15
+
+
+def test_dispatcher_unversioned_query_env_v2_enqueues_v2_worker_message(monkeypatch):
+    """TASK-399: /query puede operar como v2 por configuración, sin ruta /v2."""
+    module = _load_dispatcher_module()
+
+    sent_messages = []
+
+    class _FakeTable:
+        def put_item(self, Item):
+            self.item = Item
+
+        def get_item(self, **_kwargs):
+            return {"Item": getattr(self, "item", {"id": "job-id"})}
+
+    class _FakeSqs:
+        def send_message(self, **kwargs):
+            sent_messages.append(kwargs)
+            return {"MessageId": "msg-id"}
+
+    monkeypatch.setenv("UNVERSIONED_QUERY_API_VERSION", "v2")
+    monkeypatch.setattr(module, "_env_table_name", lambda: "table")
+    monkeypatch.setattr(module, "_env_queue_url", lambda: "queue-url")
+    monkeypatch.setattr(module, "_find_cached_job_id", lambda *args, **kwargs: None)
+    monkeypatch.setattr(module, "_ddb_table", lambda: _FakeTable())
+    monkeypatch.setattr(module, "_sqs_client_fn", lambda: _FakeSqs())
+
+    event = {
+        "rawPath": "/query",
+        "requestContext": {"http": {"method": "POST", "path": "/query"}},
+        "body": json.dumps(
+            {
+                "tenant_id": "boletin",
+                "agent_id": "agent-1",
+                "query": "ibuprofeno",
+                "start_at": "2026-05-01",
+                "end_at": "2026-05-19",
+                "page": 3,
+                "pageSize": 10,
+            }
+        ),
+    }
+
+    response = module._post_query(event)
+    assert response["statusCode"] == 202
+    message_body = json.loads(sent_messages[0]["MessageBody"])
+    assert message_body["api_version"] == "v2"
+    assert message_body["retrieval_limit"] == 100
+    assert message_body["_page"] == 3
+    assert message_body["_page_size"] == 10
 
 
 # =============================================================================

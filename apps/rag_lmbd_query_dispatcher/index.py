@@ -111,7 +111,24 @@ def _route_key(event: dict[str, Any]) -> str:
     return str(event.get("routeKey") or "").strip()
 
 
+def _unversioned_query_api_version() -> str:
+    """
+    Versión usada por /query sin prefijo.
+
+    Default de producto: v2. Se mantiene configurable para rollback puntual con
+    UNVERSIONED_QUERY_API_VERSION=v1 sin requerir rutas nuevas.
+    """
+    version = str(os.getenv("UNVERSIONED_QUERY_API_VERSION", "v2")).strip().lower()
+    if re.fullmatch(r"v\d+", version):
+        return version
+    return "v2"
+
+
 def _extract_version_from_path(event: dict[str, Any]) -> str:
+    explicit_version = str(event.get("api_version") or "").strip().lower()
+    if re.fullmatch(r"v\d+", explicit_version):
+        return explicit_version
+
     path = (
         event.get("requestContext", {}).get("http", {}).get("path")
         or event.get("rawPath")
@@ -121,6 +138,8 @@ def _extract_version_from_path(event: dict[str, Any]) -> str:
     m = re.search(r"/(v\d+)/query", path.rstrip("/"))
     if m:
         return m.group(1)
+    if path.rstrip("/").endswith("/query"):
+        return _unversioned_query_api_version()
     return "v1"
 
 

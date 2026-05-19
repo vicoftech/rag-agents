@@ -116,6 +116,19 @@ API_V2_MAX_PAGE_SIZE = 50
 API_V2_DEFAULT_PAGE_SIZE = 10
 
 
+def _unversioned_query_api_version() -> str:
+    """
+    Versión usada por /query sin prefijo.
+
+    Default de producto: v2. Se mantiene configurable para rollback puntual con
+    UNVERSIONED_QUERY_API_VERSION=v1 sin requerir rutas nuevas.
+    """
+    version = str(os.getenv("UNVERSIONED_QUERY_API_VERSION", "v2")).strip().lower()
+    if re.fullmatch(r"v\d+", version):
+        return version
+    return "v2"
+
+
 def _extract_version_from_path(event: dict) -> str:
     explicit_version = str(event.get("api_version") or "").strip().lower()
     if re.fullmatch(r"v\d+", explicit_version):
@@ -130,6 +143,8 @@ def _extract_version_from_path(event: dict) -> str:
     m = re.search(r"/(v\d+)/query", path.rstrip("/"))
     if m:
         return m.group(1)
+    if path.rstrip("/").endswith("/query"):
+        return _unversioned_query_api_version()
     return "v1"
 
 
