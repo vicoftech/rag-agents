@@ -182,10 +182,18 @@ def _find_cached_job_id(
     query_text: str,
     start_at_val: str,
     end_at_val: str,
+    retrieval_limit: int | None = None,
+    sort_by: str | None = None,
+    document_name: str | None = None,
 ) -> str | None:
     """
     Busca un job ya completado con la misma clave lógica (sin recalcular en worker).
     Misma forma de uso que antes: POST devuelve id; el cliente usa status/result igual.
+
+    Clave de cache incluye parámetros críticos:
+    - retrieval_limit: afecta cantidad de resultados
+    - sort_by: afecta orden de resultados
+    - document_name: filtro por documento específico
     """
     tbl = _ddb_table()
     kcf = (
@@ -195,6 +203,23 @@ def _find_cached_job_id(
         & Attr("result").exists()
         & _window_match_filter(start_at_val, end_at_val)
     )
+
+    # Agregar parámetros críticos a la clave de cache
+    if retrieval_limit is not None:
+        kcf = kcf & Attr("retrieval_limit").eq(retrieval_limit)
+    else:
+        # Si no se especificó, solo matchear jobs que tampoco lo especificaron
+        kcf = kcf & (Attr("retrieval_limit").not_exists() | Attr("retrieval_limit").eq(None))
+
+    if sort_by:
+        kcf = kcf & Attr("sort_by").eq(sort_by)
+    else:
+        kcf = kcf & (Attr("sort_by").not_exists() | Attr("sort_by").eq("") | Attr("sort_by").eq(None))
+
+    if document_name:
+        kcf = kcf & Attr("document_name").eq(document_name)
+    else:
+        kcf = kcf & (Attr("document_name").not_exists() | Attr("document_name").eq("") | Attr("document_name").eq(None))
 
     eks: dict[str, Any] | None = None
     for _ in range(_CACHE_QUERY_MAX_PAGES):
@@ -301,7 +326,27 @@ def _post_query(event: dict[str, Any]) -> dict[str, Any]:
         )
     start_s, end_s = window
 
-    cached_id = _find_cached_job_id(tenant_s, agent_s, query_s, start_s, end_s)
+    # Extraer parámetros de búsqueda para clave de cache
+    retrieval_limit = body.get("retrieval_limit")
+    if retrieval_limit is not None:
+        try:
+            retrieval_limit = int(retrieval_limit)
+        except (TypeError, ValueError):
+            retrieval_limit = None
+
+    sort_by = str(body.get("sort_by") or "").strip() or None
+    document_name = str(body.get("document_name") or "").strip() or None
+
+    cached_id = _find_cached_job_id(
+        tenant_s,
+        agent_s,
+        query_s,
+        start_s,
+        end_s,
+        retrieval_limit=retrieval_limit,
+        sort_by=sort_by,
+        document_name=document_name,
+    )
     if cached_id:
         return _resp(202, {"id": cached_id})
 
@@ -320,6 +365,14 @@ def _post_query(event: dict[str, Any]) -> dict[str, Any]:
         "start_at": start_s,
         "start_end": end_s,
     }
+
+    # Guardar parámetros de búsqueda para cache key
+    if retrieval_limit is not None:
+        item["retrieval_limit"] = retrieval_limit
+    if sort_by:
+        item["sort_by"] = sort_by
+    if document_name:
+        item["document_name"] = document_name
 
     try:
         tbl = _ddb_table()
