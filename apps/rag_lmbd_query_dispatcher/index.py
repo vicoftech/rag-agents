@@ -182,7 +182,7 @@ def _find_cached_job_id(
     query_text: str,
     start_at_val: str,
     end_at_val: str,
-    retrieval_limit: int | None = None,
+    retrieval_limit: int | None = 10,
     sort_by: str | None = None,
     document_name: str | None = None,
 ) -> str | None:
@@ -191,7 +191,7 @@ def _find_cached_job_id(
     Misma forma de uso que antes: POST devuelve id; el cliente usa status/result igual.
 
     Clave de cache incluye parámetros críticos:
-    - retrieval_limit: afecta cantidad de resultados
+    - retrieval_limit: afecta cantidad de resultados (default: 10)
     - sort_by: afecta orden de resultados
     - document_name: filtro por documento específico
     """
@@ -205,10 +205,18 @@ def _find_cached_job_id(
     )
 
     # Agregar parámetros críticos a la clave de cache
-    if retrieval_limit is not None:
+    if retrieval_limit == 10:
+        # Default 10: matchear con 10 explícito o jobs antiguos sin retrieval_limit (compatibilidad)
+        kcf = kcf & (
+            Attr("retrieval_limit").eq(10)
+            | Attr("retrieval_limit").not_exists()
+            | Attr("retrieval_limit").eq(None)
+        )
+    elif retrieval_limit is not None:
+        # Valor no-default: match exacto
         kcf = kcf & Attr("retrieval_limit").eq(retrieval_limit)
     else:
-        # Si no se especificó, solo matchear jobs que tampoco lo especificaron
+        # Fallback (no debería ocurrir con el default): matchear sin retrieval_limit
         kcf = kcf & (Attr("retrieval_limit").not_exists() | Attr("retrieval_limit").eq(None))
 
     if sort_by:
@@ -327,12 +335,15 @@ def _post_query(event: dict[str, Any]) -> dict[str, Any]:
     start_s, end_s = window
 
     # Extraer parámetros de búsqueda para clave de cache
+    # Default retrieval_limit = 10 si no se especifica
     retrieval_limit = body.get("retrieval_limit")
     if retrieval_limit is not None:
         try:
             retrieval_limit = int(retrieval_limit)
         except (TypeError, ValueError):
-            retrieval_limit = None
+            retrieval_limit = 10  # Default en caso de error de conversión
+    else:
+        retrieval_limit = 10  # Default cuando no se envía
 
     sort_by = str(body.get("sort_by") or "").strip() or None
     document_name = str(body.get("document_name") or "").strip() or None
@@ -367,8 +378,8 @@ def _post_query(event: dict[str, Any]) -> dict[str, Any]:
     }
 
     # Guardar parámetros de búsqueda para cache key
-    if retrieval_limit is not None:
-        item["retrieval_limit"] = retrieval_limit
+    # retrieval_limit siempre se guarda (tiene default 10)
+    item["retrieval_limit"] = retrieval_limit
     if sort_by:
         item["sort_by"] = sort_by
     if document_name:
