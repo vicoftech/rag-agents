@@ -171,7 +171,7 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         jid = _path_id(event)
         if not jid:
             return _resp(400, {"error": "Falta id en la ruta"})
-        return _get_result(jid)
+        return _get_result(jid, event)
 
     return _resp(404, {"error": "Ruta no soportada"})
 
@@ -357,18 +357,24 @@ def _post_query(event: dict[str, Any]) -> dict[str, Any]:
     # Detectar versión de API desde path
     api_version = _extract_version_from_path(event)
 
-    # Extraer parámetros de búsqueda para clave de cache
-    retrieval_limit = body.get("retrieval_limit")
+    # TASK-399: Extraer parámetros según versión
     if api_version == "v2":
+        # v2: Fetch completo (100 contexts), paginación in-memory
+        retrieval_limit = 100
+        # Extraer page y pageSize para paginación del worker
+        page_raw = body.get("page")
         page_size_raw = body.get("pageSize")
-        if page_size_raw is not None:
-            try:
-                retrieval_limit = int(page_size_raw)
-            except (TypeError, ValueError):
-                retrieval_limit = 10
-        else:
-            retrieval_limit = retrieval_limit or 10
+        try:
+            page = int(page_raw) if page_raw is not None else 1
+        except (TypeError, ValueError):
+            page = 1
+        try:
+            page_size = int(page_size_raw) if page_size_raw is not None else 10
+        except (TypeError, ValueError):
+            page_size = 10
     else:
+        # v1: retrieval_limit variable (legacy)
+        retrieval_limit = body.get("retrieval_limit")
         if retrieval_limit is not None:
             try:
                 retrieval_limit = int(retrieval_limit)
@@ -376,6 +382,8 @@ def _post_query(event: dict[str, Any]) -> dict[str, Any]:
                 retrieval_limit = 10
         else:
             retrieval_limit = 10
+        page = None
+        page_size = None
 
     sort_by = str(body.get("sort_by") or body.get("sort") or "").strip() or None
     document_name = str(body.get("document_name") or "").strip() or None
@@ -454,6 +462,10 @@ def _post_query(event: dict[str, Any]) -> dict[str, Any]:
     msg["created_at_end"] = end_s
     msg["start_at"] = start_s
     msg["end_at"] = end_s
+    # TASK-399: Para v2, pasar _page y _page_size al worker para paginación in-memory
+    if api_version == "v2":
+        msg["_page"] = page
+        msg["_page_size"] = page_size
     try:
         _sqs_client_fn().send_message(
             QueueUrl=_env_queue_url(),
@@ -476,7 +488,47 @@ def _get_status(job_id: str) -> dict[str, Any]:
     return _resp(200, {"id": job_id, "status": item.get("status")})
 
 
-def _get_result(job_id: str) -> dict[str, Any]:
+def _paginate_v2_result(result: dict[str, Any], page: int, page_size: int) -> dict[str, Any]:
+    """
+    TASK-399: Pagina resultado v2 in-memory según page/pageSize solicitados.
+
+    Args:
+        result: Resultado v2 completo con data (array de 100 context_items)
+        page: Número de página solicitada (1-based)
+        page_size: Tamaño de página solicitado
+
+    Returns:
+        Resultado v2 paginado con data recortado y pagination actualizado
+    """
+    full_data = result.get("data", [])
+
+    # Paginar data en memoria
+    start_idx = (page - 1) * page_size
+    end_idx = start_idx + page_size
+    page_data = full_data[start_idx:end_idx]
+
+    # Calcular hasNext/hasPrevious
+    total_items = len(full_data)
+    has_next = end_idx < total_items
+    has_previous = page > 1
+
+    # Construir resultado paginado
+    paginated = dict(result)
+    paginated["data"] = page_data
+    paginated["pagination"] = {
+        "page": page,
+        "pageSize": page_size,
+        "hasNext": has_next,
+        "hasPrevious": has_previous,
+    }
+
+    return paginated
+
+
+def _get_result(job_id: str, event: dict[str, Any] | None = None) -> dict[str, Any]:
+    """
+    TASK-399: Soporta paginación GET con ?page=N&pageSize=M para v2.
+    """
     try:
         r = _ddb_table().get_item(Key={"id": job_id}, ConsistentRead=True)
     except ClientError as e:
@@ -486,12 +538,33 @@ def _get_result(job_id: str) -> dict[str, Any]:
         return _resp(404, {"error": "Job no encontrado"})
 
     status = item.get("status")
+    api_version = item.get("api_version", "v1")
+
+    # TASK-399: Extraer query params para paginación v2
+    page_from_qs = 1
+    page_size_from_qs = 10
+    if event and api_version == "v2":
+        qp = event.get("queryStringParameters") or {}
+        if isinstance(qp, dict):
+            page_raw = qp.get("page")
+            page_size_raw = qp.get("pageSize")
+            try:
+                if page_raw is not None:
+                    page_from_qs = int(page_raw)
+            except (TypeError, ValueError):
+                pass
+            try:
+                if page_size_raw is not None:
+                    page_size_from_qs = int(page_size_raw)
+            except (TypeError, ValueError):
+                pass
 
     if status == "Readed":
-        return _resp(
-            200,
-            {"id": job_id, "result": _ddb_json_value(item.get("result"))},
-        )
+        result = _ddb_json_value(item.get("result"))
+        # TASK-399: Si es v2 y vienen query params, re-paginar
+        if api_version == "v2" and event:
+            result = _paginate_v2_result(result, page_from_qs, page_size_from_qs)
+        return _resp(200, {"id": job_id, "result": result})
 
     if status != "Ready":
         return _resp(
@@ -521,10 +594,16 @@ def _get_result(job_id: str) -> dict[str, Any]:
             r2 = _ddb_table().get_item(Key={"id": job_id}, ConsistentRead=True)
             item2 = r2.get("Item") or {}
             if item2.get("status") == "Readed":
-                return _resp(
-                    200,
-                    {"id": job_id, "result": _ddb_json_value(item2.get("result"))},
-                )
+                result2 = _ddb_json_value(item2.get("result"))
+                # TASK-399: Re-paginar si es v2
+                if api_version == "v2" and event:
+                    result2 = _paginate_v2_result(result2, page_from_qs, page_size_from_qs)
+                return _resp(200, {"id": job_id, "result": result2})
         return _resp(500, {"error": str(e)})
 
-    return _resp(200, {"id": job_id, "result": _ddb_json_value(result)})
+    result_final = _ddb_json_value(result)
+    # TASK-399: Paginar v2 antes de devolver
+    if api_version == "v2" and event:
+        result_final = _paginate_v2_result(result_final, page_from_qs, page_size_from_qs)
+
+    return _resp(200, {"id": job_id, "result": result_final})

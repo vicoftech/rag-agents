@@ -130,6 +130,12 @@ def _extract_version_from_path(event: dict) -> str:
 
 
 def _normalize_v2_body(body: dict) -> dict:
+    """
+    Normaliza body v2 para estrategia fetch-complete con paginación in-memory.
+
+    TASK-399: Siempre obtiene 100 contexts de la BD (retrieval_limit=100),
+    luego pagina en memoria según page/pageSize solicitados.
+    """
     body = dict(body)
     page_size_raw = body.get("pageSize")
     if page_size_raw is not None:
@@ -153,8 +159,10 @@ def _normalize_v2_body(body: dict) -> dict:
         page = 1
     if page < 1:
         raise ValueError("page debe ser >= 1")
-    body["retrieval_limit"] = page_size
+    # TASK-399: Fetch completo de 100 contexts para paginación in-memory
+    body["retrieval_limit"] = 100
     body["_page"] = page
+    body["_page_size"] = page_size
     sort_raw = body.get("sort")
     if sort_raw is not None and str(sort_raw).strip():
         body["sort_by"] = str(sort_raw).strip()
@@ -162,18 +170,30 @@ def _normalize_v2_body(body: dict) -> dict:
 
 
 def _build_v2_response(v1_body: dict, page: int, page_size: int) -> dict:
-    data = {
-        "response": v1_body.get("response"),
-        "contexts": v1_body.get("contexts", []),
-        "context_items": v1_body.get("context_items", []),
-        "documents": v1_body.get("documents", []),
-    }
-    contexts = v1_body.get("contexts", [])
-    has_next = len(contexts) >= page_size
-    has_previous = page > 1
+    """
+    Construye respuesta v2 con formato estándar PAGINADO_ESTANDAR.md.
+
+    TASK-399: Formato simplificado sin campo documents.
+    - data: array de context_items paginados en memoria
+    - pagination: {page, pageSize, hasNext, hasPrevious}
+    - metadata: {response, retrieval_config}
+    """
+    full_context_items = v1_body.get("context_items", [])
+    response_text = v1_body.get("response")
     retrieval_config = v1_body.get("retrieval_config", {})
+
+    # Paginar context_items en memoria
+    start_idx = (page - 1) * page_size
+    end_idx = start_idx + page_size
+    page_context_items = full_context_items[start_idx:end_idx]
+
+    # Calcular hasNext/hasPrevious
+    total_items = len(full_context_items)
+    has_next = end_idx < total_items
+    has_previous = page > 1
+
     return {
-        "data": data,
+        "data": page_context_items,
         "pagination": {
             "page": page,
             "pageSize": page_size,
@@ -181,6 +201,7 @@ def _build_v2_response(v1_body: dict, page: int, page_size: int) -> dict:
             "hasPrevious": has_previous,
         },
         "metadata": {
+            "response": response_text,
             "retrieval_config": retrieval_config,
         },
     }
@@ -1392,7 +1413,7 @@ def handler(event, context):
 
     if api_version == "v2":
         page = int(req_src.get("_page", 1))
-        page_size = int(req_src.get("retrieval_limit", API_V2_DEFAULT_PAGE_SIZE))
+        page_size = int(req_src.get("_page_size", API_V2_DEFAULT_PAGE_SIZE))
         resp_body = _build_v2_response(resp_body, page, page_size)
 
     resp = {

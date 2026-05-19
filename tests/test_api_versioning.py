@@ -102,20 +102,24 @@ def test_extract_version_unknown_version():
 # =============================================================================
 
 def test_normalize_v2_default_params():
+    """TASK-399: retrieval_limit siempre es 100 (fetch completo)."""
     module = _load_query_module()
     body = {"query": "ibuprofeno"}
     result = module._normalize_v2_body(body)
-    assert result["retrieval_limit"] == 10
+    assert result["retrieval_limit"] == 100
     assert result["_page"] == 1
+    assert result["_page_size"] == 10
     assert "sort_by" not in result
 
 
 def test_normalize_v2_custom_page_and_page_size():
+    """TASK-399: retrieval_limit siempre 100, pageSize se guarda en _page_size."""
     module = _load_query_module()
     body = {"query": "ibuprofeno", "page": 3, "pageSize": 25}
     result = module._normalize_v2_body(body)
-    assert result["retrieval_limit"] == 25
+    assert result["retrieval_limit"] == 100
     assert result["_page"] == 3
+    assert result["_page_size"] == 25
 
 
 def test_normalize_v2_sort_maps_to_sort_by():
@@ -175,11 +179,13 @@ def test_normalize_v2_invalid_page_type():
         assert "entero" in str(e)
 
 
-def test_normalize_v2_retrieval_limit_is_page_size():
+def test_normalize_v2_retrieval_limit_always_100():
+    """TASK-399: retrieval_limit siempre es 100 independiente del pageSize."""
     module = _load_query_module()
     body = {"query": "ibuprofeno", "pageSize": 5}
     result = module._normalize_v2_body(body)
-    assert result["retrieval_limit"] == 5
+    assert result["retrieval_limit"] == 100
+    assert result["_page_size"] == 5
 
 
 def test_normalize_v2_preserves_original_params():
@@ -196,11 +202,12 @@ def test_normalize_v2_preserves_original_params():
 # =============================================================================
 
 def test_build_v2_response_has_data_pagination_metadata():
+    """TASK-399: Verifica estructura básica del response v2 simplificado."""
     module = _load_query_module()
     v1 = {
         "response": "El ibuprofeno es...",
         "contexts": ["ctx1", "ctx2"],
-        "context_items": [{"rank": 0}, {"rank": 1}],
+        "context_items": [{"rank": 0, "chunk_text": "ctx1"}, {"rank": 1, "chunk_text": "ctx2"}],
         "documents": ["doc1.pdf"],
         "retrieval_config": {"max_semantic_distance": 0.45},
     }
@@ -208,49 +215,191 @@ def test_build_v2_response_has_data_pagination_metadata():
     assert "data" in result
     assert "pagination" in result
     assert "metadata" in result
-    assert result["data"]["response"] == "El ibuprofeno es..."
-    assert result["data"]["contexts"] == ["ctx1", "ctx2"]
+    # data es array de context_items (no objeto)
+    assert isinstance(result["data"], list)
+    assert len(result["data"]) == 2
+    # metadata contiene response y retrieval_config
+    assert result["metadata"]["response"] == "El ibuprofeno es..."
     assert result["metadata"]["retrieval_config"]["max_semantic_distance"] == 0.45
 
 
 def test_build_v2_response_has_next_on_full_page():
+    """TASK-399: hasNext cuando hay más items después de la página actual."""
     module = _load_query_module()
+    # 15 items totales, página 1 con pageSize 10 → hay página 2
     v1 = {
         "response": "test",
-        "contexts": [f"ctx{i}" for i in range(10)],
+        "contexts": [f"ctx{i}" for i in range(15)],
+        "context_items": [{"rank": i, "chunk_text": f"ctx{i}"} for i in range(15)],
         "documents": [],
-        "context_items": [],
         "retrieval_config": {},
     }
     result = module._build_v2_response(v1, 1, 10)
+    # data debe tener solo 10 items (página 1)
+    assert len(result["data"]) == 10
     assert result["pagination"]["hasNext"] is True
     assert result["pagination"]["hasPrevious"] is False
 
 
 def test_build_v2_response_no_has_next_on_last_page():
+    """TASK-399: hasNext=false cuando estamos en la última página."""
     module = _load_query_module()
+    # 15 items, página 2 con pageSize 10 → items 10-14 (5 items)
     v1 = {
         "response": "test",
-        "contexts": [f"ctx{i}" for i in range(3)],
+        "contexts": [f"ctx{i}" for i in range(15)],
+        "context_items": [{"rank": i, "chunk_text": f"ctx{i}"} for i in range(15)],
         "documents": [],
-        "context_items": [],
         "retrieval_config": {},
     }
     result = module._build_v2_response(v1, 2, 10)
+    assert len(result["data"]) == 5  # Última página con 5 items
     assert result["pagination"]["hasNext"] is False
     assert result["pagination"]["hasPrevious"] is True
 
 
-def test_build_v2_response_has_next_partial_page():
+def test_build_v2_response_empty_page_beyond_data():
+    """TASK-399: Página vacía cuando se solicita más allá de los datos."""
     module = _load_query_module()
+    # 5 items totales, página 3 con pageSize 10 → vacía (0 items)
     v1 = {
         "response": "test",
         "contexts": [f"ctx{i}" for i in range(5)],
+        "context_items": [{"rank": i, "chunk_text": f"ctx{i}"} for i in range(5)],
         "documents": [],
-        "context_items": [],
         "retrieval_config": {},
     }
     result = module._build_v2_response(v1, 3, 10)
+    assert len(result["data"]) == 0  # Página vacía
     assert result["pagination"]["hasNext"] is False
+    assert result["pagination"]["hasPrevious"] is True
     assert result["pagination"]["page"] == 3
     assert result["pagination"]["pageSize"] == 10
+
+
+# =============================================================================
+# TASK-399: Tests para formato simplificado v2 (sin documents)
+# =============================================================================
+
+def test_build_v2_response_data_is_array_of_contexts():
+    """TASK-399: data debe ser array de context_items, no objeto."""
+    module = _load_query_module()
+    v1 = {
+        "response": "Test response",
+        "contexts": ["ctx1", "ctx2", "ctx3"],
+        "context_items": [
+            {"rank": 0, "chunk_text": "ctx1", "distance": 0.1},
+            {"rank": 1, "chunk_text": "ctx2", "distance": 0.2},
+            {"rank": 2, "chunk_text": "ctx3", "distance": 0.3},
+        ],
+        "documents": ["doc1.pdf", "doc2.pdf"],
+        "retrieval_config": {"max_semantic_distance": 0.45},
+    }
+    result = module._build_v2_response(v1, 1, 10)
+    # data es array, NO objeto
+    assert isinstance(result["data"], list)
+    assert len(result["data"]) == 3
+    assert result["data"][0]["rank"] == 0
+    assert result["data"][1]["rank"] == 1
+
+
+def test_build_v2_response_metadata_has_response_and_config():
+    """TASK-399: metadata debe contener response y retrieval_config."""
+    module = _load_query_module()
+    v1 = {
+        "response": "El ibuprofeno es un AINE...",
+        "contexts": ["ctx1"],
+        "context_items": [{"rank": 0, "chunk_text": "ctx1"}],
+        "documents": ["doc1.pdf"],
+        "retrieval_config": {
+            "max_semantic_distance": 0.45,
+            "retrieval_limit": 100,
+            "sort_by": "relevance",
+        },
+    }
+    result = module._build_v2_response(v1, 1, 10)
+    assert "metadata" in result
+    assert result["metadata"]["response"] == "El ibuprofeno es un AINE..."
+    assert "retrieval_config" in result["metadata"]
+    assert result["metadata"]["retrieval_config"]["max_semantic_distance"] == 0.45
+    assert result["metadata"]["retrieval_config"]["retrieval_limit"] == 100
+
+
+def test_build_v2_response_metadata_no_documents_field():
+    """TASK-399: metadata NO debe incluir campo documents (decisión aprobada)."""
+    module = _load_query_module()
+    v1 = {
+        "response": "Test",
+        "contexts": ["ctx1"],
+        "context_items": [{"rank": 0, "chunk_text": "ctx1"}],
+        "documents": ["doc1.pdf", "doc2.pdf"],  # Viene del v1 pero se omite
+        "retrieval_config": {},
+    }
+    result = module._build_v2_response(v1, 1, 10)
+    # metadata NO debe tener documents
+    assert "documents" not in result["metadata"]
+    # data tampoco debe tener documents
+    assert "documents" not in result
+
+
+def test_build_v2_response_pagination_logic_first_page():
+    """TASK-399: Primera página (page=1) → hasPrevious=false, hasNext depende de datos."""
+    module = _load_query_module()
+    # 25 items, página 1, pageSize 10 → items 0-9, hay página 2
+    v1 = {
+        "response": "Test",
+        "contexts": [f"ctx{i}" for i in range(25)],
+        "context_items": [{"rank": i, "chunk_text": f"ctx{i}"} for i in range(25)],
+        "documents": [],
+        "retrieval_config": {},
+    }
+    result = module._build_v2_response(v1, 1, 10)
+    assert result["pagination"]["page"] == 1
+    assert result["pagination"]["pageSize"] == 10
+    assert result["pagination"]["hasPrevious"] is False
+    assert result["pagination"]["hasNext"] is True
+    assert len(result["data"]) == 10
+    assert result["data"][0]["rank"] == 0
+    assert result["data"][9]["rank"] == 9
+
+
+def test_build_v2_response_pagination_logic_middle_page():
+    """TASK-399: Página intermedia → hasPrevious=true, hasNext=true."""
+    module = _load_query_module()
+    # 30 items, página 2, pageSize 10 → items 10-19
+    v1 = {
+        "response": "Test",
+        "contexts": [f"ctx{i}" for i in range(30)],
+        "context_items": [{"rank": i, "chunk_text": f"ctx{i}"} for i in range(30)],
+        "documents": [],
+        "retrieval_config": {},
+    }
+    result = module._build_v2_response(v1, 2, 10)
+    assert result["pagination"]["page"] == 2
+    assert result["pagination"]["pageSize"] == 10
+    assert result["pagination"]["hasPrevious"] is True
+    assert result["pagination"]["hasNext"] is True
+    assert len(result["data"]) == 10
+    assert result["data"][0]["rank"] == 10
+    assert result["data"][9]["rank"] == 19
+
+
+def test_build_v2_response_pagination_logic_last_page():
+    """TASK-399: Última página → hasPrevious=true, hasNext=false."""
+    module = _load_query_module()
+    # 23 items, página 3, pageSize 10 → items 20-22 (3 items)
+    v1 = {
+        "response": "Test",
+        "contexts": [f"ctx{i}" for i in range(23)],
+        "context_items": [{"rank": i, "chunk_text": f"ctx{i}"} for i in range(23)],
+        "documents": [],
+        "retrieval_config": {},
+    }
+    result = module._build_v2_response(v1, 3, 10)
+    assert result["pagination"]["page"] == 3
+    assert result["pagination"]["pageSize"] == 10
+    assert result["pagination"]["hasPrevious"] is True
+    assert result["pagination"]["hasNext"] is False
+    assert len(result["data"]) == 3
+    assert result["data"][0]["rank"] == 20
+    assert result["data"][2]["rank"] == 22
