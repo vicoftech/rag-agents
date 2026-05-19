@@ -19,6 +19,33 @@ def _install_stubs():
         exceptions_stub = types.ModuleType("botocore.exceptions")
         exceptions_stub.ClientError = Exception
         sys.modules["botocore.exceptions"] = exceptions_stub
+    if "boto3.dynamodb" not in sys.modules:
+        sys.modules["boto3.dynamodb"] = types.ModuleType("boto3.dynamodb")
+    if "boto3.dynamodb.conditions" not in sys.modules:
+        conditions_stub = types.ModuleType("boto3.dynamodb.conditions")
+
+        class _Condition:
+            def __and__(self, _other):
+                return self
+
+            def __or__(self, _other):
+                return self
+
+            def eq(self, _value):
+                return self
+
+            def exists(self):
+                return self
+
+            def not_exists(self):
+                return self
+
+            def is_in(self, _value):
+                return self
+
+        conditions_stub.Attr = lambda *_args, **_kwargs: _Condition()
+        conditions_stub.Key = lambda *_args, **_kwargs: _Condition()
+        sys.modules["boto3.dynamodb.conditions"] = conditions_stub
     if "psycopg2" not in sys.modules:
         psycopg2_stub = types.ModuleType("psycopg2")
         psycopg2_stub.connect = lambda *args, **kwargs: object()
@@ -39,6 +66,20 @@ def _load_query_module():
         sys.path.insert(0, str(app_dir))
     module_path = app_dir / "index.py"
     spec = importlib.util.spec_from_file_location("rag_lmbd_query_ver", module_path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_dispatcher_module():
+    _install_stubs()
+    root = Path(__file__).resolve().parents[1]
+    app_dir = root / "apps" / "rag_lmbd_query_dispatcher"
+    if str(app_dir) not in sys.path:
+        sys.path.insert(0, str(app_dir))
+    module_path = app_dir / "index.py"
+    spec = importlib.util.spec_from_file_location("rag_lmbd_query_dispatcher_ver", module_path)
     module = importlib.util.module_from_spec(spec)
     assert spec and spec.loader
     spec.loader.exec_module(module)
@@ -91,10 +132,72 @@ def test_extract_version_no_path_returns_v1():
     assert module._extract_version_from_path({}) == "v1"
 
 
+def test_extract_version_explicit_api_version_for_sqs_worker():
+    """TASK-399: el worker SQS no tiene path HTTP; usa api_version propagado."""
+    module = _load_query_module()
+    assert module._extract_version_from_path({"api_version": "v2"}) == "v2"
+
+
+def test_extract_version_explicit_api_version_takes_precedence_over_missing_path():
+    module = _load_query_module()
+    event = {"api_version": "V2", "rawPath": ""}
+    assert module._extract_version_from_path(event) == "v2"
+
+
 def test_extract_version_unknown_version():
     module = _load_query_module()
     event = {"rawPath": "/v3/query"}
     assert module._extract_version_from_path(event) == "v3"
+
+
+def test_dispatcher_v2_message_propagates_api_version_to_sqs_worker(monkeypatch):
+    """TASK-399: el worker recibe api_version y retrieval_limit=100 desde SQS."""
+    module = _load_dispatcher_module()
+
+    sent_messages = []
+
+    class _FakeTable:
+        def put_item(self, Item):
+            self.item = Item
+
+        def get_item(self, **_kwargs):
+            return {"Item": getattr(self, "item", {"id": "job-id"})}
+
+    class _FakeSqs:
+        def send_message(self, **kwargs):
+            sent_messages.append(kwargs)
+            return {"MessageId": "msg-id"}
+
+    monkeypatch.setattr(module, "_env_table_name", lambda: "table")
+    monkeypatch.setattr(module, "_env_queue_url", lambda: "queue-url")
+    monkeypatch.setattr(module, "_find_cached_job_id", lambda *args, **kwargs: None)
+    monkeypatch.setattr(module, "_ddb_table", lambda: _FakeTable())
+    monkeypatch.setattr(module, "_sqs_client_fn", lambda: _FakeSqs())
+
+    event = {
+        "rawPath": "/v2/query",
+        "requestContext": {"http": {"method": "POST", "path": "/v2/query"}},
+        "body": json.dumps(
+            {
+                "tenant_id": "boletin",
+                "agent_id": "agent-1",
+                "query": "ibuprofeno",
+                "start_at": "2026-05-01",
+                "end_at": "2026-05-19",
+                "page": 2,
+                "pageSize": 15,
+            }
+        ),
+    }
+
+    response = module._post_query(event)
+    assert response["statusCode"] == 202
+    assert sent_messages
+    message_body = json.loads(sent_messages[0]["MessageBody"])
+    assert message_body["api_version"] == "v2"
+    assert message_body["retrieval_limit"] == 100
+    assert message_body["_page"] == 2
+    assert message_body["_page_size"] == 15
 
 
 # =============================================================================

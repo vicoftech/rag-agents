@@ -462,8 +462,13 @@ def _post_query(event: dict[str, Any]) -> dict[str, Any]:
     msg["created_at_end"] = end_s
     msg["start_at"] = start_s
     msg["end_at"] = end_s
-    # TASK-399: Para v2, pasar _page y _page_size al worker para paginación in-memory
+    # TASK-399: Propagar versión al worker SQS. Sin path HTTP, rag_lmbd_query
+    # necesita este campo para construir la respuesta v2.
+    msg["api_version"] = api_version
+    # TASK-399: Para v2, pasar _page, _page_size y retrieval_limit=100 al worker
+    # para paginación in-memory sobre el set completo.
     if api_version == "v2":
+        msg["retrieval_limit"] = retrieval_limit
         msg["_page"] = page
         msg["_page_size"] = page_size
     try:

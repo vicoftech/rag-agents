@@ -117,6 +117,10 @@ API_V2_DEFAULT_PAGE_SIZE = 10
 
 
 def _extract_version_from_path(event: dict) -> str:
+    explicit_version = str(event.get("api_version") or "").strip().lower()
+    if re.fullmatch(r"v\d+", explicit_version):
+        return explicit_version
+
     path = (
         event.get("requestContext", {}).get("http", {}).get("path")
         or event.get("rawPath")
