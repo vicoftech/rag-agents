@@ -509,7 +509,31 @@ def _get_status(job_id: str) -> dict[str, Any]:
     item = r.get("Item")
     if not item:
         return _resp(404, {"error": "Job no encontrado"})
-    return _resp(200, {"id": job_id, "status": item.get("status")})
+
+    status = item.get("status")
+    response = {"id": job_id, "status": status}
+
+    # Si hay error, incluir detalles del campo result
+    if status == "Error":
+        result = item.get("result")
+        if result:
+            result_dict = _ddb_json_value(result)
+            if isinstance(result_dict, dict):
+                # Agregar mensaje de error principal
+                if "message" in result_dict:
+                    response["message"] = result_dict["message"]
+                # Agregar campos adicionales de error si existen
+                if "error" in result_dict:
+                    response["error"] = result_dict["error"]
+                if "detail" in result_dict:
+                    response["detail"] = result_dict["detail"]
+                if "error_trace" in result_dict:
+                    response["error_trace"] = result_dict["error_trace"]
+            elif isinstance(result_dict, str):
+                # Si result es un string directo
+                response["message"] = result_dict
+
+    return _resp(200, response)
 
 
 def _paginate_v2_result(result: dict[str, Any], page: int, page_size: int) -> dict[str, Any]:
