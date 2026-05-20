@@ -522,6 +522,13 @@ def resolve_created_at_bounds(
     if cs and ce:
         d0 = parse_created_at_day(cs)
         d1 = parse_created_at_day(ce)
+        # Validar que las fechas se parsearon correctamente
+        if d0 is None or d1 is None:
+            raise ValueError(
+                f"Fechas inválidas: created_at_start={cs!r} (parsed={d0}), "
+                f"created_at_end={ce!r} (parsed={d1}). "
+                "Usar formato YYYY-MM-DD o ISO-8601 (ej. 2026-03-15 o 2026-03-15T12:00:00Z)"
+            )
         if d1 < d0:
             raise ValueError(
                 "created_at_end debe ser >= created_at_start "
