@@ -273,6 +273,83 @@ def test_dispatcher_unversioned_query_env_v2_enqueues_v2_worker_message(monkeypa
     assert message_body["_page_size"] == 10
 
 
+def test_dispatcher_v2_defaults_to_lexical_and_cache_key_includes_page(monkeypatch):
+    """searchMode ausente debe ser lexical y cachear por página/tamaño."""
+    module = _load_dispatcher_module()
+
+    sent_messages = []
+    saved_items = []
+    cache_kwargs = {}
+
+    class _FakeTable:
+        def put_item(self, Item):
+            saved_items.append(Item)
+
+        def get_item(self, **_kwargs):
+            return {"Item": saved_items[-1] if saved_items else {"id": "job-id"}}
+
+    class _FakeSqs:
+        def send_message(self, **kwargs):
+            sent_messages.append(kwargs)
+            return {"MessageId": "msg-id"}
+
+    def _fake_cache(*_args, **kwargs):
+        cache_kwargs.update(kwargs)
+        return None
+
+    monkeypatch.setattr(module, "_env_table_name", lambda: "table")
+    monkeypatch.setattr(module, "_env_queue_url", lambda: "queue-url")
+    monkeypatch.setattr(module, "_find_cached_job_id", _fake_cache)
+    monkeypatch.setattr(module, "_ddb_table", lambda: _FakeTable())
+    monkeypatch.setattr(module, "_sqs_client_fn", lambda: _FakeSqs())
+
+    event = {
+        "rawPath": "/query",
+        "requestContext": {"http": {"method": "POST", "path": "/query"}},
+        "body": json.dumps(
+            {
+                "tenant_id": "boletin",
+                "agent_id": "agent-1",
+                "query": "ibuprofeno",
+                "start_at": "2026-05-01",
+                "end_at": "2026-05-19",
+                "page": 4,
+                "pageSize": 20,
+            }
+        ),
+    }
+
+    response = module._post_query(event)
+    assert response["statusCode"] == 202
+    assert cache_kwargs["search_mode"] == "lexical"
+    assert cache_kwargs["page"] == 4
+    assert cache_kwargs["page_size"] == 20
+    assert saved_items[-1]["search_mode"] == "lexical"
+    assert saved_items[-1]["page"] == 4
+    assert saved_items[-1]["page_size"] == 20
+    message_body = json.loads(sent_messages[0]["MessageBody"])
+    assert message_body["searchMode"] == "lexical"
+    assert message_body["_page"] == 4
+    assert message_body["_page_size"] == 20
+
+
+def test_dispatcher_paginate_v2_result_does_not_repaginate_lexical():
+    module = _load_dispatcher_module()
+    result = {
+        "data": [{"rank": 20}, {"rank": 21}],
+        "pagination": {
+            "page": 3,
+            "pageSize": 10,
+            "hasNext": True,
+            "hasPrevious": True,
+            "totalItems": 123,
+            "totalPages": 13,
+        },
+        "metadata": {"searchMode": "lexical", "retrieval_config": {"searchMode": "lexical"}},
+    }
+    assert module._paginate_v2_result(result, 1, 1) == result
+
+
 # =============================================================================
 # _normalize_v2_body()
 # =============================================================================
@@ -285,7 +362,15 @@ def test_normalize_v2_default_params():
     assert result["retrieval_limit"] == 100
     assert result["_page"] == 1
     assert result["_page_size"] == 10
+    assert result["searchMode"] == "lexical"
     assert "sort_by" not in result
+
+
+def test_normalize_search_mode_default_is_lexical():
+    module = _load_query_module()
+    assert module.normalize_search_mode(None) == "lexical"
+    assert module.normalize_search_mode("") == "lexical"
+    assert module.normalize_search_mode("HYBRID") == "hybrid"
 
 
 def test_normalize_v2_custom_page_and_page_size():
@@ -451,6 +536,40 @@ def test_build_v2_response_empty_page_beyond_data():
     assert result["pagination"]["hasPrevious"] is True
     assert result["pagination"]["page"] == 3
     assert result["pagination"]["pageSize"] == 10
+
+
+def test_build_v2_response_lexical_keeps_sql_page_and_totals():
+    """searchMode=lexical ya viene paginado por SQL y expone totales reales."""
+    module = _load_query_module()
+    v1 = {
+        "response": "Test",
+        "contexts": ["ctx20", "ctx21"],
+        "context_items": [
+            {"rank": 20, "chunk_text": "ctx20"},
+            {"rank": 21, "chunk_text": "ctx21"},
+        ],
+        "documents": ["doc.pdf"],
+        "retrieval_config": {
+            "searchMode": "lexical",
+            "page": 3,
+            "pageSize": 10,
+            "hasNext": True,
+            "hasPrevious": True,
+            "totalItems": 123,
+            "totalPages": 13,
+        },
+    }
+    result = module._build_v2_response(v1, 1, 1)
+    assert len(result["data"]) == 2
+    assert result["pagination"] == {
+        "page": 3,
+        "pageSize": 10,
+        "hasNext": True,
+        "hasPrevious": True,
+        "totalItems": 123,
+        "totalPages": 13,
+    }
+    assert result["metadata"]["searchMode"] == "lexical"
 
 
 # =============================================================================

@@ -111,9 +111,25 @@ SEARCH_SORT_HYBRID = "hybrid"
 SEARCH_SORT_DATE_DESC = "date_desc"
 SEARCH_SORT_ALLOWED = {SEARCH_SORT_RELEVANCE, SEARCH_SORT_HYBRID, SEARCH_SORT_DATE_DESC}
 
+SEARCH_MODE_LEXICAL = "lexical"
+SEARCH_MODE_HYBRID = "hybrid"
+SEARCH_MODE_ALLOWED = {SEARCH_MODE_LEXICAL, SEARCH_MODE_HYBRID}
+DEFAULT_SEARCH_MODE = SEARCH_MODE_LEXICAL
+
 
 API_V2_MAX_PAGE_SIZE = 50
 API_V2_DEFAULT_PAGE_SIZE = 10
+
+
+def normalize_search_mode(raw_mode: Any) -> str:
+    """Normaliza searchMode. Default de producto: lexical."""
+    mode = str(raw_mode or DEFAULT_SEARCH_MODE).strip().lower()
+    if not mode:
+        mode = DEFAULT_SEARCH_MODE
+    if mode not in SEARCH_MODE_ALLOWED:
+        allowed = ", ".join(sorted(SEARCH_MODE_ALLOWED))
+        raise ValueError(f"searchMode inválido: {mode!r}. Valores permitidos: {allowed}")
+    return mode
 
 
 def _unversioned_query_api_version() -> str:
@@ -178,7 +194,8 @@ def _normalize_v2_body(body: dict) -> dict:
         page = 1
     if page < 1:
         raise ValueError("page debe ser >= 1")
-    # TASK-399: Fetch completo de 100 contexts para paginación in-memory
+    body["searchMode"] = normalize_search_mode(body.get("searchMode") or body.get("search_mode"))
+    # TASK-399: Fetch completo de 100 contexts para paginación in-memory en modo hybrid.
     body["retrieval_limit"] = 100
     body["_page"] = page
     body["_page_size"] = page_size
@@ -200,13 +217,41 @@ def _build_v2_response(v1_body: dict, page: int, page_size: int) -> dict:
     full_context_items = v1_body.get("context_items", [])
     response_text = v1_body.get("response")
     retrieval_config = v1_body.get("retrieval_config", {})
+    mode_raw = retrieval_config.get("searchMode") or retrieval_config.get("search_mode")
+    # Si falta el modo, se asume hybrid por compatibilidad con resultados v2
+    # persistidos antes de introducir searchMode.
+    search_mode = (
+        normalize_search_mode(mode_raw)
+        if mode_raw
+        else SEARCH_MODE_HYBRID
+    )
 
-    # Paginar context_items en memoria
+    if search_mode == SEARCH_MODE_LEXICAL:
+        total_items = int(retrieval_config.get("totalItems") or 0)
+        total_pages = int(retrieval_config.get("totalPages") or 0)
+        pagination = {
+            "page": int(retrieval_config.get("page") or page),
+            "pageSize": int(retrieval_config.get("pageSize") or page_size),
+            "hasNext": bool(retrieval_config.get("hasNext")),
+            "hasPrevious": bool(retrieval_config.get("hasPrevious")),
+            "totalItems": total_items,
+            "totalPages": total_pages,
+        }
+        return {
+            "data": full_context_items,
+            "pagination": pagination,
+            "metadata": {
+                "searchMode": SEARCH_MODE_LEXICAL,
+                "response": response_text,
+                "retrieval_config": retrieval_config,
+            },
+        }
+
+    # Hybrid: paginar context_items en memoria sobre el set materializado.
     start_idx = (page - 1) * page_size
     end_idx = start_idx + page_size
     page_context_items = full_context_items[start_idx:end_idx]
 
-    # Calcular hasNext/hasPrevious
     total_items = len(full_context_items)
     has_next = end_idx < total_items
     has_previous = page > 1
@@ -220,6 +265,7 @@ def _build_v2_response(v1_body: dict, page: int, page_size: int) -> dict:
             "hasPrevious": has_previous,
         },
         "metadata": {
+            "searchMode": SEARCH_MODE_HYBRID,
             "response": response_text,
             "retrieval_config": retrieval_config,
         },
@@ -1008,6 +1054,160 @@ def semantic_search(
     return chunks, documents, context_items, retrieval_config
 
 
+def lexical_search(
+    query,
+    tenant_id,
+    document_name=None,
+    agent_id=None,
+    chunk_text=None,
+    created_at_day=None,
+    created_at_start=None,
+    created_at_end=None,
+    *,
+    page=1,
+    page_size=10,
+    sort_by=None,
+):
+    """
+    TASK-399: búsqueda textual tradicional con paginación completa.
+
+    No genera embeddings ni usa pgvector. Usa fts_vector + GIN y COUNT(*)
+    para totalItems/totalPages reales bajo los mismos filtros SQL.
+    """
+    try:
+        page_num = int(page)
+    except (TypeError, ValueError):
+        raise ValueError("page debe ser un entero")
+    try:
+        page_sz = int(page_size)
+    except (TypeError, ValueError):
+        raise ValueError("pageSize debe ser un entero")
+    if page_num < 1:
+        raise ValueError("page debe ser >= 1")
+    if page_sz < 1 or page_sz > API_V2_MAX_PAGE_SIZE:
+        raise ValueError(f"pageSize debe estar entre 1 y {API_V2_MAX_PAGE_SIZE}")
+
+    q_plain = (query or "").strip()
+    if not q_plain:
+        raise ValueError("query no puede estar vacío")
+
+    filter_clauses: list[str] = ["d.fts_vector @@ q.query"]
+    filter_params: list = []
+
+    if document_name:
+        filter_clauses.append("d.document_name = %s")
+        filter_params.append(document_name)
+    if agent_id:
+        filter_clauses.append("d.agent_id = %s")
+        filter_params.append(agent_id)
+    if chunk_text:
+        filter_clauses.append("d.chunk_text = %s")
+        filter_params.append(chunk_text)
+
+    ca_lo, ca_hi_exc = resolve_created_at_bounds(
+        created_at_day, created_at_start, created_at_end
+    )
+    if ca_lo is not None and ca_hi_exc is not None:
+        filter_clauses.append("d.created_at >= %s AND d.created_at < %s")
+        filter_params.extend([ca_lo, ca_hi_exc])
+
+    where_sql = "WHERE " + " AND ".join(filter_clauses)
+    schema = resolve_schema_name(tenant_id)
+    offset = (page_num - 1) * page_sz
+
+    conn = get_connection()
+    cur = conn.cursor()
+    _apply_pg_retrieval_session_tuning(cur)
+    _t_db0 = time.perf_counter()
+
+    count_sql = f"""
+        SELECT COUNT(*)
+        FROM {schema}.documents AS d
+        CROSS JOIN LATERAL (SELECT plainto_tsquery('spanish', %s) AS query) AS q
+        {where_sql}
+    """
+
+    data_sql = f"""
+        SELECT
+            d.id AS chunk_id,
+            d.chunk_text,
+            d.document_name,
+            NULL::double precision AS vector_distance,
+            ts_rank_cd(d.fts_vector, q.query, 32) AS score,
+            d.document_id,
+            d.created_at
+        FROM {schema}.documents AS d
+        CROSS JOIN LATERAL (SELECT plainto_tsquery('spanish', %s) AS query) AS q
+        {where_sql}
+        ORDER BY score DESC, d.created_at DESC NULLS LAST, d.id ASC
+        LIMIT %s
+        OFFSET %s
+    """
+
+    try:
+        cur.execute(count_sql, [q_plain, *filter_params])
+        total_items = int(cur.fetchone()[0] or 0)
+        cur.execute(data_sql, [q_plain, *filter_params, page_sz, offset])
+        rows = cur.fetchall()
+    except Exception as e:
+        print(f"[retrieval] ERROR en lexical search: {e}")
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+    db_ms = (time.perf_counter() - _t_db0) * 1000.0
+    total_pages = (total_items + page_sz - 1) // page_sz if total_items > 0 else 0
+    has_next = bool(total_pages and page_num < total_pages)
+    has_previous = page_num > 1 and total_items > 0
+
+    print(
+        f"[timing] lexical_search tenant_id={tenant_id!r} db_ms={db_ms:.1f} "
+        f"rows={len(rows)} total_items={total_items} page={page_num} page_size={page_sz}"
+    )
+
+    chunks = [row[1] for row in rows]
+    documents = ordered_unique_documents(rows)
+    context_items: list[dict[str, Any]] = []
+    for i, row in enumerate(rows):
+        score = row[4]
+        context_items.append(
+            {
+                "rank": offset + i,
+                "chunk_id": int(row[0]) if row[0] is not None else None,
+                "chunk_text": row[1],
+                "document_name": row[2] or "",
+                "document_id": str(row[5]) if len(row) > 5 and row[5] is not None else "",
+                "created_at": row[6].isoformat() if len(row) > 6 and hasattr(row[6], "isoformat") else (str(row[6]) if len(row) > 6 and row[6] is not None else None),
+                "score": float(score) if score is not None else None,
+            }
+        )
+
+    ca_s = (created_at_start or "").strip() if isinstance(created_at_start, str) else ""
+    ca_e = (created_at_end or "").strip() if isinstance(created_at_end, str) else ""
+    retrieval_config: dict[str, Any] = {
+        "searchMode": SEARCH_MODE_LEXICAL,
+        "search_mode": SEARCH_MODE_LEXICAL,
+        "hybrid_search": False,
+        "uses_embeddings": False,
+        "uses_fts": True,
+        "uses_literal": False,
+        "sort_by": "lexical_score",
+        "page": page_num,
+        "pageSize": page_sz,
+        "totalItems": total_items,
+        "totalPages": total_pages,
+        "hasNext": has_next,
+        "hasPrevious": has_previous,
+        "retrieval_sql_row_count": len(rows),
+        "created_at_start": ca_s or None,
+        "created_at_end": ca_e or None,
+        "created_at_single_day": created_at_day.isoformat() if created_at_day else None,
+    }
+
+    return chunks, documents, context_items, retrieval_config
+
+
 
 
 # --- Get prompt template of the agent ---
@@ -1372,7 +1572,19 @@ def handler(event, context):
         return resp
 
     try:
-        sort_by_eff = normalize_search_sort_by(req_src.get("sort_by"))
+        search_mode = normalize_search_mode(req_src.get("searchMode") or req_src.get("search_mode"))
+    except ValueError as e:
+        resp = {"statusCode": 400, "body": json.dumps({"error": str(e)})}
+        if is_http_event:
+            resp["headers"] = {"Content-Type": "application/json", **CORS_HEADERS}
+        return resp
+
+    try:
+        sort_by_eff = (
+            normalize_search_sort_by(req_src.get("sort_by"))
+            if search_mode == SEARCH_MODE_HYBRID
+            else None
+        )
     except ValueError as e:
         resp = {"statusCode": 400, "body": json.dumps({"error": str(e)})}
         if is_http_event:
@@ -1383,22 +1595,41 @@ def handler(event, context):
     request_id = getattr(context, "aws_request_id", "") if context else ""
     try:
         _t_search0 = time.perf_counter()
-        chunks, documents, context_items, retrieval_config = semantic_search(
-            query,
-            tenant_id,
-            document_name,
-            agent_id,
-            chunk_text,
-            created_at_day,
-            ca_start if ca_start else None,
-            ca_end if ca_end else None,
-            k=k_req,
-            max_semantic_distance=msd_eff,
-            semantic_fallback_top_n=sfb_eff,
-            literal_keyword_overlap=literal_overlap,
-            literal_min_chars_override=literal_ml,
-            sort_by=sort_by_eff,
-        )
+        if search_mode == SEARCH_MODE_LEXICAL:
+            page = int(req_src.get("_page") or req_src.get("page") or 1)
+            page_size = int(req_src.get("_page_size") or req_src.get("pageSize") or API_V2_DEFAULT_PAGE_SIZE)
+            chunks, documents, context_items, retrieval_config = lexical_search(
+                query,
+                tenant_id,
+                document_name,
+                agent_id,
+                chunk_text,
+                created_at_day,
+                ca_start if ca_start else None,
+                ca_end if ca_end else None,
+                page=page,
+                page_size=page_size,
+                sort_by=sort_by_eff,
+            )
+        else:
+            chunks, documents, context_items, retrieval_config = semantic_search(
+                query,
+                tenant_id,
+                document_name,
+                agent_id,
+                chunk_text,
+                created_at_day,
+                ca_start if ca_start else None,
+                ca_end if ca_end else None,
+                k=k_req,
+                max_semantic_distance=msd_eff,
+                semantic_fallback_top_n=sfb_eff,
+                literal_keyword_overlap=literal_overlap,
+                literal_min_chars_override=literal_ml,
+                sort_by=sort_by_eff,
+            )
+            retrieval_config["searchMode"] = SEARCH_MODE_HYBRID
+            retrieval_config["search_mode"] = SEARCH_MODE_HYBRID
         _search_ms = (time.perf_counter() - _t_search0) * 1000.0
     except ValueError as e:
         resp = {"statusCode": 400, "body": json.dumps({"error": str(e)})}
@@ -1425,7 +1656,7 @@ def handler(event, context):
     _handler_work_ms = _search_ms + _prompt_fetch_ms + _llm_ms
     print(
         f"[timing] handler request_id={request_id} tenant_id={tenant_id!r} "
-        f"semantic_search_ms={_search_ms:.1f} prompt_template_ms={_prompt_fetch_ms:.1f} "
+        f"search_mode={search_mode} search_ms={_search_ms:.1f} prompt_template_ms={_prompt_fetch_ms:.1f} "
         f"llm_generate_ms={_llm_ms:.1f} handler_after_validate_ms={_handler_work_ms:.1f}"
     )
     print(response)

@@ -36,6 +36,13 @@ def _effective_region() -> str:
         (os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "").strip()
         or "us-east-1"
     )
+SEARCH_MODE_LEXICAL = "lexical"
+SEARCH_MODE_HYBRID = "hybrid"
+SEARCH_MODE_ALLOWED = {SEARCH_MODE_LEXICAL, SEARCH_MODE_HYBRID}
+DEFAULT_SEARCH_MODE = SEARCH_MODE_LEXICAL
+API_V2_MAX_PAGE_SIZE = 50
+API_V2_DEFAULT_PAGE_SIZE = 10
+
 GSI_TENANT_CREATED = "gsi_tenant_id_created_at"
 # Límite de ítems leídos del índice por página; el filtro aplica después.
 _CACHE_QUERY_PAGE = 50
@@ -109,6 +116,34 @@ def _method(event: dict[str, Any]) -> str:
 
 def _route_key(event: dict[str, Any]) -> str:
     return str(event.get("routeKey") or "").strip()
+
+
+def _normalize_search_mode(raw_mode: Any) -> str:
+    mode = str(raw_mode or DEFAULT_SEARCH_MODE).strip().lower()
+    if not mode:
+        mode = DEFAULT_SEARCH_MODE
+    if mode not in SEARCH_MODE_ALLOWED:
+        allowed = ", ".join(sorted(SEARCH_MODE_ALLOWED))
+        raise ValueError(f"searchMode inválido: {mode!r}. Valores permitidos: {allowed}")
+    return mode
+
+
+def _parse_page_params(body: dict[str, Any]) -> tuple[int, int]:
+    page_raw = body.get("page")
+    page_size_raw = body.get("pageSize")
+    try:
+        page = int(page_raw) if page_raw is not None else 1
+    except (TypeError, ValueError) as e:
+        raise ValueError("page debe ser un entero") from e
+    try:
+        page_size = int(page_size_raw) if page_size_raw is not None else API_V2_DEFAULT_PAGE_SIZE
+    except (TypeError, ValueError) as e:
+        raise ValueError("pageSize debe ser un entero") from e
+    if page < 1:
+        raise ValueError("page debe ser >= 1")
+    if page_size < 1 or page_size > API_V2_MAX_PAGE_SIZE:
+        raise ValueError(f"pageSize debe estar entre 1 y {API_V2_MAX_PAGE_SIZE}")
+    return page, page_size
 
 
 def _unversioned_query_api_version() -> str:
@@ -218,6 +253,9 @@ def _find_cached_job_id(
     sort_by: str | None = None,
     document_name: str | None = None,
     api_version: str | None = "v1",
+    search_mode: str | None = None,
+    page: int | None = None,
+    page_size: int | None = None,
 ) -> str | None:
     """
     Busca un job ya completado con la misma clave lógica (sin recalcular en worker).
@@ -267,6 +305,20 @@ def _find_cached_job_id(
         kcf = kcf & Attr("api_version").eq(api_version)
     else:
         kcf = kcf & (Attr("api_version").not_exists() | Attr("api_version").eq("") | Attr("api_version").eq(None))
+
+    if search_mode == SEARCH_MODE_LEXICAL:
+        kcf = kcf & Attr("search_mode").eq(SEARCH_MODE_LEXICAL)
+        if page is not None:
+            kcf = kcf & Attr("page").eq(int(page))
+        if page_size is not None:
+            kcf = kcf & Attr("page_size").eq(int(page_size))
+    elif search_mode == SEARCH_MODE_HYBRID:
+        kcf = kcf & (
+            Attr("search_mode").eq(SEARCH_MODE_HYBRID)
+            | Attr("search_mode").not_exists()
+            | Attr("search_mode").eq("")
+            | Attr("search_mode").eq(None)
+        )
 
     eks: dict[str, Any] | None = None
     for _ in range(_CACHE_QUERY_MAX_PAGES):
@@ -375,22 +427,20 @@ def _post_query(event: dict[str, Any]) -> dict[str, Any]:
 
     # Detectar versión de API desde path
     api_version = _extract_version_from_path(event)
+    try:
+        search_mode = _normalize_search_mode(body.get("searchMode") or body.get("search_mode"))
+    except ValueError as e:
+        return _resp(400, {"error": str(e)})
 
     # TASK-399: Extraer parámetros según versión
     if api_version == "v2":
-        # v2: Fetch completo (100 contexts), paginación in-memory
+        # v2 hybrid: fetch completo (100 contexts), paginación in-memory.
+        # v2 lexical: paginación real en SQL usando page/pageSize.
         retrieval_limit = 100
-        # Extraer page y pageSize para paginación del worker
-        page_raw = body.get("page")
-        page_size_raw = body.get("pageSize")
         try:
-            page = int(page_raw) if page_raw is not None else 1
-        except (TypeError, ValueError):
-            page = 1
-        try:
-            page_size = int(page_size_raw) if page_size_raw is not None else 10
-        except (TypeError, ValueError):
-            page_size = 10
+            page, page_size = _parse_page_params(body)
+        except ValueError as e:
+            return _resp(400, {"error": str(e)})
     else:
         # v1: retrieval_limit variable (legacy)
         retrieval_limit = body.get("retrieval_limit")
@@ -401,10 +451,20 @@ def _post_query(event: dict[str, Any]) -> dict[str, Any]:
                 retrieval_limit = 10
         else:
             retrieval_limit = 10
-        page = None
-        page_size = None
+        if search_mode == SEARCH_MODE_LEXICAL:
+            try:
+                page, page_size = _parse_page_params(body)
+            except ValueError as e:
+                return _resp(400, {"error": str(e)})
+        else:
+            page = None
+            page_size = None
 
-    sort_by = str(body.get("sort_by") or body.get("sort") or "").strip() or None
+    sort_by = (
+        str(body.get("sort_by") or body.get("sort") or "").strip() or None
+        if search_mode == SEARCH_MODE_HYBRID
+        else None
+    )
     document_name = str(body.get("document_name") or "").strip() or None
 
     cached_id = _find_cached_job_id(
@@ -417,6 +477,9 @@ def _post_query(event: dict[str, Any]) -> dict[str, Any]:
         sort_by=sort_by,
         document_name=document_name,
         api_version=api_version,
+        search_mode=search_mode,
+        page=page,
+        page_size=page_size,
     )
     if cached_id:
         return _resp(202, {"id": cached_id})
@@ -442,6 +505,11 @@ def _post_query(event: dict[str, Any]) -> dict[str, Any]:
     # Guardar parámetros de búsqueda para cache key
     # retrieval_limit siempre se guarda (tiene default 10)
     item["retrieval_limit"] = retrieval_limit
+    item["search_mode"] = search_mode
+    item["searchMode"] = search_mode
+    if search_mode == SEARCH_MODE_LEXICAL and page is not None and page_size is not None:
+        item["page"] = int(page)
+        item["page_size"] = int(page_size)
     if sort_by:
         item["sort_by"] = sort_by
     if document_name:
@@ -484,9 +552,12 @@ def _post_query(event: dict[str, Any]) -> dict[str, Any]:
     # TASK-399: Propagar versión al worker SQS. Sin path HTTP, rag_lmbd_query
     # necesita este campo para construir la respuesta v2.
     msg["api_version"] = api_version
+    msg["searchMode"] = search_mode
+    msg["search_mode"] = search_mode
     # TASK-399: Para v2, pasar _page, _page_size y retrieval_limit=100 al worker
-    # para paginación in-memory sobre el set completo.
-    if api_version == "v2":
+    # para paginación in-memory sobre el set completo en hybrid; en lexical esos
+    # campos controlan LIMIT/OFFSET SQL.
+    if api_version == "v2" or search_mode == SEARCH_MODE_LEXICAL:
         msg["retrieval_limit"] = retrieval_limit
         msg["_page"] = page
         msg["_page_size"] = page_size
@@ -548,6 +619,18 @@ def _paginate_v2_result(result: dict[str, Any], page: int, page_size: int) -> di
     Returns:
         Resultado v2 paginado con data recortado y pagination actualizado
     """
+    metadata = result.get("metadata") if isinstance(result, dict) else {}
+    retrieval_config = metadata.get("retrieval_config", {}) if isinstance(metadata, dict) else {}
+    search_mode = (
+        (metadata.get("searchMode") if isinstance(metadata, dict) else None)
+        or (retrieval_config.get("searchMode") if isinstance(retrieval_config, dict) else None)
+        or (retrieval_config.get("search_mode") if isinstance(retrieval_config, dict) else None)
+    )
+    if str(search_mode or "").strip().lower() == SEARCH_MODE_LEXICAL:
+        # Lexical ya viene paginado por SQL en el worker y trae totalItems/totalPages reales.
+        # El dispatcher no tiene acceso a DB para recalcular otra página en GET.
+        return result
+
     full_data = result.get("data", [])
 
     # Paginar data en memoria
