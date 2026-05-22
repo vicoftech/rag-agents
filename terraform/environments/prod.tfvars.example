@@ -36,6 +36,13 @@ main_llm_model     = "anthropic.claude-3-5-sonnet-20241022-v2:0"
 fallback_llm_model = "anthropic.claude-3-haiku-20240307-v1:0"
 output_tokens      = "4096"
 
+# Embeddings: backpressure Bedrock/Aurora (2 PDFs vía SQS, tope 4 ejecuciones, lotes Bedrock de 2).
+lambda_embeddings_sqs_concurrency      = 2
+lambda_embeddings_reserved_concurrency = 4
+lambda_embeddings_env_vars = {
+  EMBED_BATCH_SIZE = "2"
+}
+
 # Lambda query: corrida batch --no-created-at-filter + modelo grande puede pasar los 120s default.
 # Sandbox.Timedout en logs del batch => subir Timeout (≤900).
 lambda_query_config = {

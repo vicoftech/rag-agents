@@ -33,9 +33,13 @@ lambda_embeddings_config = {
   ephemeral_storage_size = 1024
 }
 
+# Máx. 2 PDFs vía SQS; tope 4 ejecuciones de la función; Bedrock en lotes de 2 chunks.
+lambda_embeddings_sqs_concurrency      = 2
+lambda_embeddings_reserved_concurrency = 4
+
 lambda_embeddings_env_vars = {
   EMBEDDINGS_MODEL      = "cohere.embed-v4:0"
-  EMBED_BATCH_SIZE      = "5"
+  EMBED_BATCH_SIZE      = "2"
   # Claves S3 tipo boletin_oficial/YYYYMMDD/.../archivo.pdf (sin /documents/<uuid>/)
   RAG_S3_DEFAULT_AGENT_ID  = "25abefca-8e5c-4c6e-973d-2fad3af8b469"
   RAG_S3_PREFIX_SCHEMA_MAP = "{\"boletin_oficial\":\"tenant_boletin\"}"

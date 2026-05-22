@@ -28,7 +28,11 @@ data "aws_iam_policy_document" "lambda_policy" {
   statement {
     sid       = "StartBoletinAndAnmatSfn"
     actions   = ["states:StartExecution"]
-    resources = [var.boletin_state_machine_arn, var.anmat_state_machine_arn]
+    resources = distinct(concat(
+      [var.boletin_state_machine_arn, var.anmat_state_machine_arn],
+      var.boletin_state_machine_arns_extra,
+      var.anmat_state_machine_arns_extra,
+    ))
   }
   statement {
     sid = "Logs"

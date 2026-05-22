@@ -75,6 +75,12 @@ variable "scheduled_boletin_cron_minute_hour" {
   default     = "30 11"
 }
 
+variable "scheduled_anmat_cron_minute_hour" {
+  description = "Hora local ANMAT ingesta lun–vie en scheduled_sync_timezone. Ej: \"0 11\" = 11:00."
+  type        = string
+  default     = "0 11"
+}
+
 variable "scheduled_boletin_rag_agent_id" {
   description = "UUID agente RAG boletín para el payload del SFN diario."
   type        = string
@@ -279,15 +285,15 @@ variable "lambda_embeddings_config" {
 }
 
 variable "lambda_embeddings_sqs_concurrency" {
-  description = "Límite de concurrencia del evento SQS → Lambda embeddings (más = más PDFs en paralelo; coordinar con Bedrock/Textract/Aurora)"
+  description = "Límite de concurrencia del evento SQS → Lambda embeddings (PDFs en paralelo; coordinar con Bedrock/Textract/Aurora)"
   type        = number
-  default     = 30
+  default     = 2
 }
 
 variable "lambda_embeddings_reserved_concurrency" {
   description = "Reserved concurrent executions de la Lambda embeddings (debe ser >= lambda_embeddings_sqs_concurrency; -1 = sin reserva = cuenta límite de región)"
   type        = number
-  default     = 30
+  default     = 4
 }
 
 variable "lambda_query_config" {

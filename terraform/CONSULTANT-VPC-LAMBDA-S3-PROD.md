@@ -79,7 +79,7 @@ Todas **privadas** (`MapPublicIpOnLaunch = false`), en **tres AZ**:
 
 ### Concurrencia
 
-En **código Terraform** del módulo `lambda_embeddings_async` puede definirse `reserved_concurrent_executions` (p. ej. 10). **Comprobar en AWS** que coincida con el estado deseado (`get-function-configuration` → `ReservedConcurrentExecutions`).
+En Terraform: `lambda_embeddings_sqs_concurrency = 2`, `lambda_embeddings_reserved_concurrency = 4`, `EMBED_BATCH_SIZE = "2"`. **Comprobar en AWS** con `get-function-concurrency` y el `ScalingConfig` del event source mapping SQS.
 
 ### Variables de entorno S3 (cliente boto3 / `prod.tfvars`)
 

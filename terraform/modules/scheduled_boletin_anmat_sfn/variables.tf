@@ -10,13 +10,25 @@ variable "tags" {
 }
 
 variable "boletin_state_machine_arn" {
-  description = "ARN del SFN Alerts-BoletinOficialSyncronizer (prod/qa)"
+  description = "ARN principal del SFN Boletín (p. ej. Alerts-BoletinOficialSyncronizer heredado sin -prod)"
   type        = string
 }
 
+variable "boletin_state_machine_arns_extra" {
+  description = "ARNs adicionales con states:StartExecution (p. ej. -prod o -async-prod si coexisten)"
+  type        = list(string)
+  default     = []
+}
+
 variable "anmat_state_machine_arn" {
-  description = "ARN del SFN rag-anmat-to-s3writer (prod/qa)"
+  description = "ARN principal del SFN ANMAT (p. ej. rag-anmat-to-s3writer-prod)"
   type        = string
+}
+
+variable "anmat_state_machine_arns_extra" {
+  description = "ARNs adicionales ANMAT con states:StartExecution (aliases/entornos legacy)"
+  type        = list(string)
+  default     = []
 }
 
 variable "boletin_tenant_id" {
@@ -52,9 +64,9 @@ variable "boletin_cron_minute_hour" {
 }
 
 variable "anmat_cron_minute_hour" {
-  description = "Minuto y hora locales ANMAT (lun–vie). Ej: \"30 9\" = 09:30"
+  description = "Minuto y hora locales ANMAT ingesta (lun–vie). Ej: \"0 11\" = 11:00"
   type        = string
-  default     = "30 9"
+  default     = "0 11"
 }
 
 variable "anmat_year_override" {

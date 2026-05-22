@@ -41,10 +41,13 @@ lambda_embeddings_config = {
   ephemeral_storage_size = 1024
 }
 
+lambda_embeddings_sqs_concurrency      = 2
+lambda_embeddings_reserved_concurrency = 4
+
 # Alineado con environments/prod.tfvars (misma receta S3 + modelo).
 lambda_embeddings_env_vars = {
   EMBEDDINGS_MODEL         = "cohere.embed-v4:0"
-  EMBED_BATCH_SIZE         = "5"
+  EMBED_BATCH_SIZE         = "2"
   MAX_EMBED_TEXT_LENGTH    = "20000"
   S3_USE_REGIONAL_ENDPOINT = "1"
   S3_CONNECT_TIMEOUT       = "15"

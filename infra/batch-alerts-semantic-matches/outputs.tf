@@ -3,6 +3,11 @@ output "ecr_repository_url" {
   value       = aws_ecr_repository.batch.repository_url
 }
 
+output "ecr_anmat_s3_rekey_repository_url" {
+  description = "ECR imagen batch/anmat-s3-rekey (CI batch-anmat-s3-rekey-docker.yml)"
+  value       = aws_ecr_repository.anmat_s3_rekey.repository_url
+}
+
 output "ecs_cluster_name" {
   value = aws_ecs_cluster.batch.name
 }

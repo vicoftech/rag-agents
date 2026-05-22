@@ -66,7 +66,10 @@ resource "aws_iam_role_policy" "github_ecr_push" {
           "ecr:DescribeRepositories",
           "ecr:ListImages",
         ]
-        Resource = aws_ecr_repository.batch.arn
+        Resource = [
+          aws_ecr_repository.batch.arn,
+          aws_ecr_repository.anmat_s3_rekey.arn,
+        ]
       }
     ]
   })
