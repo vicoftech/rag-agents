@@ -55,6 +55,14 @@ aws s3 cp tenant_anmat_s3_not_in_documents_202605212328.json \
 
 Columnas: `status`, `basename`, `partition`, `src_key`, `dst_key`, `detail`.
 
+## Red (VPC)
+
+Las tasks Fargate usan el SG `rag-batch-alerts-*` en subnets privadas con NAT + **S3 Gateway endpoint**.
+
+Para **Secrets Manager** (credenciales DB) hace falta ingress **443** desde el SG del batch al SG `rag-vpce-if-prod-sg` (Interface VPCE). Sin eso: `ConnectTimeout` a Secrets Manager.
+
+Para **Aurora** hace falta ingress **5432** desde el SG del batch al SG de RDS. Terraform: `infra/batch-alerts-semantic-matches/network_connectivity.tf`.
+
 ## IAM (rol de tarea ECS)
 
 Además de lo que ya tenga el batch:
@@ -76,6 +84,22 @@ python3 scripts/rekey_anmat_s3_from_disposicion.py \
   --bucket rag-documents-prod-913123310997 \
   --dry-run --max-items 5
 ```
+
+## Reanudar (manifiesto − ok.txt)
+
+Por defecto el entrypoint activa **`REKEY_RESUME=1`** y lee todos los `ok_*.txt` bajo `REKEY_RESUME_OK_S3_PREFIX` (`manifests/rekey-runs/`). Solo ejecuta la **diferencia** (pendientes).
+
+```bash
+python3 scripts/rekey_anmat_s3_from_disposicion.py \
+  --manifest-s3 s3://.../manifests/tenant_anmat_s3_not_in_documents_202605212328.json \
+  --bucket rag-documents-prod-913123310997 \
+  --resume-ok-s3-prefix manifests/rekey-runs/ \
+  --resume-ok /tmp/ok_local.txt
+```
+
+Desactivar resume: `REKEY_RESUME=0` en la task ECS.
+
+Estados en ok.txt que cuentan como hecho: `copied`, `dry_run`, `skipped_same`, `skipped_exists`.
 
 ## Flujo recomendado
 

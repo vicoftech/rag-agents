@@ -16,6 +16,8 @@ Variables de entorno:
   DB_SECRET_ARN / DB_*    Conexión PostgreSQL
   DISPERSION_DATE_FIELD   fechayhora_revision | fecha_de_publicacion
   REKEY_LOG_S3_PREFIX     Prefijo S3 para ok.txt / errors.txt (default: manifests/rekey-runs/)
+  REKEY_RESUME_OK_S3_PREFIX  Prefijo S3 con ok_*.txt previos (resume; ver --resume-ok-s3-prefix)
+  REKEY_RESUME            1 = activar resume en entrypoint ECS; 0 = procesar manifiesto completo
 """
 
 from __future__ import annotations
@@ -207,6 +209,118 @@ def load_manifest(path: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     return meta, items
 
 
+def _match_key_src(src_key: str) -> str:
+    return f"src:{(src_key or '').strip()}"
+
+
+def _match_key_basename(name_or_key: str) -> str:
+    return f"bn:{_file_basename(name_or_key).lower()}"
+
+
+def item_match_keys(item: dict[str, Any]) -> set[str]:
+    """Claves para cruzar un ítem del manifiesto con filas ok_*.txt."""
+    keys: set[str] = set()
+    src = (item.get("s3_key") or "").strip()
+    if src:
+        keys.add(_match_key_src(src))
+    doc = (item.get("document_name") or "").strip()
+    if doc or src:
+        keys.add(_match_key_basename(doc or src))
+    return keys
+
+
+def parse_ok_tsv_line(line: str) -> tuple[str, set[str]] | None:
+    """
+    Parsea una línea TSV de ok_*.txt.
+    Retorna (status, match_keys) o None si la línea no aplica.
+    """
+    line = line.strip()
+    if not line or line.startswith("status\t"):
+        return None
+    parts = line.split("\t")
+    if len(parts) < 5:
+        return None
+    status = parts[0].strip()
+    basename = parts[1].strip() if len(parts) > 1 else ""
+    src_key = parts[3].strip() if len(parts) > 3 else ""
+    keys: set[str] = set()
+    if src_key:
+        keys.add(_match_key_src(src_key))
+    if basename:
+        keys.add(_match_key_basename(basename))
+    return status, keys
+
+
+def load_completed_keys_from_ok_files(paths: list[str]) -> set[str]:
+    """Unión de claves ya procesadas (solo estados OK del job)."""
+    completed: set[str] = set()
+    for path in paths:
+        if not path or not os.path.isfile(path):
+            LOG.warning("ok.txt no encontrado, se omite: %s", path)
+            continue
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                parsed = parse_ok_tsv_line(line)
+                if not parsed:
+                    continue
+                status, keys = parsed
+                if status in _OK_STATUSES:
+                    completed |= keys
+    return completed
+
+
+def download_ok_logs_from_s3_prefix(
+    s3_client: Any,
+    *,
+    bucket: str,
+    prefix: str,
+    dest_dir: str = "/tmp/rekey_ok_logs",
+) -> list[str]:
+    """Descarga todos los ok_*.txt bajo un prefijo S3."""
+    prefix = prefix.strip().rstrip("/") + "/"
+    os.makedirs(dest_dir, exist_ok=True)
+    local_paths: list[str] = []
+    paginator = s3_client.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        for obj in page.get("Contents") or []:
+            key = obj.get("Key") or ""
+            base = key.rsplit("/", 1)[-1]
+            if not base.startswith("ok_") or not base.endswith(".txt"):
+                continue
+            local = os.path.join(dest_dir, base.replace("/", "_"))
+            s3_client.download_file(bucket, key, local)
+            local_paths.append(local)
+            LOG.info("Descargado ok log: s3://%s/%s", bucket, key)
+    return local_paths
+
+
+def split_manifest_by_ok_logs(
+    items: list[dict[str, Any]],
+    ok_log_paths: list[str],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, int]]:
+    """
+    Intersección manifiesto ∩ ok.txt → ya hechos; diferencia → pendientes a ejecutar.
+
+    Un ítem está hecho si alguna de sus claves (src_key o basename) aparece en una fila OK.
+    """
+    completed = load_completed_keys_from_ok_files(ok_log_paths)
+    done: list[dict[str, Any]] = []
+    pending: list[dict[str, Any]] = []
+    for item in items:
+        if item_match_keys(item) & completed:
+            done.append(item)
+        else:
+            pending.append(item)
+    summary = {
+        "manifest_total": len(items),
+        "ok_log_files": len([p for p in ok_log_paths if p and os.path.isfile(p)]),
+        "completed_keys_in_ok": len(completed),
+        "already_done": len(done),
+        "pending": len(pending),
+    }
+    return done, pending, summary
+
+
 def copy_object(
     s3,
     *,
@@ -342,6 +456,23 @@ def main() -> int:
         action="store_true",
         help="No subir txt a S3 (solo escribir en /tmp)",
     )
+    p.add_argument(
+        "--resume-ok",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="ok_*.txt previo(s): solo procesa manifiesto − ok (repetible)",
+    )
+    p.add_argument(
+        "--resume-ok-s3-prefix",
+        default=os.environ.get("REKEY_RESUME_OK_S3_PREFIX", "").strip(),
+        help="Prefijo S3 (ej. manifests/rekey-runs/): descarga todos los ok_*.txt y excluye del manifiesto",
+    )
+    p.add_argument(
+        "--write-pending-manifest",
+        default="",
+        help="Ruta opcional para escribir JSON solo con ítems pendientes",
+    )
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args()
     _configure_logging(args.verbose)
@@ -372,6 +503,50 @@ def main() -> int:
         log_step("02", "ERROR: bucket no definido", level=logging.ERROR)
         return 2
     log_step("02", "Ítems en manifiesto: %s | bucket: %s", len(items), bucket)
+
+    ok_paths = list(args.resume_ok or [])
+    if args.resume_ok_s3_prefix:
+        log_step(
+            "02a",
+            "Descargar ok_*.txt desde s3://%s/%s",
+            bucket,
+            args.resume_ok_s3_prefix,
+        )
+        ok_paths.extend(
+            download_ok_logs_from_s3_prefix(
+                boto3.client("s3"),
+                bucket=bucket,
+                prefix=args.resume_ok_s3_prefix,
+            )
+        )
+    if ok_paths:
+        _done, items, resume_summary = split_manifest_by_ok_logs(items, ok_paths)
+        log_step(
+            "02a",
+            "Resume manifiesto∩ok: ya_hechos=%s pendientes=%s (archivos ok=%s, claves ok=%s)",
+            resume_summary["already_done"],
+            resume_summary["pending"],
+            resume_summary["ok_log_files"],
+            resume_summary["completed_keys_in_ok"],
+        )
+        if resume_summary["pending"] == 0:
+            log_step("02a", "Nada pendiente; fin sin procesar")
+            report = {
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "run_id": run_id,
+                "bucket": bucket,
+                "manifest": manifest_path,
+                "resume": resume_summary,
+                "stats": {"total": 0, "copied": 0, "errors": 0},
+            }
+            with open(args.report, "w", encoding="utf-8") as f:
+                json.dump(report, f, ensure_ascii=False, indent=2)
+            return 0
+        if args.write_pending_manifest:
+            pending_doc = {**meta, "items": items, "resume_filter": resume_summary}
+            with open(args.write_pending_manifest, "w", encoding="utf-8") as f:
+                json.dump(pending_doc, f, ensure_ascii=False, indent=2)
+            log_step("02a", "Manifiesto pendiente: %s", args.write_pending_manifest)
 
     if args.max_items > 0:
         items = items[: args.max_items]
@@ -538,6 +713,7 @@ def main() -> int:
         "date_field": args.date_field,
         "dry_run": args.dry_run,
         "delete_source": args.delete_source,
+        "resume_ok_paths": ok_paths if ok_paths else None,
         "stats": stats,
         "log_files_local": {"ok": ok_local, "errors": err_local},
         "log_files_s3": s3_log_uris,

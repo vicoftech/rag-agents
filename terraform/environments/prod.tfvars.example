@@ -51,6 +51,13 @@ lambda_query_config = {
   ephemeral_storage_size = 2048
 }
 
+# Ingesta Boletín (SFN diario, lun–vie). Hora local scheduled_sync_timezone (Buenos Aires).
+# enable_scheduled_boletin_anmat_sfn = true
+# scheduled_boletin_cron_minute_hour = "0 8"   # 08:00 — solo Boletín; ANMAT: scheduled_anmat_cron_minute_hour
+# scheduled_anmat_cron_minute_hour   = "0 11" # dejar ANMAT como esté si no querés cambiarlo
+
+# Matching Boletín (ECS batch): infra/batch-alerts-semantic-matches → schedule_cron_boletin = "cron(0 9 ? * MON-FRI *)"
+
 # Opcional: API HTTP /query valida JWT contra un User Pool existente (p. ej. clientes/productivos).
 # Si no se define, se usa pool+client que crea el módulo cognito_query del proyecto.
 #

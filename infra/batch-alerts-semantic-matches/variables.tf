@@ -44,6 +44,24 @@ variable "s3_documents_bucket" {
   default     = "rag-documents-prod-913123310997"
 }
 
+variable "rag_vpce_environment_suffix" {
+  type        = string
+  description = "Sufijo del SG rag-vpce-if-{suffix}-sg (Terraform raíz RAG, p. ej. prod)."
+  default     = "prod"
+}
+
+variable "rag_vpce_interface_security_group_id" {
+  type        = string
+  description = "SG del Interface VPCE Secrets/Textract. Vacío = lookup por nombre rag-vpce-if-{suffix}-sg."
+  default     = ""
+}
+
+variable "db_security_group_id" {
+  type        = string
+  description = "SG de Aurora/RDS prod. Vacío = no crear regla 5432 (rekey ANMAT la necesita)."
+  default     = ""
+}
+
 variable "lambda_env_suffix" {
   type        = string
   description = "Sufijo en nombres de Lambda (p. ej. prod → rag_lmbd_query-prod)."
@@ -70,8 +88,8 @@ variable "schedule_cron_anmat" {
 
 variable "schedule_cron_boletin" {
   type        = string
-  description = "Cron lun–vie (AL-01), hora local schedule_timezone. Default: 13:30 ART."
-  default     = "cron(30 13 ? * MON-FRI *)"
+  description = "Cron lun–vie (AL-01), hora local schedule_timezone. Default: 09:00 ART (Boletín)."
+  default     = "cron(0 9 ? * MON-FRI *)"
 }
 
 variable "batch_date_timezone" {

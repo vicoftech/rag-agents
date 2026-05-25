@@ -70,9 +70,9 @@ variable "scheduled_boletin_tenant_id" {
 }
 
 variable "scheduled_boletin_cron_minute_hour" {
-  description = "Hora local Boletín lun–vie en scheduled_sync_timezone. Ej: \"30 11\" = 11:30."
+  description = "Hora local Boletín lun–vie en scheduled_sync_timezone. Ej: \"0 8\" = 08:00."
   type        = string
-  default     = "30 11"
+  default     = "0 8"
 }
 
 variable "scheduled_anmat_cron_minute_hour" {
