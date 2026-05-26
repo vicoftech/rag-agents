@@ -141,6 +141,20 @@ variable "batch_testing_email" {
   sensitive   = true
 }
 
+variable "batch_testing_email_to" {
+  type        = string
+  description = "Si no vacío (y sin batch_testing_email), pasa --testing-email-to (Principal). Combinar con batch_testing_email_cc."
+  default     = ""
+  sensitive   = true
+}
+
+variable "batch_testing_email_cc" {
+  type        = string
+  description = "Opcional: varios correos separados por coma o punto y coma; pasa --testing-email-cc. Requiere batch_testing_email_to."
+  default     = ""
+  sensitive   = true
+}
+
 variable "batch_publish_email_queue" {
   type        = bool
   description = "Si true, el contenedor pasa --publish-email-queue (SQS email-sender → envío)."
