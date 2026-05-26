@@ -35,10 +35,12 @@ resource "aws_ecs_task_definition" "batch" {
 
   container_definitions = jsonencode([
     {
-      name      = "batch"
-      image     = "${aws_ecr_repository.batch.repository_url}:${var.image_tag}"
-      essential = true
-      user      = "1000"
+      name       = "batch"
+      image      = "${aws_ecr_repository.batch.repository_url}:${var.image_tag}"
+      essential  = true
+      user       = "1000"
+      # Usar entrypoint del imagen (sin command hardcodeado en la task definition).
+      entryPoint = ["/entrypoint.sh"]
       environment = [
         { name = "BATCH_CORRIDA", value = each.key },
         { name = "AWS_DEFAULT_REGION", value = var.aws_region },
