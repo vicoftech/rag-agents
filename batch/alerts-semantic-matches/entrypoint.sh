@@ -43,15 +43,6 @@ if [ "${BATCH_INCLUDE_ZERO_CHUNK:-0}" = "1" ]; then
   set -- "$@" --include-zero-chunk-resultados
 fi
 
-if [ -n "${BATCH_TESTING_EMAIL_TO:-}" ]; then
-  set -- "$@" --testing-email-to "${BATCH_TESTING_EMAIL_TO}"
-  if [ -n "${BATCH_TESTING_EMAIL_CC:-}" ]; then
-    set -- "$@" --testing-email-cc "${BATCH_TESTING_EMAIL_CC}"
-  fi
-elif [ -n "${BATCH_TESTING_EMAIL:-}" ]; then
-  set -- "$@" --testing-email "${BATCH_TESTING_EMAIL}"
-fi
-
 if [ "${BATCH_PUBLISH_EMAIL_QUEUE:-0}" = "1" ]; then
   set -- "$@" --publish-email-queue
 fi
