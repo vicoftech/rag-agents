@@ -188,35 +188,93 @@ def _log_step(stage: str, message: str, *, level: str = "INFO") -> None:
     print(line, file=sys.stderr, flush=True)
 
 
-def normalize_destinatarios_busqueda(dest: Any) -> dict[str, str]:
-    """Extrae remitentes/nombre/asunto desde ``destinatarios`` de la tabla busqueda (JSON flexible)."""
-    out = {"from": "", "to": "", "nombreUsuario": "", "subject": ""}
+_RECIPIENT_KEYS = ("to", "email", "mail", "destinatario", "correo", "para", "emails")
+_CC_KEYS = ("cc", "CC", "Cc")
+_BCC_KEYS = ("bcc", "BCC", "cco", "CCO", "Cco")
 
-    def _pick_email(v: Any) -> str:
+
+def _extract_emails_ordered(value: Any) -> list[str]:
+    """Lista de correos únicos (orden estable) desde string, lista o dict anidado."""
+    found: list[str] = []
+    seen_lower: set[str] = set()
+
+    def add_one(raw: str) -> None:
+        s = (raw or "").strip()
+        if not s or "@" not in s:
+            return
+        key = s.lower()
+        if key in seen_lower:
+            return
+        seen_lower.add(key)
+        found.append(s)
+
+    def walk(v: Any) -> None:
+        if v is None:
+            return
         if isinstance(v, str):
-            s = v.strip()
-            if "@" in s:
-                parts = [p.strip() for p in s.replace(";", ",").split(",") if p.strip()]
-                return parts[0] if parts else ""
-            return ""
+            for part in v.replace(";", ",").split(","):
+                add_one(part)
+            return
         if isinstance(v, list):
             for it in v:
-                got = _pick_email(it)
-                if got:
-                    return got
-            return ""
+                walk(it)
+            return
         if isinstance(v, dict):
-            for k in ("to", "email", "mail", "destinatario", "correo"):
-                got = _pick_email(v.get(k))
-                if got:
-                    return got
-            return ""
-        return ""
+            for k in _RECIPIENT_KEYS + _CC_KEYS + _BCC_KEYS:
+                if k in v:
+                    walk(v.get(k))
+
+    walk(value)
+    return found
+
+
+def _dedupe_emails_excluding(emails: list[str], exclude: set[str]) -> list[str]:
+    ex = {e.strip().lower() for e in exclude if e and "@" in str(e)}
+    out: list[str] = []
+    seen: set[str] = set()
+    for e in emails:
+        s = (e or "").strip()
+        if not s or "@" not in s:
+            continue
+        key = s.lower()
+        if key in ex or key in seen:
+            continue
+        seen.add(key)
+        out.append(s)
+    return out
+
+
+def normalize_destinatarios_busqueda(dest: Any) -> dict[str, Any]:
+    """
+    Extrae remitentes/nombre/asunto desde ``destinatarios`` de la tabla busqueda (JSON flexible).
+
+    Varias direcciones en el mismo campo (Para / to / mail, etc.): la primera va en ``to``,
+  el resto en ``cc`` (lista). Campos explícitos ``cc``/``cco`` se fusionan sin duplicar.
+    """
+    out: dict[str, Any] = {
+        "from": "",
+        "to": "",
+        "cc": [],
+        "bcc": [],
+        "nombreUsuario": "",
+        "subject": "",
+    }
+    para_emails: list[str] = []
+    explicit_cc: list[str] = []
+    explicit_bcc: list[str] = []
+
+    def absorb_para(value: Any) -> None:
+        para_emails.extend(_extract_emails_ordered(value))
+
+    def absorb_cc(value: Any) -> None:
+        explicit_cc.extend(_extract_emails_ordered(value))
+
+    def absorb_bcc(value: Any) -> None:
+        explicit_bcc.extend(_extract_emails_ordered(value))
 
     def apply_mapping(m: dict[str, Any]) -> None:
         for k_dest, keys in (
             ("from", ("from", "from_email", "de")),
-            ("to", ("to", "email", "mail", "destinatario")),
             ("nombreUsuario", ("nombreUsuario", "nombre_usuario", "nombre", "usuario")),
             ("subject", ("subject", "asunto", "titulo")),
         ):
@@ -224,49 +282,62 @@ def normalize_destinatarios_busqueda(dest: Any) -> dict[str, str]:
                 v = m.get(k)
                 if v is None:
                     continue
-                if k_dest == "to":
-                    s = _pick_email(v)
-                else:
-                    s = str(v).strip()
+                s = str(v).strip()
                 if s:
                     out[k_dest] = s
                     break
-        # Algunos payloads guardan los datos dentro de ``cuenta``.
-        if not out["to"] and isinstance(m.get("cuenta"), dict):
-            out["to"] = _pick_email(m["cuenta"].get("mail"))
-        if not out["to"]:
-            out["to"] = _pick_email(m.get("mail"))
-        if not out["to"]:
-            out["to"] = _pick_email(m.get("emails"))
+        for k in _RECIPIENT_KEYS:
+            if k in m:
+                absorb_para(m.get(k))
+        for k in _CC_KEYS:
+            if k in m:
+                absorb_cc(m.get(k))
+        for k in _BCC_KEYS:
+            if k in m:
+                absorb_bcc(m.get(k))
+        if isinstance(m.get("cuenta"), dict):
+            absorb_para(m["cuenta"].get("mail"))
+
+    def finalize() -> dict[str, Any]:
+        primary = para_emails[0] if para_emails else ""
+        cc_split = para_emails[1:] if len(para_emails) > 1 else []
+        primary_l = primary.strip().lower() if primary else ""
+        cc_all = _dedupe_emails_excluding(
+            cc_split + explicit_cc,
+            {primary_l} if primary_l else set(),
+        )
+        bcc_all = _dedupe_emails_excluding(
+            explicit_bcc,
+            ({primary_l} if primary_l else set()) | {e.lower() for e in cc_all},
+        )
+        out["to"] = primary
+        out["cc"] = cc_all
+        out["bcc"] = bcc_all
+        return out
 
     if dest is None:
         return out
     if isinstance(dest, dict):
         apply_mapping(dest)
-        return out
+        return finalize()
     if isinstance(dest, list):
         for item in dest:
             if isinstance(item, dict):
                 apply_mapping(item)
-                if out["to"]:
-                    break
-            elif isinstance(item, str) and "@" in item:
-                out["to"] = item.strip()
-                break
-        return out
+            elif isinstance(item, str):
+                absorb_para(item)
+        return finalize()
     if isinstance(dest, str):
         s = dest.strip()
         if not s:
             return out
-        if s.startswith("{"):
+        if s.startswith("{") or s.startswith("["):
             try:
                 return normalize_destinatarios_busqueda(json.loads(s))
             except json.JSONDecodeError:
                 pass
-        if "@" in s:
-            first = [p.strip() for p in s.replace(";", ",").split(",") if p.strip()]
-            out["to"] = first[0] if first else ""
-        return out
+        absorb_para(s)
+        return finalize()
     return out
 
 
@@ -366,24 +437,53 @@ def historic_search_urls_for_keywords(
 def notification_envelope_fields_from_busqueda(
     resultado: dict[str, Any],
     *,
-    dest_norm: dict[str, str],
+    dest_norm: dict[str, Any],
     fallback_from: str,
-) -> dict[str, str]:
+) -> dict[str, Any]:
     nombre_alerta = (resultado.get("nombre_busqueda") or "").strip()
     mail_from = (dest_norm.get("from") or "").strip() or fallback_from.strip()
     mail_to = (dest_norm.get("to") or "").strip()
+    mail_cc = list(dest_norm.get("cc") or [])
+    mail_bcc = list(dest_norm.get("bcc") or [])
     # Fallbacks defensivos: en algunos ambientes el destinatario viene en ``cuenta.mail`` o ``mail``.
     if not mail_to:
         cuenta = resultado.get("cuenta")
         if isinstance(cuenta, dict):
-            mail_to = (normalize_destinatarios_busqueda(cuenta).get("to") or "").strip()
+            cn = normalize_destinatarios_busqueda(cuenta)
+            mail_to = (cn.get("to") or "").strip()
+            mail_cc = _dedupe_emails_excluding(
+                mail_cc + list(cn.get("cc") or []),
+                {mail_to} if mail_to else set(),
+            )
+            mail_bcc = _dedupe_emails_excluding(
+                mail_bcc + list(cn.get("bcc") or []),
+                ({mail_to} if mail_to else set()) | {c.lower() for c in mail_cc},
+            )
     if not mail_to:
-        mail_to = (normalize_destinatarios_busqueda({"mail": resultado.get("mail")}).get("to") or "").strip()
+        mn = normalize_destinatarios_busqueda({"mail": resultado.get("mail")})
+        mail_to = (mn.get("to") or "").strip()
+        mail_cc = _dedupe_emails_excluding(
+            mail_cc + list(mn.get("cc") or []),
+            {mail_to} if mail_to else set(),
+        )
+        mail_bcc = _dedupe_emails_excluding(
+            mail_bcc + list(mn.get("bcc") or []),
+            ({mail_to} if mail_to else set()) | {c.lower() for c in mail_cc},
+        )
+    if mail_to and mail_cc:
+        mail_cc = _dedupe_emails_excluding(mail_cc, {mail_to})
+    if mail_to and mail_bcc:
+        mail_bcc = _dedupe_emails_excluding(
+            mail_bcc,
+            {mail_to, *[c.lower() for c in mail_cc]},
+        )
     nombre_usuario = (dest_norm.get("nombreUsuario") or "").strip()
     subject = (dest_norm.get("subject") or "").strip() or nombre_alerta or ""
     return {
         "from": mail_from,
         "to": mail_to,
+        "cc": mail_cc,
+        "bcc": mail_bcc,
         "subject": subject,
         "nombreUsuario": nombre_usuario,
         "nombre_alerta": nombre_alerta,
@@ -458,23 +558,42 @@ def build_plain_alert_message(
         "url": primary_url,
     }
 
-    return {
+    msg: dict[str, Any] = {
         "body_payload": body,
         "from": nf["from"],
         "subject": nf["subject"],
         "template_name": "alert_aviso",
         "to": nf["to"],
     }
+    cc_list = nf.get("cc") or []
+    bcc_list = nf.get("bcc") or []
+    if cc_list:
+        msg["cc"] = cc_list
+    if bcc_list:
+        msg["bcc"] = bcc_list
+    return msg
 
 
-def _patch_destinatarios_for_testing(dest: Any, te: str) -> Any:
-    """Normaliza ``destinatarios`` sustituyendo correos de destino por ``te``."""
+def _patch_destinatarios_for_testing(
+    dest: Any,
+    te: str,
+    cc: list[str] | None = None,
+) -> Any:
+    """Normaliza ``destinatarios`` sustituyendo destino por ``te`` y opcional ``cc`` (lista)."""
+    cc_list = [c.strip() for c in (cc or []) if (c or "").strip() and "@" in str(c)]
     if isinstance(dest, dict):
         d2 = dict(dest)
         d2["to"] = te
-        for k in ("email", "mail", "destinatario", "correo"):
+        for k in ("email", "mail", "destinatario", "correo", "para", "emails"):
             if k in d2:
                 d2[k] = te
+        if cc_list:
+            d2["cc"] = list(cc_list)
+        for k in _BCC_KEYS:
+            d2.pop(k, None)
+        if not cc_list:
+            for k in _CC_KEYS:
+                d2.pop(k, None)
         return d2
     if isinstance(dest, list):
         out: list[dict[str, Any]] = []
@@ -482,38 +601,63 @@ def _patch_destinatarios_for_testing(dest: Any, te: str) -> Any:
             if isinstance(item, dict):
                 i2 = dict(item)
                 i2["to"] = te
-                for k in ("email", "mail", "destinatario", "correo"):
+                for k in ("email", "mail", "destinatario", "correo", "para", "emails"):
                     if k in i2:
                         i2[k] = te
+                if cc_list:
+                    i2["cc"] = list(cc_list)
+                for k in _BCC_KEYS:
+                    i2.pop(k, None)
+                if not cc_list:
+                    for k in _CC_KEYS:
+                        i2.pop(k, None)
                 out.append(i2)
-        return out if out else [{"to": te}]
+        if out:
+            return out
+        base: dict[str, Any] = {"to": te}
+        if cc_list:
+            base["cc"] = list(cc_list)
+        return [base]
     if isinstance(dest, str):
         s = dest.strip()
         if s.startswith("{") or s.startswith("["):
             try:
                 obj = json.loads(s)
-                patched = _patch_destinatarios_for_testing(obj, te)
+                patched = _patch_destinatarios_for_testing(obj, te, cc=cc_list)
                 return json.dumps(patched, ensure_ascii=False)
             except json.JSONDecodeError:
                 pass
-        return json.dumps({"to": te}, ensure_ascii=False)
-    return {"to": te}
+        base_s: dict[str, Any] = {"to": te}
+        if cc_list:
+            base_s["cc"] = list(cc_list)
+        return json.dumps(base_s, ensure_ascii=False)
+    base_r: dict[str, Any] = {"to": te}
+    if cc_list:
+        base_r["cc"] = list(cc_list)
+    return base_r
 
 
-def apply_testing_email_to_blob(blob: dict[str, Any], testing_email: str) -> None:
+def apply_testing_email_to_blob(
+    blob: dict[str, Any],
+    testing_to: str,
+    testing_cc: list[str] | None = None,
+) -> None:
     """
-    Modo prueba: sustituye ``mail``, ``cuenta.mail`` y ``destinatarios`` en cada resultado,
-    y registra el override en ``meta`` (las notificaciones posteriores usan el mismo ``to``).
+    Modo prueba: sustituye ``mail``, ``cuenta.mail`` y ``destinatarios`` por ``testing_to``
+    (y ``cc`` opcional); las notificaciones publicadas usan esos destinos.
     """
-    te = (testing_email or "").strip()
+    te = (testing_to or "").strip()
     if not te:
         return
+    cc = [c.strip() for c in (testing_cc or []) if (c or "").strip()]
     meta = blob.get("meta")
     if not isinstance(meta, dict):
         meta = {}
         blob["meta"] = meta
     meta["testing_email_override"] = True
     meta["testing_email"] = te
+    if cc:
+        meta["testing_email_cc"] = cc
 
     def patch_resultado(r: dict[str, Any]) -> None:
         if not isinstance(r, dict):
@@ -523,7 +667,11 @@ def apply_testing_email_to_blob(blob: dict[str, Any], testing_email: str) -> Non
         if isinstance(cuenta, dict):
             cuenta["mail"] = te
         if "destinatarios" in r:
-            r["destinatarios"] = _patch_destinatarios_for_testing(r["destinatarios"], te)
+            r["destinatarios"] = _patch_destinatarios_for_testing(
+                r["destinatarios"], te, cc=cc
+            )
+        else:
+            r["destinatarios"] = _patch_destinatarios_for_testing({"to": te}, te, cc=cc)
 
     for c in blob.get("corridas") or []:
         for r in c.get("resultados") or []:
@@ -2279,9 +2427,22 @@ def main(argv: list[str]) -> int:
         default="",
         metavar="EMAIL",
         help=(
-            "Modo prueba: reemplaza todos los destinatarios en cada resultado (mail, cuenta, destinatarios) "
-            "por este correo; las notificaciones y la cola SQS usan sólo este ``to``. "
-            "Se guarda en meta.testing_email_override / meta.testing_email."
+            "Alias de --testing-email-to: un solo destinatario en ``to`` (modo prueba)."
+        ),
+    )
+    p.add_argument(
+        "--testing-email-to",
+        default="",
+        metavar="EMAIL",
+        help="Modo prueba: ``to`` en todas las notificaciones (sustituye destinatarios reales).",
+    )
+    p.add_argument(
+        "--testing-email-cc",
+        default="",
+        metavar="EMAILS",
+        help=(
+            "Modo prueba: lista en ``cc`` (varios correos separados por coma o punto y coma). "
+            "Requiere --testing-email-to o --testing-email."
         ),
     )
     p.add_argument(
@@ -2370,9 +2531,23 @@ def main(argv: list[str]) -> int:
     if trace_out and not getattr(args, "trace_lambda_payloads", False):
         p.error("--output-trace requiere --trace-lambda-payloads.")
 
-    te_arg = (getattr(args, "testing_email", "") or "").strip()
+    te_arg = (
+        (getattr(args, "testing_email_to", "") or "").strip()
+        or (getattr(args, "testing_email", "") or "").strip()
+    )
+    cc_raw = (getattr(args, "testing_email_cc", "") or "").strip()
+    te_cc = [
+        p.strip()
+        for p in cc_raw.replace(";", ",").split(",")
+        if p.strip() and "@" in p.strip()
+    ]
     if te_arg and "@" not in te_arg:
-        p.error("--testing-email debe ser un correo que contenga «@».")
+        p.error("--testing-email-to / --testing-email debe ser un correo que contenga «@».")
+    if te_cc and not te_arg:
+        p.error("--testing-email-cc requiere --testing-email-to (o --testing-email).")
+    for c in te_cc:
+        if "@" not in c:
+            p.error(f"--testing-email-cc: correo inválido: {c!r}")
 
     try:
         _log_step("MAIN", "Ejecutando run().")
@@ -2400,8 +2575,14 @@ def main(argv: list[str]) -> int:
             fb_from = str(extra["from"]).strip() or fb_from
 
     if te_arg:
-        apply_testing_email_to_blob(out, te_arg)
-        _log_step("MAIN", f"Modo testing-email activo: destinatarios → {te_arg!r}")
+        apply_testing_email_to_blob(out, te_arg, te_cc or None)
+        if te_cc:
+            _log_step(
+                "MAIN",
+                f"Modo testing-email activo: to={te_arg!r} cc={te_cc}",
+            )
+        else:
+            _log_step("MAIN", f"Modo testing-email activo: destinatarios → {te_arg!r}")
 
     notifs = compute_notificaciones(out, fb_from)
     alert_creation_msgs = compute_alert_creation_messages(out)
