@@ -263,7 +263,12 @@ def _busqueda_fired_set_clause_and_params(
             vals.append(fired_txt if _type_is_textish(dt) else fired_int)
 
     if "activo" in ct and _type_is_boolean(ct["activo"]):
-        parts.append("activo = false")
+        if "permanente" in ct and _type_is_boolean(ct["permanente"]):
+            parts.append(
+                "activo = CASE WHEN COALESCE(permanente, false) THEN activo ELSE false END"
+            )
+        else:
+            parts.append("activo = false")
 
     if not parts:
         return None

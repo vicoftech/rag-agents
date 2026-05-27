@@ -6,6 +6,10 @@ import types
 from datetime import datetime, timezone
 from pathlib import Path
 
+PERMANENTE_ACTIVO_CASE_SQL = (
+    "activo = CASE WHEN COALESCE(permanente, false) THEN activo ELSE false END"
+)
+
 
 def _install_aws_stubs():
     if "boto3" not in sys.modules:
@@ -28,11 +32,46 @@ def _install_aws_stubs():
         sys.modules["botocore.exceptions"] = exceptions_stub
 
 
+def _install_alert_creation_stubs():
+    _install_aws_stubs()
+
+    if "psycopg2" not in sys.modules:
+        psycopg2_stub = types.ModuleType("psycopg2")
+        psycopg2_stub.connect = lambda *args, **kwargs: object()
+        sys.modules["psycopg2"] = psycopg2_stub
+    else:
+        psycopg2_stub = sys.modules["psycopg2"]
+
+    if "psycopg2.errors" not in sys.modules:
+        errors_stub = types.ModuleType("psycopg2.errors")
+        errors_stub.UniqueViolation = type("UniqueViolation", (Exception,), {})
+        sys.modules["psycopg2.errors"] = errors_stub
+    else:
+        errors_stub = sys.modules["psycopg2.errors"]
+    setattr(psycopg2_stub, "errors", errors_stub)
+
+    if "psycopg2.extensions" not in sys.modules:
+        extensions_stub = types.ModuleType("psycopg2.extensions")
+        extensions_stub.connection = object
+        sys.modules["psycopg2.extensions"] = extensions_stub
+
+
 def _load_alerts_semantic_matches():
     _install_aws_stubs()
     root = Path(__file__).resolve().parents[1]
     module_path = root / "scripts" / "alerts_semantic_matches.py"
     spec = importlib.util.spec_from_file_location("alerts_semantic_matches", module_path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_alert_creation_handler():
+    _install_alert_creation_stubs()
+    root = Path(__file__).resolve().parents[1]
+    module_path = root / "apps" / "rag_lmbd_alert_creation" / "handler.py"
+    spec = importlib.util.spec_from_file_location("rag_lmbd_alert_creation_handler", module_path)
     module = importlib.util.module_from_spec(spec)
     assert spec and spec.loader
     spec.loader.exec_module(module)
@@ -119,3 +158,108 @@ def test_busqueda_fired_set_clause_activo_false_when_boolean():
     set_sql, params = out
     assert "activo = false" in set_sql
     assert params == []
+
+
+def test_busqueda_fired_set_clause_preserves_activo_for_permanente_boolean():
+    module = _load_alerts_semantic_matches()
+    ts = datetime(2026, 1, 2, tzinfo=timezone.utc)
+
+    out = module.busqueda_fired_set_clause_and_params(
+        {"activo": "boolean", "permanente": "boolean"},
+        ts,
+    )
+
+    assert out is not None
+    set_sql, params = out
+    assert PERMANENTE_ACTIVO_CASE_SQL in set_sql
+    assert "activo = false" not in set_sql
+    assert params == []
+
+
+def test_busqueda_fired_set_clause_preserves_activo_for_permanente_with_state_updates():
+    module = _load_alerts_semantic_matches()
+    ts = datetime(2026, 1, 2, tzinfo=timezone.utc)
+
+    out = module.busqueda_fired_set_clause_and_params(
+        {
+            "activo": "boolean",
+            "permanente": "boolean",
+            "last_fired_at": "timestamp with time zone",
+            "estado_alerta": "integer",
+        },
+        ts,
+    )
+
+    assert out is not None
+    set_sql, params = out
+    assert "last_fired_at = %s" in set_sql
+    assert "estado_alerta = %s" in set_sql
+    assert PERMANENTE_ACTIVO_CASE_SQL in set_sql
+    assert params == [ts, 2]
+
+
+def test_busqueda_fired_set_clause_deactivates_when_permanente_is_not_boolean():
+    module = _load_alerts_semantic_matches()
+    ts = datetime(2026, 1, 2, tzinfo=timezone.utc)
+
+    out = module.busqueda_fired_set_clause_and_params(
+        {"activo": "boolean", "permanente": "text"},
+        ts,
+    )
+
+    assert out is not None
+    set_sql, params = out
+    assert "activo = false" in set_sql
+    assert PERMANENTE_ACTIVO_CASE_SQL not in set_sql
+    assert params == []
+
+
+def test_alert_creation_handler_preserves_activo_for_permanente_boolean():
+    module = _load_alert_creation_handler()
+    ts = datetime(2026, 1, 2, tzinfo=timezone.utc)
+
+    out = module._busqueda_fired_set_clause_and_params(
+        {"activo": "boolean", "permanente": "boolean"},
+        ts,
+    )
+
+    assert out is not None
+    set_sql, params = out
+    assert PERMANENTE_ACTIVO_CASE_SQL in set_sql
+    assert "activo = false" not in set_sql
+    assert params == []
+
+
+def test_alert_creation_handler_deactivates_when_no_permanente_column():
+    module = _load_alert_creation_handler()
+    ts = datetime(2026, 1, 2, tzinfo=timezone.utc)
+
+    out = module._busqueda_fired_set_clause_and_params({"activo": "boolean"}, ts)
+
+    assert out is not None
+    set_sql, params = out
+    assert "activo = false" in set_sql
+    assert PERMANENTE_ACTIVO_CASE_SQL not in set_sql
+    assert params == []
+
+
+def test_alert_creation_handler_preserves_activo_for_permanente_with_state_updates():
+    module = _load_alert_creation_handler()
+    ts = datetime(2026, 1, 2, tzinfo=timezone.utc)
+
+    out = module._busqueda_fired_set_clause_and_params(
+        {
+            "activo": "boolean",
+            "permanente": "boolean",
+            "last_fired_at": "timestamp with time zone",
+            "estado_alerta": "integer",
+        },
+        ts,
+    )
+
+    assert out is not None
+    set_sql, params = out
+    assert "last_fired_at = %s" in set_sql
+    assert "estado_alerta = %s" in set_sql
+    assert PERMANENTE_ACTIVO_CASE_SQL in set_sql
+    assert params == [ts, 2]

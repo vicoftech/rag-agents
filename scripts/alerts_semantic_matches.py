@@ -1059,8 +1059,14 @@ def busqueda_fired_set_clause_and_params(
             vals.append(fired_txt if _type_is_textish(dt) else fired_int)
 
     # AL-05: dejar de reprocesar la alerta (obtener_alertas filtra activo=true).
+    # Si la búsqueda es permanente, conserva activo=true y sólo actualiza timestamps/estado.
     if "activo" in ct and _type_is_boolean(ct["activo"]):
-        parts.append("activo = false")
+        if "permanente" in ct and _type_is_boolean(ct["permanente"]):
+            parts.append(
+                "activo = CASE WHEN COALESCE(permanente, false) THEN activo ELSE false END"
+            )
+        else:
+            parts.append("activo = false")
 
     if not parts:
         return None
