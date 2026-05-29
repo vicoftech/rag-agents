@@ -735,16 +735,9 @@ def semantic_search(
     ca_lo, ca_hi_exc = resolve_created_at_bounds(
         created_at_day, created_at_start, created_at_end
     )
-    if ca_lo is not None and ca_hi_exc is not None:
-        if date_filter_field == "publication_date":
-            filter_clauses.append(
-                "EXISTS (SELECT 1 FROM public.disposicion disp "
-                "WHERE regexp_replace(d.document_name, '.*/(.+)$', '\\1') = disp.nombre_pdf "
-                "AND disp.fecha_de_publicacion >= %s "
-                "AND disp.fecha_de_publicacion < %s)"
-            )
-        else:
-            filter_clauses.append("d.created_at >= %s AND d.created_at < %s")
+    # publication_date se maneja via post-filter (extract_document_date)
+    if ca_lo is not None and ca_hi_exc is not None and date_filter_field != "publication_date":
+        filter_clauses.append("d.created_at >= %s AND d.created_at < %s")
         filter_params.extend([ca_lo, ca_hi_exc])
 
     where_sql = ("WHERE " + " AND ".join(filter_clauses)) if filter_clauses else ""
@@ -1118,16 +1111,9 @@ def lexical_search(
     ca_lo, ca_hi_exc = resolve_created_at_bounds(
         created_at_day, created_at_start, created_at_end
     )
-    if ca_lo is not None and ca_hi_exc is not None:
-        if date_filter_field == "publication_date":
-            filter_clauses.append(
-                "EXISTS (SELECT 1 FROM public.disposicion disp "
-                "WHERE regexp_replace(d.document_name, '.*/(.+)$', '\\1') = disp.nombre_pdf "
-                "AND disp.fecha_de_publicacion >= %s "
-                "AND disp.fecha_de_publicacion < %s)"
-            )
-        else:
-            filter_clauses.append("d.created_at >= %s AND d.created_at < %s")
+    use_publication_date = ca_lo is not None and ca_hi_exc is not None and date_filter_field == "publication_date"
+    if ca_lo is not None and ca_hi_exc is not None and not use_publication_date:
+        filter_clauses.append("d.created_at >= %s AND d.created_at < %s")
         filter_params.extend([ca_lo, ca_hi_exc])
 
     where_sql = "WHERE " + " AND ".join(filter_clauses)
@@ -1188,7 +1174,7 @@ def lexical_search(
     # TASK-411: post-filter por fecha extraída del document_name
     skipped_out_of_range = 0
     skipped_no_date = 0
-    if ca_lo is not None and ca_hi_exc is not None and date_filter_field == "publication_date":
+    if use_publication_date:
         date_filtered_rows = []
         for row in rows:
             doc_name = str(row[2] or "").strip()
@@ -1253,9 +1239,9 @@ def lexical_search(
         "created_at_end": ca_e or None,
         "created_at_single_day": created_at_day.isoformat() if created_at_day else None,
         "date_filter_field": date_filter_field or "created_at",
-        "document_date_filter_applied": bool(ca_lo and ca_hi_exc and date_filter_field == "publication_date"),
-        "documents_filtered_by_date": skipped_out_of_range if ca_lo and ca_hi_exc and date_filter_field == "publication_date" else 0,
-        "documents_without_extractable_date": skipped_no_date if ca_lo and ca_hi_exc and date_filter_field == "publication_date" else 0,
+        "document_date_filter_applied": use_publication_date,
+        "documents_filtered_by_date": skipped_out_of_range if use_publication_date else 0,
+        "documents_without_extractable_date": skipped_no_date if use_publication_date else 0,
     }
 
     return chunks, documents, context_items, retrieval_config
