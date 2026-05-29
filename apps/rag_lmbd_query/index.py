@@ -1185,6 +1185,36 @@ def lexical_search(
         f"rows={len(rows)} total_items={total_items} page={page_num} page_size={page_sz}"
     )
 
+    # TASK-411: post-filter por fecha extraída del document_name
+    skipped_out_of_range = 0
+    skipped_no_date = 0
+    if ca_lo is not None and ca_hi_exc is not None and date_filter_field == "publication_date":
+        date_filtered_rows = []
+        for row in rows:
+            doc_name = str(row[2] or "").strip()
+            doc_date = extract_document_date(doc_name)
+            if doc_date is None:
+                date_filtered_rows.append(row)
+                skipped_no_date += 1
+                continue
+            date_lo = ca_lo.date() if hasattr(ca_lo, 'date') else ca_lo
+            date_hi = ca_hi_exc.date() if hasattr(ca_hi_exc, 'date') else ca_hi_exc
+            if date_lo <= doc_date < date_hi:
+                date_filtered_rows.append(row)
+            else:
+                skipped_out_of_range += 1
+        if skipped_out_of_range > 0 or skipped_no_date > 0:
+            print(
+                f"[retrieval] lexical_search document_date filter: "
+                f"before={len(rows)}, after={len(date_filtered_rows)}, "
+                f"out_of_range={skipped_out_of_range}, no_date_extracted={skipped_no_date}"
+            )
+        rows = date_filtered_rows
+        total_items = len(rows)
+        total_pages = (total_items + page_sz - 1) // page_sz if total_items > 0 else 0
+        has_next = bool(total_pages and page_num < total_pages)
+        has_previous = page_num > 1 and total_items > 0
+
     chunks = [row[1] for row in rows]
     documents = ordered_unique_documents(rows)
     context_items: list[dict[str, Any]] = []
@@ -1223,6 +1253,9 @@ def lexical_search(
         "created_at_end": ca_e or None,
         "created_at_single_day": created_at_day.isoformat() if created_at_day else None,
         "date_filter_field": date_filter_field or "created_at",
+        "document_date_filter_applied": bool(ca_lo and ca_hi_exc and date_filter_field == "publication_date"),
+        "documents_filtered_by_date": skipped_out_of_range if ca_lo and ca_hi_exc and date_filter_field == "publication_date" else 0,
+        "documents_without_extractable_date": skipped_no_date if ca_lo and ca_hi_exc and date_filter_field == "publication_date" else 0,
     }
 
     return chunks, documents, context_items, retrieval_config
