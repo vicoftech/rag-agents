@@ -682,6 +682,7 @@ def semantic_search(
     max_semantic_distance=None,
     semantic_fallback_top_n=None,
     sort_by=None,
+    date_filter_field=None,
 ):
     sort_by_norm = normalize_search_sort_by(sort_by)
     order_sql = search_order_clause(sort_by_norm)
@@ -735,7 +736,15 @@ def semantic_search(
         created_at_day, created_at_start, created_at_end
     )
     if ca_lo is not None and ca_hi_exc is not None:
-        filter_clauses.append("d.created_at >= %s AND d.created_at < %s")
+        if date_filter_field == "publication_date":
+            filter_clauses.append(
+                "EXISTS (SELECT 1 FROM public.disposicion disp "
+                "WHERE regexp_replace(d.document_name, '.*/(.+)$', '\\1') = disp.nombre_pdf "
+                "AND disp.fecha_de_publicacion >= %s "
+                "AND disp.fecha_de_publicacion < %s)"
+            )
+        else:
+            filter_clauses.append("d.created_at >= %s AND d.created_at < %s")
         filter_params.extend([ca_lo, ca_hi_exc])
 
     where_sql = ("WHERE " + " AND ".join(filter_clauses)) if filter_clauses else ""
@@ -1049,6 +1058,7 @@ def semantic_search(
         "document_date_filter_applied": bool(ca_lo and ca_hi_exc),
         "documents_filtered_by_date": skipped_out_of_range if ca_lo and ca_hi_exc else 0,
         "documents_without_extractable_date": skipped_no_date if ca_lo and ca_hi_exc else 0,
+        "date_filter_field": date_filter_field or "created_at",
     }
 
     return chunks, documents, context_items, retrieval_config
@@ -1067,6 +1077,7 @@ def lexical_search(
     page=1,
     page_size=10,
     sort_by=None,
+    date_filter_field=None,
 ):
     """
     TASK-399: búsqueda textual tradicional con paginación completa.
@@ -1108,7 +1119,15 @@ def lexical_search(
         created_at_day, created_at_start, created_at_end
     )
     if ca_lo is not None and ca_hi_exc is not None:
-        filter_clauses.append("d.created_at >= %s AND d.created_at < %s")
+        if date_filter_field == "publication_date":
+            filter_clauses.append(
+                "EXISTS (SELECT 1 FROM public.disposicion disp "
+                "WHERE regexp_replace(d.document_name, '.*/(.+)$', '\\1') = disp.nombre_pdf "
+                "AND disp.fecha_de_publicacion >= %s "
+                "AND disp.fecha_de_publicacion < %s)"
+            )
+        else:
+            filter_clauses.append("d.created_at >= %s AND d.created_at < %s")
         filter_params.extend([ca_lo, ca_hi_exc])
 
     where_sql = "WHERE " + " AND ".join(filter_clauses)
@@ -1203,6 +1222,7 @@ def lexical_search(
         "created_at_start": ca_s or None,
         "created_at_end": ca_e or None,
         "created_at_single_day": created_at_day.isoformat() if created_at_day else None,
+        "date_filter_field": date_filter_field or "created_at",
     }
 
     return chunks, documents, context_items, retrieval_config
@@ -1460,6 +1480,11 @@ def handler(event, context):
             }
         return resp
 
+    # TASK-411: Extraer date_filter_field (default: created_at)
+    date_filter_field = str(req_src.get("date_filter_field") or "created_at").strip()
+    if date_filter_field not in ("created_at", "publication_date"):
+        date_filter_field = "created_at"
+
     ca_start = str(
         req_src.get("created_at_start") or req_src.get("start_at") or ""
     ).strip()
@@ -1610,6 +1635,7 @@ def handler(event, context):
                 page=page,
                 page_size=page_size,
                 sort_by=sort_by_eff,
+                date_filter_field=date_filter_field,
             )
         else:
             chunks, documents, context_items, retrieval_config = semantic_search(
@@ -1627,6 +1653,7 @@ def handler(event, context):
                 literal_keyword_overlap=literal_overlap,
                 literal_min_chars_override=literal_ml,
                 sort_by=sort_by_eff,
+                date_filter_field=date_filter_field,
             )
             retrieval_config["searchMode"] = SEARCH_MODE_HYBRID
             retrieval_config["search_mode"] = SEARCH_MODE_HYBRID

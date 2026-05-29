@@ -256,6 +256,7 @@ def _find_cached_job_id(
     search_mode: str | None = None,
     page: int | None = None,
     page_size: int | None = None,
+    date_filter_field: str | None = None,
 ) -> str | None:
     """
     Busca un job ya completado con la misma clave lógica (sin recalcular en worker).
@@ -312,12 +313,21 @@ def _find_cached_job_id(
             kcf = kcf & Attr("page").eq(int(page))
         if page_size is not None:
             kcf = kcf & Attr("page_size").eq(int(page_size))
-    elif search_mode == SEARCH_MODE_HYBRID:
+    if search_mode == SEARCH_MODE_HYBRID:
         kcf = kcf & (
             Attr("search_mode").eq(SEARCH_MODE_HYBRID)
             | Attr("search_mode").not_exists()
             | Attr("search_mode").eq("")
             | Attr("search_mode").eq(None)
+        )
+
+    # TASK-411
+    if date_filter_field:
+        kcf = kcf & Attr("date_filter_field").eq(date_filter_field)
+    else:
+        kcf = kcf & (
+            Attr("date_filter_field").eq("created_at")
+            | Attr("date_filter_field").not_exists()
         )
 
     eks: dict[str, Any] | None = None
@@ -460,6 +470,11 @@ def _post_query(event: dict[str, Any]) -> dict[str, Any]:
             page = None
             page_size = None
 
+    # TASK-411: Extraer date_filter_field (default: created_at)
+    date_filter_field = str(body.get("date_filter_field") or "created_at").strip()
+    if date_filter_field not in ("created_at", "publication_date"):
+        date_filter_field = "created_at"
+
     sort_by = (
         str(body.get("sort_by") or body.get("sort") or "").strip() or None
         if search_mode == SEARCH_MODE_HYBRID
@@ -480,6 +495,7 @@ def _post_query(event: dict[str, Any]) -> dict[str, Any]:
         search_mode=search_mode,
         page=page,
         page_size=page_size,
+        date_filter_field=date_filter_field,
     )
     if cached_id:
         return _resp(202, {"id": cached_id})
@@ -507,6 +523,9 @@ def _post_query(event: dict[str, Any]) -> dict[str, Any]:
     item["retrieval_limit"] = retrieval_limit
     item["search_mode"] = search_mode
     item["searchMode"] = search_mode
+    # TASK-411
+    item["date_filter_field"] = date_filter_field
+
     if search_mode == SEARCH_MODE_LEXICAL and page is not None and page_size is not None:
         item["page"] = int(page)
         item["page_size"] = int(page_size)
@@ -544,6 +563,7 @@ def _post_query(event: dict[str, Any]) -> dict[str, Any]:
 
     msg = dict(body)
     msg["job_id"] = job_id
+    msg["date_filter_field"] = date_filter_field
     # El worker (rag_lmbd_query) filtra por created_at_start / created_at_end.
     msg["created_at_start"] = start_s
     msg["created_at_end"] = end_s
