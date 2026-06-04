@@ -1,89 +1,100 @@
 import json
-from index import handler
 
-# Test handler
-def test_notifier():
-    # Test de éxito completo
-    test_success_data = {
-        "success": True,
-        "site_id": "boletinoficial_gob_ar",
-        "date": "2026-03-06",
-        "total_found": 5,
-        "processed_count": 5,
-        "failed_count": 0,
-        "uploaded_files_count": 5,
-        "db_records_count": 6,  # 1 site + 5 documents
-        "s3_bucket": "rag-documents-dev-913123310997",
-        "dynamodb_table": "rag-documents-dev",
-        "sample_files": [
-            {
-                "filename": "Boletín_Completo.pdf",
-                "s3_uri": "s3://rag-documents-dev-913123310997/boletinoficial_gob_ar/2026-03-06/Boletín_Completo.pdf"
-            }
-        ],
-        "execution_context": "Step Function execution completed successfully"
-    }
-    
-    # Test de fallo
-    test_failure_data = {
-        "success": False,
-        "site_id": "boletinoficial_gob_ar",
-        "date": "2026-03-06",
-        "total_found": 3,
-        "processed_count": 0,
-        "failed_count": 3,
-        "error_type": "FETCH_ERROR",
-        "error_message": "Failed to fetch content from URL: Connection timeout",
-        "failed_step": "fetcher",
-        "execution_context": "HTTP 503 Service Unavailable"
-    }
-    
-    # Test de éxito parcial
-    test_partial_data = {
-        "success": True,
-        "site_id": "boletinoficial_gob_ar",
-        "date": "2026-03-06",
-        "total_found": 5,
-        "processed_count": 3,
-        "failed_count": 2,
-        "uploaded_files_count": 3,
-        "db_records_count": 4,  # 1 site + 3 documents
-        "s3_bucket": "rag-documents-dev-913123310997",
-        "dynamodb_table": "rag-documents-dev",
-        "execution_context": "Some files exceeded size limit"
-    }
-    
-    # Test HTTP - Éxito
-    test_event_http = {
-        "requestContext": {
-            "http": {
-                "method": "POST"
+import index
+
+
+class FakeSnsClient:
+    def __init__(self):
+        self.calls = []
+
+    def publish(self, **kwargs):
+        self.calls.append(kwargs)
+        return {"MessageId": "msg-123"}
+
+
+def test_create_failure_notification_plain_text():
+    notification = index.create_failure_notification(
+        {
+            "component_name": "Boletín Oficial Sync",
+            "process_name": "rag_lmbd_bolinks-prod",
+            "environment": "PRODUCCIÓN",
+            "error_type": "FETCH_ERROR",
+            "error_message": "Connection timeout",
+            "failed_step": "bolinks",
+            "execution_id": "arn:aws:states:us-east-1:123:execution:test",
+        }
+    )
+
+    assert notification["status"] == "failure"
+    assert "ALERTA ALERT PRODUCCIÓN" in notification["subject"]
+    assert "ALERTA SISTEMA ALERT - PRODUCCIÓN" in notification["message"]
+    assert "Componente: Boletín Oficial Sync" in notification["message"]
+    assert "Tipo de incidente: FETCH_ERROR" in notification["message"]
+    assert "<html" not in notification["message"].lower()
+
+
+def test_publish_notification_uses_plain_sns_message(monkeypatch):
+    fake_client = FakeSnsClient()
+    monkeypatch.setenv("SNS_TOPIC_ARN", "arn:aws:sns:us-east-1:123456789012:test-topic")
+    monkeypatch.setattr(index, "get_sns_client", lambda: fake_client)
+
+    result = index.publish_notification({"subject": "Test", "message": "Texto puro"})
+
+    assert result == {"success": True, "message_id": "msg-123"}
+    assert fake_client.calls[0]["Message"] == "Texto puro"
+    assert fake_client.calls[0]["Subject"] == "Test"
+    assert "MessageStructure" not in fake_client.calls[0]
+
+
+def test_handler_returns_500_when_sns_topic_missing(monkeypatch):
+    monkeypatch.delenv("SNS_TOPIC_ARN", raising=False)
+
+    result = index.handler(
+        {
+            "execution_data": {
+                "success": False,
+                "component_name": "TEST",
+                "error_type": "TEST_NOTIFICATION",
+                "is_test": True,
             }
         },
-        "body": json.dumps({
-            "execution_data": test_success_data
-        })
-    }
-    
-    context = {}
-    result = handler(test_event_http, context)
-    print("HTTP Success Test Result:", json.dumps(result, indent=2))
-    
-    # Test Direct - Fallo
-    test_event_failure = {
-        "execution_data": test_failure_data
-    }
-    
-    result_failure = handler(test_event_failure, context)
-    print("Direct Failure Test Result:", json.dumps(result_failure, indent=2))
-    
-    # Test Direct - Éxito Parcial
-    test_event_partial = {
-        "execution_data": test_partial_data
-    }
-    
-    result_partial = handler(test_event_partial, context)
-    print("Direct Partial Success Test Result:", json.dumps(result_partial, indent=2))
+        {},
+    )
 
-if __name__ == "__main__":
-    test_notifier()
+    assert result["statusCode"] == 500
+    body = json.loads(result["body"])
+    assert body["success"] is False
+    assert body["error"] == "SNS_TOPIC_ARN is not configured"
+    assert "execution_data" not in body
+
+
+def test_handler_http_event_success(monkeypatch):
+    fake_client = FakeSnsClient()
+    monkeypatch.setenv("SNS_TOPIC_ARN", "arn:aws:sns:us-east-1:123456789012:test-topic")
+    monkeypatch.setattr(index, "get_sns_client", lambda: fake_client)
+
+    result = index.handler(
+        {
+            "requestContext": {"http": {"method": "POST"}},
+            "body": json.dumps(
+                {
+                    "execution_data": {
+                        "success": False,
+                        "component_name": "TEST - Sistema de Monitoreo",
+                        "process_name": "alert-monitoring-test",
+                        "environment": "PRODUCCIÓN",
+                        "error_type": "TEST_NOTIFICATION",
+                        "error_message": "Mensaje de prueba",
+                        "is_test": True,
+                    }
+                }
+            ),
+        },
+        {},
+    )
+
+    assert result["statusCode"] == 200
+    body = json.loads(result["body"])
+    assert body["success"] is True
+    assert body["message_id"] == "msg-123"
+    assert fake_client.calls[0]["Message"].startswith("ALERTA SISTEMA ALERT")

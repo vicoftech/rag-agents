@@ -1,375 +1,390 @@
 import json
 import os
+import re
+from datetime import UTC, datetime
+from typing import Any, Dict, Optional
+
 import boto3
-from datetime import datetime
-from typing import Dict, Optional
 
-# AWS Session
-session_args = {'region_name': os.getenv('AWS_REGION', 'us-east-1')}
-# No usar credenciales hardcodeadas - usar rol de ejecución de Lambda
-# if os.getenv('AWS_ACCESS_KEY_ID') and os.getenv('AWS_SECRET_ACCESS_KEY'):
-#     session_args.update({
-#         'aws_access_key_id': os.getenv('AWS_ACCESS_KEY_ID'),
-#         'aws_secret_access_key': os.getenv('AWS_SECRET_ACCESS_KEY')
-#     })
+# No usar credenciales hardcodeadas. En AWS Lambda se usa el rol de ejecución.
+DEFAULT_REGION = os.getenv("AWS_REGION", "us-east-1")
+DEFAULT_ENVIRONMENT = os.getenv("ENVIRONMENT", "PRODUCCIÓN")
+SNS_SUBJECT_MAX_LENGTH = 100
+MAX_FIELD_LENGTH = 1200
+MAX_MESSAGE_LENGTH = 12_000
 
-# AWS Clients
-sns_client = boto3.client('sns', **session_args)
+_sns_client = None
 
-# Environment variables
-SNS_TOPIC_ARN = os.getenv('SNS_TOPIC_ARN')
-NOTIFICATION_EMAIL = os.getenv('NOTIFICATION_EMAIL', '')
 
-def create_success_notification(execution_data: Dict) -> Dict:
-    """
-    Crea notificación de éxito
-    """
-    subject = f"✅ RAG Pipeline Success - {execution_data.get('site_id', 'Unknown Site')}"
-    
-    message = f"""
-RAG Pipeline Execution Completed Successfully
+def get_sns_client():
+    """Devuelve cliente SNS lazy para simplificar tests locales y evitar side effects."""
+    global _sns_client
+    if _sns_client is None:
+        _sns_client = boto3.client("sns", region_name=DEFAULT_REGION)
+    return _sns_client
 
-📊 Execution Summary:
-• Site ID: {execution_data.get('site_id', 'N/A')}
-• Date: {execution_data.get('date', 'N/A')}
-• Total Documents Found: {execution_data.get('total_found', 0)}
-• Documents Processed: {execution_data.get('processed_count', 0)}
-• Files Uploaded to S3: {execution_data.get('uploaded_files_count', 0)}
 
-📁 S3 Details:
-• Bucket: {execution_data.get('s3_bucket', 'N/A')}
-• Path Pattern: site_id/date/filename.pdf
+def utc_now_text() -> str:
+    """Timestamp UTC estable para notificaciones."""
+    return datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
 
-🗄️ Database:
-• Records Created/Updated: {execution_data.get('db_records_count', 0)}
-• Table: {execution_data.get('dynamodb_table', 'N/A')}
 
-⏰ Timestamp: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}
+def as_text(value: Any, default: str = "N/A", max_length: int = MAX_FIELD_LENGTH) -> str:
+    """Convierte valores arbitrarios a texto plano seguro y truncado."""
+    if value is None:
+        return default
 
-🔗 Access Files:
-{chr(10).join([f"• {file.get('filename', 'Unknown')}: {file.get('s3_uri', 'N/A')}" for file in execution_data.get('sample_files', [])])}
+    if isinstance(value, (dict, list, tuple)):
+        text = json.dumps(value, ensure_ascii=False, default=str)
+    else:
+        text = str(value)
 
----
-This is an automated notification from RAG Pipeline System
-    """.strip()
-    
-    return {
-        'subject': subject,
-        'message': message,
-        'status': 'success',
-        'priority': 'normal'
-    }
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", " ", text).strip()
+    if not text:
+        return default
+    if len(text) > max_length:
+        return f"{text[:max_length]}... [truncado]"
+    return text
 
-def create_failure_notification(execution_data: Dict) -> Dict:
-    """
-    Crea notificación de fallo
-    """
-    error_type = execution_data.get('error_type', 'UNKNOWN_ERROR')
-    site_id = execution_data.get('site_id', 'Unknown Site')
-    
-    subject = f"❌ RAG Pipeline Failed - {site_id} ({error_type})"
-    
-    message = f"""
-RAG Pipeline Execution Failed
 
-🚨 Error Details:
-• Site ID: {site_id}
-• Error Type: {error_type}
-• Error Message: {execution_data.get('error_message', 'No error message provided')}
-• Failed Step: {execution_data.get('failed_step', 'Unknown')}
+def clean_subject(value: str) -> str:
+    """SNS requiere subject corto, sin saltos de línea/control chars."""
+    subject = re.sub(r"\s+", " ", as_text(value, "ALERTA SISTEMA ALERT", 500)).strip()
+    if len(subject) > SNS_SUBJECT_MAX_LENGTH:
+        subject = subject[: SNS_SUBJECT_MAX_LENGTH - 3].rstrip() + "..."
+    return subject
 
-📊 Attempt Summary:
-• Date: {execution_data.get('date', 'N/A')}
-• Total Documents Found: {execution_data.get('total_found', 0)}
-• Documents Attempted: {execution_data.get('processed_count', 0)}
 
-🔧 Debug Information:
-• Timestamp: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}
-• Execution Context: {execution_data.get('execution_context', 'Not available')}
+def first_present(data: Dict[str, Any], *keys: str, default: Any = None) -> Any:
+    for key in keys:
+        value = data.get(key)
+        if value not in (None, "", []):
+            return value
+    return default
 
-📧 Support Information:
-• Check AWS CloudWatch logs for detailed error information
-• Contact support if this error persists
 
----
-This is an automated notification from RAG Pipeline System
-    """.strip()
-    
-    return {
-        'subject': subject,
-        'message': message,
-        'status': 'failure',
-        'priority': 'high'
-    }
-
-def create_partial_success_notification(execution_data: Dict) -> Dict:
-    """
-    Crea notificación de éxito parcial
-    """
-    site_id = execution_data.get('site_id', 'Unknown Site')
-    
-    subject = f"⚠️ RAG Pipeline Partial Success - {site_id}"
-    
-    message = f"""
-RAG Pipeline Completed with Warnings
-
-📊 Execution Summary:
-• Site ID: {site_id}
-• Date: {execution_data.get('date', 'N/A')}
-• Total Documents Found: {execution_data.get('total_found', 0)}
-• Documents Processed: {execution_data.get('processed_count', 0)}
-• Files Failed: {execution_data.get('failed_count', 0)}
-• Files Uploaded to S3: {execution_data.get('uploaded_files_count', 0)}
-
-⚠️ Issues Found:
-• Some documents failed to process or upload
-• Check individual file status in database
-
-📁 S3 Details:
-• Bucket: {execution_data.get('s3_bucket', 'N/A')}
-• Successful uploads available in database
-
-🗄️ Database:
-• Records Created/Updated: {execution_data.get('db_records_count', 0)}
-• Table: {execution_data.get('dynamodb_table', 'N/A')}
-
-⏰ Timestamp: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}
-
----
-This is an automated notification from RAG Pipeline System
-    """.strip()
-    
-    return {
-        'subject': subject,
-        'message': message,
-        'status': 'partial_success',
-        'priority': 'normal'
-    }
-
-def publish_notification(notification: Dict) -> bool:
-    """
-    Publica notificación a SNS
-    """
+def safe_int(value: Any, default: int = 0) -> int:
     try:
-        # Preparar mensaje para SNS
-        sns_message = {
-            'default': notification['message'],
-            'email': notification['message']
-        }
-        
-        # Publicar a SNS
-        response = sns_client.publish(
-            TopicArn=SNS_TOPIC_ARN,
-            Message=json.dumps(sns_message),
-            Subject=notification['subject'],
-            MessageStructure='json'
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def get_component_name(execution_data: Dict[str, Any]) -> str:
+    return as_text(
+        first_present(
+            execution_data,
+            "component_name",
+            "component",
+            "site_id",
+            "source",
+            default="Sistema Alert",
+        ),
+        "Sistema Alert",
+    )
+
+
+def get_process_name(execution_data: Dict[str, Any]) -> str:
+    return as_text(
+        first_present(
+            execution_data,
+            "process_name",
+            "lambda_name",
+            "function_name",
+            "state_machine_name",
+            "failed_step",
+            default="Proceso no especificado",
+        ),
+        "Proceso no especificado",
+    )
+
+
+def get_environment(execution_data: Dict[str, Any]) -> str:
+    return as_text(first_present(execution_data, "environment", "ambiente", default=DEFAULT_ENVIRONMENT), DEFAULT_ENVIRONMENT)
+
+
+def get_error_message(execution_data: Dict[str, Any]) -> str:
+    # Step Functions suele entregar Error/Cause en estructuras anidadas.
+    task_error = execution_data.get("taskError") or execution_data.get("task_error") or {}
+    if isinstance(task_error, dict):
+        nested = first_present(task_error, "Cause", "cause", "Error", "error")
+        if nested:
+            return as_text(nested)
+
+    return as_text(
+        first_present(
+            execution_data,
+            "error_message",
+            "message",
+            "error",
+            "cause",
+            "Cause",
+            default="Sin detalle de error informado",
+        ),
+        "Sin detalle de error informado",
+    )
+
+
+def generate_cloudwatch_link(execution_data: Dict[str, Any]) -> str:
+    explicit_link = first_present(execution_data, "cloudwatch_link", "logs_link")
+    if explicit_link:
+        return as_text(explicit_link, max_length=2000)
+
+    log_group = first_present(execution_data, "log_group", "logGroup")
+    if not log_group:
+        process_name = get_process_name(execution_data)
+        if process_name and process_name != "Proceso no especificado":
+            log_group = f"/aws/lambda/{process_name}"
+
+    if not log_group:
+        return "N/A"
+
+    encoded_log_group = as_text(log_group, max_length=500).replace("/", "$252F")
+    return (
+        f"https://{DEFAULT_REGION}.console.aws.amazon.com/cloudwatch/home"
+        f"?region={DEFAULT_REGION}#logsV2:log-groups/log-group/{encoded_log_group}"
+    )
+
+
+def build_action_hint(notification_type: str, execution_data: Dict[str, Any]) -> str:
+    if execution_data.get("is_test"):
+        return "Verificar recepción del correo en todos los destinatarios configurados."
+
+    if notification_type == "failure":
+        return (
+            "1. Revisar CloudWatch Logs del proceso indicado.\n"
+            "2. Verificar si hay incidentes en dependencias externas o AWS.\n"
+            "3. Reintentar manualmente solo si el error fue transitorio y el proceso es idempotente."
         )
-        
-        print(f"Successfully published notification to SNS: {response['MessageId']}")
-        return True
-        
-    except Exception as e:
-        print(f"Error publishing notification to SNS: {e}")
-        return False
 
-def process_execution_result(execution_data: Dict) -> Dict:
-    """
-    Procesa el resultado de ejecución y determina tipo de notificación
-    """
+    if notification_type == "partial_success":
+        return (
+            "1. Revisar elementos fallidos en logs/datos del proceso.\n"
+            "2. Reprocesar solo los elementos pendientes si aplica."
+        )
+
+    return "No se requiere acción inmediata. Registrar evidencia si era una prueba controlada."
+
+
+def build_base_fields(execution_data: Dict[str, Any]) -> Dict[str, str]:
+    success = bool(execution_data.get("success", False))
+    failed_count = safe_int(execution_data.get("failed_count"), 0)
+
+    if success and failed_count == 0:
+        notification_type = "success"
+        severity = "INFO"
+        default_incident_type = "SUCCESS"
+    elif success and failed_count > 0:
+        notification_type = "partial_success"
+        severity = "WARNING"
+        default_incident_type = "PARTIAL_SUCCESS"
+    else:
+        notification_type = "failure"
+        severity = "CRITICAL"
+        default_incident_type = "ERROR"
+
+    if execution_data.get("is_test"):
+        severity = "TEST"
+        default_incident_type = "TEST_NOTIFICATION"
+
+    return {
+        "notification_type": notification_type,
+        "severity": severity,
+        "environment": get_environment(execution_data),
+        "component_name": get_component_name(execution_data),
+        "process_name": get_process_name(execution_data),
+        "incident_type": as_text(first_present(execution_data, "error_type", "incident_type", default=default_incident_type)),
+        "message": get_error_message(execution_data),
+        "failed_step": as_text(first_present(execution_data, "failed_step", "step", default="N/A")),
+        "timestamp_utc": as_text(first_present(execution_data, "timestamp_utc", "timestamp", "date", default=utc_now_text())),
+        "execution_id": as_text(first_present(execution_data, "execution_id", "execution_arn", "executionArn", default="N/A"), max_length=2000),
+        "reference": as_text(first_present(execution_data, "alarm_name", "alarmName", "reference", default="N/A"), max_length=1000),
+        "cloudwatch_link": generate_cloudwatch_link(execution_data),
+    }
+
+
+def create_plain_text_notification(execution_data: Dict[str, Any]) -> Dict[str, str]:
+    fields = build_base_fields(execution_data)
+    status_label = fields["notification_type"].upper()
+    test_prefix = "TEST - " if execution_data.get("is_test") else ""
+
+    subject = clean_subject(
+        f"{test_prefix}ALERTA ALERT {fields['environment']} - {status_label} - "
+        f"{fields['component_name']}"
+    )
+
+    message = f"""
+ALERTA SISTEMA ALERT - {fields['environment']}
+
+Severidad: {fields['severity']}
+Estado: {status_label}
+Componente: {fields['component_name']}
+Proceso: {fields['process_name']}
+Tipo de incidente: {fields['incident_type']}
+Mensaje: {fields['message']}
+Paso fallido: {fields['failed_step']}
+Fecha/hora detección UTC: {fields['timestamp_utc']}
+Execution ID: {fields['execution_id']}
+Referencia AWS: {fields['reference']}
+CloudWatch: {fields['cloudwatch_link']}
+
+Métricas/resumen:
+- Fecha proceso: {as_text(execution_data.get('date'))}
+- Total encontrados: {as_text(execution_data.get('total_found', 0))}
+- Procesados: {as_text(execution_data.get('processed_count', 0))}
+- Fallidos: {as_text(execution_data.get('failed_count', 0))}
+
+Acción sugerida:
+{build_action_hint(fields['notification_type'], execution_data)}
+
+Mensaje automático del Sistema de Monitoreo Alert. No responder este correo.
+""".strip()
+
+    if len(message) > MAX_MESSAGE_LENGTH:
+        message = f"{message[:MAX_MESSAGE_LENGTH]}\n... [mensaje truncado]"
+
+    return {
+        "subject": subject,
+        "message": message,
+        "status": fields["notification_type"],
+        "priority": fields["severity"].lower(),
+    }
+
+
+def create_success_notification(execution_data: Dict[str, Any]) -> Dict[str, str]:
+    """Compatibilidad con invocaciones/tests existentes."""
+    return create_plain_text_notification({**execution_data, "success": True, "failed_count": 0})
+
+
+def create_failure_notification(execution_data: Dict[str, Any]) -> Dict[str, str]:
+    """Compatibilidad con invocaciones/tests existentes."""
+    return create_plain_text_notification({**execution_data, "success": False})
+
+
+def create_partial_success_notification(execution_data: Dict[str, Any]) -> Dict[str, str]:
+    """Compatibilidad con invocaciones/tests existentes."""
+    data = {**execution_data, "success": True}
+    if not data.get("failed_count"):
+        data["failed_count"] = 1
+    return create_plain_text_notification(data)
+
+
+def publish_notification(notification: Dict[str, str]) -> Dict[str, Any]:
+    """Publica notificación de texto puro a SNS."""
+    topic_arn = os.getenv("SNS_TOPIC_ARN")
+    if not topic_arn:
+        return {
+            "success": False,
+            "error": "SNS_TOPIC_ARN is not configured",
+        }
+
     try:
-        # Determinar tipo de resultado
-        success = execution_data.get('success', False)
-        processed_count = execution_data.get('processed_count', 0)
-        total_found = execution_data.get('total_found', 0)
-        failed_count = execution_data.get('failed_count', 0)
-        
-        # Crear notificación apropiada
-        if success and failed_count == 0:
-            # Éxito completo
-            notification = create_success_notification(execution_data)
-        elif success and failed_count > 0:
-            # Éxito parcial
-            notification = create_partial_success_notification(execution_data)
-        else:
-            # Fallo completo
-            notification = create_failure_notification(execution_data)
-        
-        # Publicar notificación
-        notification_published = publish_notification(notification)
-        
+        response = get_sns_client().publish(
+            TopicArn=topic_arn,
+            Message=notification["message"],
+            Subject=notification["subject"],
+        )
+        message_id = response.get("MessageId")
+        print(f"Successfully published monitoring notification to SNS: {message_id}")
         return {
-            'success': notification_published,
-            'notification_type': notification['status'],
-            'subject': notification['subject'],
-            'message_id': notification_published,
-            'execution_summary': {
-                'site_id': execution_data.get('site_id'),
-                'date': execution_data.get('date'),
-                'success': success,
-                'processed_count': processed_count,
-                'total_found': total_found,
-                'failed_count': failed_count
-            }
+            "success": True,
+            "message_id": message_id,
         }
-        
-    except Exception as e:
+    except Exception as exc:  # No imprimir payloads ni secretos.
+        print(f"Error publishing monitoring notification to SNS: {type(exc).__name__}: {exc}")
         return {
-            'success': False,
-            'error': f'Error processing execution result: {str(e)}',
-            'execution_data': execution_data
+            "success": False,
+            "error": f"Error publishing notification to SNS: {type(exc).__name__}",
         }
 
-def handler(event, context):
-    """
-    Lambda handler para enviar notificaciones vía SNS
-    """
-    # CORS headers
-    CORS_HEADERS = {
+
+def process_execution_result(execution_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Procesa el resultado de ejecución y publica una notificación."""
+    try:
+        notification = create_plain_text_notification(execution_data)
+        publish_result = publish_notification(notification)
+
+        return {
+            "success": publish_result["success"],
+            "notification_type": notification["status"],
+            "subject": notification["subject"],
+            "message_id": publish_result.get("message_id"),
+            "error": publish_result.get("error"),
+            "execution_summary": {
+                "component_name": get_component_name(execution_data),
+                "process_name": get_process_name(execution_data),
+                "date": execution_data.get("date"),
+                "success": bool(execution_data.get("success", False)),
+                "processed_count": execution_data.get("processed_count", 0),
+                "total_found": execution_data.get("total_found", 0),
+                "failed_count": execution_data.get("failed_count", 0),
+            },
+        }
+    except Exception as exc:
+        return {
+            "success": False,
+            "error": f"Error processing execution result: {type(exc).__name__}",
+        }
+
+
+def parse_event(event: Dict[str, Any]) -> tuple[Optional[str], Optional[Dict[str, Any]]]:
+    """Extrae método HTTP y execution_data desde evento HTTP o invocación directa."""
+    http_method = event.get("requestContext", {}).get("http", {}).get("method") or event.get("httpMethod")
+
+    if http_method:
+        body = json.loads(event.get("body") or "{}")
+        return http_method, body.get("execution_data")
+
+    return None, event.get("execution_data")
+
+
+def response(status_code: int, body: Dict[str, Any]) -> Dict[str, Any]:
+    cors_headers = {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Headers": "*",
         "Access-Control-Allow-Methods": "OPTIONS,POST,GET",
     }
-    
-    # Detectar si es un evento HTTP (API Gateway) o directo
-    http_method = event.get("requestContext", {}).get("http", {}).get("method") or event.get("httpMethod")
-    
-    if http_method == "OPTIONS":
-        return {
-            "statusCode": 200,
-            "headers": {"Content-Type": "application/json", **CORS_HEADERS},
-            "body": ""
-        }
-    
+    return {
+        "statusCode": status_code,
+        "headers": {"Content-Type": "application/json", **cors_headers},
+        "body": json.dumps(body, ensure_ascii=False),
+    }
+
+
+def handler(event, context):
+    """Lambda handler para enviar notificaciones operativas vía SNS."""
+    event = event or {}
+
     try:
-        # Extraer parámetros del request
-        if http_method:
-            # Request HTTP
-            body = json.loads(event.get("body") or "{}")
-            execution_data = body.get("execution_data")
-        else:
-            # Invocación directa (desde Step Function)
-            execution_data = event.get("execution_data")
-        
-        # Validar parámetro execution_data
-        if not execution_data:
-            return {
-                "statusCode": 400,
-                "headers": {"Content-Type": "application/json", **CORS_HEADERS},
-                "body": json.dumps({"error": "Missing required parameter: execution_data"})
-            }
-        
-        # Procesar resultado y enviar notificación
+        http_method, execution_data = parse_event(event)
+
+        if http_method == "OPTIONS":
+            return response(200, {})
+
+        if not isinstance(execution_data, dict) or not execution_data:
+            return response(400, {"error": "Missing required parameter: execution_data"})
+
         result = process_execution_result(execution_data)
-        
-        # Preparar respuesta
-        if result['success']:
-            response = {
-                "statusCode": 200,
-                "headers": {"Content-Type": "application/json", **CORS_HEADERS},
-                "body": json.dumps(result)
-            }
-        else:
-            response = {
-                "statusCode": 500,
-                "headers": {"Content-Type": "application/json", **CORS_HEADERS},
-                "body": json.dumps(result)
-            }
-        
-        return response
-        
+        return response(200 if result.get("success") else 500, result)
+
     except json.JSONDecodeError:
-        return {
-            "statusCode": 400,
-            "headers": {"Content-Type": "application/json", **CORS_HEADERS},
-            "body": json.dumps({"error": "Invalid JSON in request body"})
-        }
-    except Exception as e:
-        return {
-            "statusCode": 500,
-            "headers": {"Content-Type": "application/json", **CORS_HEADERS},
-            "body": json.dumps({"error": f"Internal server error: {str(e)}"})
-        }
+        return response(400, {"error": "Invalid JSON in request body"})
+    except Exception as exc:
+        return response(500, {"error": f"Internal server error: {type(exc).__name__}"})
+
 
 if __name__ == "__main__":
-    # Para testing local
-    # Test de éxito completo
-    test_success_data = {
-        "success": True,
-        "site_id": "boletinoficial_gob_ar",
-        "date": "2026-03-06",
-        "total_found": 5,
-        "processed_count": 5,
-        "failed_count": 0,
-        "uploaded_files_count": 5,
-        "db_records_count": 6,  # 1 site + 5 documents
-        "s3_bucket": "rag-documents-dev-913123310997",
-        "dynamodb_table": "rag-documents-dev",
-        "sample_files": [
-            {
-                "filename": "Boletín_Completo.pdf",
-                "s3_uri": "s3://rag-documents-dev-913123310997/boletinoficial_gob_ar/2026-03-06/Boletín_Completo.pdf"
-            }
-        ],
-        "execution_context": "Step Function execution completed successfully"
+    sample_event = {
+        "execution_data": {
+            "success": False,
+            "component_name": "TEST - Sistema de Monitoreo",
+            "process_name": "alert-monitoring-local",
+            "environment": "PRODUCCIÓN",
+            "error_type": "TEST_NOTIFICATION",
+            "error_message": "Mensaje local de prueba. Configurar SNS_TOPIC_ARN para publicar en SNS.",
+            "failed_step": "local-test",
+            "execution_id": "local",
+            "is_test": True,
+        }
     }
-    
-    # Test de fallo
-    test_failure_data = {
-        "success": False,
-        "site_id": "boletinoficial_gob_ar",
-        "date": "2026-03-06",
-        "total_found": 3,
-        "processed_count": 0,
-        "failed_count": 3,
-        "error_type": "FETCH_ERROR",
-        "error_message": "Failed to fetch content from URL: Connection timeout",
-        "failed_step": "fetcher",
-        "execution_context": "HTTP 503 Service Unavailable"
-    }
-    
-    # Test de éxito parcial
-    test_partial_data = {
-        "success": True,
-        "site_id": "boletinoficial_gob_ar",
-        "date": "2026-03-06",
-        "total_found": 5,
-        "processed_count": 3,
-        "failed_count": 2,
-        "uploaded_files_count": 3,
-        "db_records_count": 4,  # 1 site + 3 documents
-        "s3_bucket": "rag-documents-dev-913123310997",
-        "dynamodb_table": "rag-documents-dev",
-        "execution_context": "Some files exceeded size limit"
-    }
-    
-    # Test HTTP
-    test_event_http = {
-        "requestContext": {
-            "http": {
-                "method": "POST"
-            }
-        },
-        "body": json.dumps({
-            "execution_data": test_success_data
-        })
-    }
-    
-    context = {}
-    result = handler(test_event_http, context)
-    print("Success Test Result:", json.dumps(result, indent=2))
-    
-    # Test fallo
-    test_event_failure = {
-        "execution_data": test_failure_data
-    }
-    
-    result_failure = handler(test_event_failure, context)
-    print("Failure Test Result:", json.dumps(result_failure, indent=2))
-    
-    # Test éxito parcial
-    test_event_partial = {
-        "execution_data": test_partial_data
-    }
-    
-    result_partial = handler(test_event_partial, context)
-    print("Partial Success Test Result:", json.dumps(result_partial, indent=2))
+    print(json.dumps(handler(sample_event, {}), indent=2, ensure_ascii=False))
